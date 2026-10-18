@@ -1,0 +1,10 @@
+project_id = "kwsigghvjgyxrwvnrfqg"
+
+[auth]
+enable_anonymous_sign_ins = true
+
+[functions.instagram-oauth]
+verify_jwt = false
+
+[functions.creator-ai]
+verify_jwt = true

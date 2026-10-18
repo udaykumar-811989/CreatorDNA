@@ -1,0 +1,42 @@
+{
+  "name": "creatordna-mobile",
+  "description": "CreatorDNA mobile onboarding app built with Expo and React Native.",
+  "license": "0BSD",
+  "version": "57.0.29",
+  "main": "index.ts",
+  "dependencies": {
+    "expo": "~57.0.27",
+    "expo-asset": "~57.0.20",
+    "expo-audio": "~57.0.5",
+    "expo-constants": "~57.0.21",
+    "expo-document-picker": "~57.0.3",
+    "expo-image-picker": "~57.0.20",
+    "expo-linear-gradient": "~57.0.2",
+    "expo-linking": "~57.0.12",
+    "expo-secure-store": "~57.0.4",
+    "expo-status-bar": "~57.0.1",
+    "expo-web-browser": "~57.0.3",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-svg": "15.15.4",
+    "react-native-web": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "~19.2.2",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "functions:test": "tsx --test supabase/functions/_shared/*.test.ts",
+    "supabase:start": "npx supabase start",
+    "supabase:db:push": "npx supabase db push",
+    "supabase:function:deploy": "npx supabase functions deploy instagram-oauth --no-verify-jwt",
+    "supabase:creator-ai:deploy": "npx supabase functions deploy creator-ai"
+  }
+}
