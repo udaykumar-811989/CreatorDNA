@@ -87,7 +87,7 @@ function BrandHeader({ onBack }: { onBack?: () => void }) {
         <View style={styles.headerBack} />
       )}
       <Text style={styles.brand}>Veyyra</Text>
-      <Text style={[styles.headerBack, styles.headerCrown]}>♛</Text>
+      <Text style={[styles.headerBack, styles.headerCrown]}>V</Text>
     </View>
   );
 }
@@ -635,7 +635,8 @@ const styles = StyleSheet.create({
   },
   headerCrown: {
     color: '#c584ff',
-    fontSize: 17,
+    fontSize: 18,
+    fontWeight: '700',
     textAlign: 'right',
     textAlignVertical: 'center',
   },
