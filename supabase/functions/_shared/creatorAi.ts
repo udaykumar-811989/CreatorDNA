@@ -232,6 +232,42 @@ export class CreatorAiError extends Error {
   }
 }
 
+// Transient provider failures (HTTP 429/5xx, network errors) are retried with
+// backoff, bounded by a total budget that keeps the whole call inside the
+// client's 90s fetch timeout. Gemini reports overload as 503 "high demand",
+// which usually clears within seconds, so several attempts raise the odds of
+// riding out a spike instead of surfacing an error.
+const PROVIDER_RETRY_DELAYS_MS = [400, 1_200, 2_500, 5_000, 8_000];
+const PROVIDER_TOTAL_BUDGET_MS = 84_000;
+const PROVIDER_MAX_ATTEMPT_MS = 60_000;
+const PROVIDER_MIN_ATTEMPT_MS = 5_000;
+
+async function generateJsonWithRetry(
+  attempt: (timeoutMs: number) => Promise<unknown>,
+): Promise<unknown> {
+  const deadline = Date.now() + PROVIDER_TOTAL_BUDGET_MS;
+  let lastError: CreatorAiError = new CreatorAiError('provider_unavailable');
+  for (let i = 0; i <= PROVIDER_RETRY_DELAYS_MS.length; i += 1) {
+    const remaining = deadline - Date.now();
+    if (i > 0 && remaining < PROVIDER_MIN_ATTEMPT_MS) break;
+    try {
+      return await attempt(Math.min(PROVIDER_MAX_ATTEMPT_MS, remaining));
+    } catch (error) {
+      if (
+        !(error instanceof CreatorAiError) ||
+        error.code !== 'provider_unavailable'
+      ) {
+        throw error;
+      }
+      lastError = error;
+      const delay = PROVIDER_RETRY_DELAYS_MS[i];
+      if (delay === undefined) break;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError;
+}
+
 export interface AiProvider {
   readonly model: string;
   generateJson(
@@ -261,6 +297,17 @@ export class OpenAiCompatibleProvider implements AiProvider {
     if (media && media.kind !== 'image') {
       throw new CreatorAiError('provider_rejected');
     }
+    return await generateJsonWithRetry((timeoutMs) =>
+      this.generateJsonOnce(systemPrompt, userPrompt, media, timeoutMs)
+    );
+  }
+
+  private async generateJsonOnce(
+    systemPrompt: string,
+    userPrompt: string,
+    media: CreatorAiMedia | null | undefined,
+    timeoutMs: number,
+  ): Promise<unknown> {
     let response: Response;
     try {
       response = await this.fetcher(this.config.endpoint, {
@@ -290,7 +337,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
             },
           ],
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       throw new CreatorAiError('provider_unavailable');
@@ -355,6 +402,18 @@ export class GeminiProvider implements AiProvider {
     schema?: unknown,
     media?: CreatorAiMedia | null,
   ): Promise<unknown> {
+    return await generateJsonWithRetry((timeoutMs) =>
+      this.generateJsonOnce(systemPrompt, userPrompt, schema, media, timeoutMs)
+    );
+  }
+
+  private async generateJsonOnce(
+    systemPrompt: string,
+    userPrompt: string,
+    schema: unknown,
+    media: CreatorAiMedia | null | undefined,
+    timeoutMs: number,
+  ): Promise<unknown> {
     let endpoint: URL;
     try {
       endpoint = new URL(this.config.endpoint);
@@ -409,7 +468,7 @@ export class GeminiProvider implements AiProvider {
               : {}),
           },
         }),
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       throw new CreatorAiError('provider_unavailable');
