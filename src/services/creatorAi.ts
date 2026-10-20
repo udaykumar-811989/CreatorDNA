@@ -24,6 +24,7 @@ export type CreatorAiIdea = {
   concept: string;
   format: string;
   cta: string;
+  priority?: 'high' | 'medium' | 'low';
 };
 
 const MAX_MEDIA_BYTES = 3_000_000;
@@ -91,7 +92,7 @@ async function postCreatorAi(
       signal: AbortSignal.timeout(90_000),
     });
   } catch {
-    throw new Error(`Could not reach Veyyra AI to ${route}. Check your connection and retry.`);
+    throw new Error(`Could not reach CreatorDNA AI to ${route}. Check your connection and retry.`);
   }
   return parseResponse(response);
 }
@@ -133,6 +134,34 @@ export type CreatorAiChatContext = {
     format: string;
     cta: string;
   }> | null;
+  creatorDna?: {
+    score: number | null;
+    strengths: string[];
+    weaknesses: string[];
+    topTopics: string[];
+  } | null;
+  contentPlan?: Array<{
+    day: string;
+    title: string;
+    format: string;
+    priority: string | null;
+  }> | null;
+  performance?: {
+    views: number | null;
+    likes: number | null;
+    comments: number | null;
+    reach: number | null;
+    followers: number | null;
+    previousViews: number | null;
+    topTopics: Array<{ topic: string; share: number }>;
+  } | null;
+  analyses?: Array<{
+    title: string;
+    overallScore: number | null;
+    mainIssue: string | null;
+    strengths: string[];
+    improvements: string[];
+  }> | null;
 };
 
 export async function sendCreatorAiChat(
@@ -156,7 +185,7 @@ export async function sendCreatorAiChat(
   }
   const result = await postCreatorAi(functionUrl, anonKey, accessToken, 'chat', payload);
   if (typeof result.reply !== 'string' || !result.reply.trim()) {
-    throw new Error('Veyyra returned an empty chat reply. Please try again.');
+    throw new Error('CreatorDNA returned an empty chat reply. Please try again.');
   }
   return result.reply.trim();
 }
@@ -176,10 +205,14 @@ export async function generateCreatorIdeas(
       isRecord(idea) &&
       ['title', 'hook', 'concept', 'format', 'cta'].every((key) =>
         typeof idea[key] === 'string' && idea[key].trim().length > 0
-      )
+      ) &&
+      (idea.priority === undefined ||
+        idea.priority === 'high' ||
+        idea.priority === 'medium' ||
+        idea.priority === 'low')
     )
   ) {
-    throw new Error('Veyyra returned an invalid idea list. Please try again.');
+    throw new Error('CreatorDNA returned an invalid idea list. Please try again.');
   }
   return result.ideas as CreatorAiIdea[];
 }
@@ -206,6 +239,18 @@ export type ContentAnalysis = {
   pacing: { assessment: 'not_assessable'; observations: string[] };
   strengths: string[];
   improvement_opportunities: string[];
+  scores?: {
+    hook: number | null;
+    retention: number | null;
+    engagement: number | null;
+    content_quality: number | null;
+    cta: number | null;
+  };
+  main_issue?: string | null;
+  suggested_edit?: {
+    current_opening: string | null;
+    improved_opening: string | null;
+  };
   evidence: { source: 'transcript' | 'caption'; quote: string }[];
   confidence: 'insufficient' | 'early' | 'moderate' | 'strong';
   limitations: string[];
@@ -229,6 +274,43 @@ function hasNullableStringFields(value: unknown, fields: string[]): boolean {
     fields.every((field) =>
       typeof value[field] === 'string' || value[field] === null
     );
+}
+
+// The analysis extras (scores/main_issue/suggested_edit) are optional here:
+// analyses stored before the schema upgrade must keep validating.
+function isValidScores(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+  const keys = ['hook', 'retention', 'engagement', 'content_quality', 'cta'];
+  if (Object.keys(value).length !== keys.length) {
+    return false;
+  }
+  return keys.every((key) =>
+    value[key] === null ||
+    (typeof value[key] === 'number' &&
+      Number.isFinite(value[key]) &&
+      (value[key] as number) >= 0 &&
+      (value[key] as number) <= 10)
+  );
+}
+
+function isValidMainIssue(value: unknown): boolean {
+  return value === undefined ||
+    value === null ||
+    (typeof value === 'string' && value.length <= 1000);
+}
+
+function isValidSuggestedEdit(value: unknown): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  return isRecord(value) &&
+    Object.keys(value).length === 2 &&
+    hasNullableStringFields(value, ['current_opening', 'improved_opening']);
 }
 
 function isContentAnalysis(value: unknown): value is ContentAnalysis {
@@ -259,6 +341,9 @@ function isContentAnalysis(value: unknown): value is ContentAnalysis {
     isStringArray(value.pacing.observations) &&
     isStringArray(value.strengths) &&
     isStringArray(value.improvement_opportunities) &&
+    isValidScores(value.scores) &&
+    isValidMainIssue(value.main_issue) &&
+    isValidSuggestedEdit(value.suggested_edit) &&
     Array.isArray(value.evidence) &&
     value.evidence.every((item) =>
       isRecord(item) &&
@@ -281,10 +366,10 @@ async function parseResponse(
   try {
     body = await response.json();
   } catch {
-    throw new Error('Veyyra returned an unreadable response. Please try again.');
+    throw new Error('CreatorDNA returned an unreadable response. Please try again.');
   }
   if (!isRecord(body)) {
-    throw new Error('Veyyra returned an invalid response. Please try again.');
+    throw new Error('CreatorDNA returned an invalid response. Please try again.');
   }
   if (!response.ok) {
     const code = typeof body.error === 'string' ? body.error : '';
@@ -330,12 +415,12 @@ async function parseResponse(
       throw new Error("AI analysis isn't configured yet.");
     }
     if (code === 'provider_unavailable' || code === 'analysis_service_unavailable') {
-      throw new Error('Veyyra AI is temporarily unavailable. Please try again.');
+      throw new Error('CreatorDNA AI is temporarily unavailable. Please try again.');
     }
     if (code === 'provider_rejected') {
       throw new Error('The AI provider rejected the request. Check the provider URL, model, and API key configuration.');
     }
-    throw new Error('Veyyra could not analyze this content. Please review it and retry.');
+    throw new Error('CreatorDNA could not analyze this content. Please review it and retry.');
   }
   return body;
 }
@@ -432,7 +517,7 @@ export async function submitCreatorContent(
       signal: AbortSignal.timeout(90_000),
     });
   } catch {
-    throw new Error('Could not reach Veyyra AI. Check your connection and retry.');
+    throw new Error('Could not reach CreatorDNA AI. Check your connection and retry.');
   }
 
   const body = await parseResponse(response);
@@ -443,7 +528,7 @@ export async function submitCreatorContent(
       body.status !== 'completed' &&
       body.status !== 'failed')
   ) {
-    throw new Error('Veyyra returned an invalid analysis job. Please retry.');
+    throw new Error('CreatorDNA returned an invalid analysis job. Please retry.');
   }
 
   return {
@@ -482,7 +567,7 @@ export async function getCreatorAiJob(
       body.status !== 'completed' &&
       body.status !== 'failed')
   ) {
-    throw new Error('Veyyra returned an invalid job status.');
+    throw new Error('CreatorDNA returned an invalid job status.');
   }
   return {
     jobId: body.jobId,
@@ -502,11 +587,11 @@ function friendlyJobError(value: unknown): string | undefined {
     case 'malformed_model_response':
       return 'The AI provider returned invalid JSON. Check the model configuration and retry.';
     case 'invalid_analysis':
-      return 'The AI provider response did not pass Veyyra’s content and evidence checks. Please retry.';
+      return 'The AI provider response did not pass CreatorDNA’s content and evidence checks. Please retry.';
     case 'ai_not_configured':
       return "AI analysis isn't configured yet.";
     case 'database_unavailable':
-      return 'Veyyra could not save the analysis. Please retry.';
+      return 'CreatorDNA could not save the analysis. Please retry.';
     case 'analysis_failed':
       return 'Analysis failed. Check the Edge Function logs for details, then retry.';
     case undefined:

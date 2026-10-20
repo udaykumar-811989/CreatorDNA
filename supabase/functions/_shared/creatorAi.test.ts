@@ -48,6 +48,18 @@ function validAnalysis(
     pacing: { assessment: 'not_assessable', observations: [] },
     strengths: ['The opening addresses a recognizable task.'],
     improvement_opportunities: ['Show the planning steps in the transcript.'],
+    scores: {
+      hook: 8.2,
+      retention: 7.4,
+      engagement: 6.9,
+      content_quality: 8,
+      cta: null,
+    },
+    main_issue: 'The excerpt does not show a payoff or a closing call to action.',
+    suggested_edit: {
+      current_opening: 'Stop guessing what to post.',
+      improved_opening: 'Stop guessing what to post — start with the one question your audience asks every week.',
+    },
     evidence: [{
       source: 'transcript',
       quote: 'Stop guessing what to post.',
@@ -96,6 +108,30 @@ test('rejects malformed or extra response fields', () => {
   const malformed = { ...validAnalysis(), unexpected: 'not allowed' };
   assert.throws(
     () => validateContentAnalysis(malformed, baseContent),
+    (error: unknown) =>
+      error instanceof CreatorAiError && error.code === 'invalid_analysis',
+  );
+});
+
+test('drops a suggested opening that is not an exact quote and validates score ranges', () => {
+  const output = validAnalysis();
+  output.suggested_edit = {
+    current_opening: 'This opening was never said.',
+    improved_opening: 'A stronger rewrite of the opening.',
+  };
+  const safeAnalysis = validateContentAnalysis(output, baseContent);
+  assert.equal(safeAnalysis.suggested_edit.current_opening, null);
+  assert.equal(
+    safeAnalysis.suggested_edit.improved_opening,
+    'A stronger rewrite of the opening.',
+  );
+  assert.ok(safeAnalysis.limitations.some((item) => item.includes('suggested-edit opening')));
+  assert.deepEqual(safeAnalysis.scores, output.scores);
+
+  const outOfRange = validAnalysis();
+  outOfRange.scores = { ...outOfRange.scores, hook: 42 };
+  assert.throws(
+    () => validateContentAnalysis(outOfRange, baseContent),
     (error: unknown) =>
       error instanceof CreatorAiError && error.code === 'invalid_analysis',
   );

@@ -608,13 +608,14 @@ const ideasSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['title', 'hook', 'concept', 'format', 'cta'],
+        required: ['title', 'hook', 'concept', 'format', 'cta', 'priority'],
         properties: {
           title: { type: 'string' },
           hook: { type: 'string' },
           concept: { type: 'string' },
           format: { type: 'string' },
           cta: { type: 'string' },
+          priority: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
       },
     },
@@ -719,7 +720,7 @@ async function handleChat(
 
   try {
     const result = await configuredProvider(config).generateJson(
-      'You are Veyyra, a warm, friendly, practical creator coach with visibility into the creator’s whole app. Speak naturally like a helpful friend, not a report or corporate bot. You are given any of the following: a content analysis, app context (their Instagram profile, recent follower and engagement stats, recent media, and any generated Reel ideas), and the recent conversation. Answer questions and give actionable advice using all of it. Do not invent facts, metrics, or claims; say so plainly when something is unknown or was not provided. Keep replies focused and actionable. Return JSON with one string field named "reply".',
+      'You are CreatorDNA, a warm, friendly, practical creator coach with visibility into the creator’s whole app. Speak naturally like a helpful friend, not a report or corporate bot. You are given any of the following: a content analysis, app context (their Instagram profile, follower and engagement stats, recent media, generated Reel ideas, saved content plan, Creator DNA profile and scores, and performance stats), and the recent conversation. Answer questions and give actionable advice using all of it. Do not invent facts, metrics, or claims; say so plainly when something is unknown or was not provided. Keep replies focused and actionable. Return JSON with one string field named "reply".',
       JSON.stringify({
         analysis: analysis ?? undefined,
         appContext: context ?? undefined,
@@ -760,7 +761,7 @@ async function handleIdeas(
   }
   try {
     const result = await configuredProvider(config).generateJson(
-      'You are Veyyra, a friendly, imaginative short-form video idea partner. Generate specific, original, practical ideas tailored to the creator inputs. Avoid generic trend claims, fake facts, and guaranteed performance promises. Return exactly five ideas as JSON with title, hook, concept, format, and cta strings for every idea.',
+      'You are CreatorDNA, a friendly, imaginative short-form video idea partner. Generate specific, original, practical ideas tailored to the creator inputs. Avoid generic trend claims, fake facts, and guaranteed performance promises. Return exactly five ideas as JSON with title, hook, concept, format, and cta strings for every idea, plus a priority of "high", "medium", or "low" reflecting how well that idea fits the creator inputs (best fit first).',
       JSON.stringify({ topic, audience, goal }),
       ideasSchema,
     );
@@ -774,7 +775,8 @@ async function handleIdeas(
           typeof idea[key] === 'string' &&
           idea[key].trim().length > 0 &&
           idea[key].length <= 1200
-        )
+        ) &&
+        ['high', 'medium', 'low'].includes(String(idea.priority))
       )
     ) {
       throw new CreatorAiError('malformed_model_response');

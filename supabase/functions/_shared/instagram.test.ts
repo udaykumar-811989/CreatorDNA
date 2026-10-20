@@ -130,6 +130,7 @@ test('media parser returns only supported real fields and HTTPS image URLs', () 
           timestamp: '2026-04-12T11:00:00+0000',
           like_count: 14,
           comments_count: 2,
+          caption: 'My reel caption',
         },
         {
           id: 'media-2',
@@ -148,6 +149,7 @@ test('media parser returns only supported real fields and HTTPS image URLs', () 
         timestamp: '2026-04-12T11:00:00+0000',
         likes: 14,
         comments: 2,
+        caption: 'My reel caption',
       },
       {
         id: 'media-2',
@@ -157,6 +159,7 @@ test('media parser returns only supported real fields and HTTPS image URLs', () 
         timestamp: null,
         likes: null,
         comments: null,
+        caption: null,
       },
     ],
   );
@@ -176,6 +179,7 @@ test('dashboard reads only returned profile, media and insight data', async () =
           account_type: 'Media_Creator',
           profile_picture_url: 'https://cdn.example.test/profile.jpg',
           followers_count: 321,
+          media_count: 48,
         }],
       });
     }
@@ -219,14 +223,18 @@ test('dashboard reads only returned profile, media and insight data', async () =
       views: 1234,
       likes: 42,
       comments: null,
+      reach: 42,
       followers: 321,
+      previous: { views: 1234, likes: 42, comments: null },
     });
+    assert.equal(dashboard.daily, null);
+    assert.equal(dashboard.profile.mediaCount, 48);
     assert.equal(dashboard.profile.username, 'veyyra_creator');
     assert.equal(dashboard.media[0]?.id, 'media-1');
     assert.equal(dashboard.media[0]?.likes, 16);
     assert.equal(
       requestedUrls.filter((url) => url.pathname.endsWith('/insights')).length,
-      3,
+      10,
     );
   } finally {
     globalThis.fetch = originalFetch;

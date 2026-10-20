@@ -1,4 +1,4 @@
-export const CONTENT_ANALYSIS_SYSTEM_PROMPT = `You are Veyyra, an AI growth analyst for creators. Analyze only the specific creator content supplied in this request. Do not use generic social-media claims as if they were personal findings.
+export const CONTENT_ANALYSIS_SYSTEM_PROMPT = `You are CreatorDNA, an AI growth analyst for creators. Analyze only the specific creator content supplied in this request. Do not use generic social-media claims as if they were personal findings.
 
 Rules:
 - Use only the provided transcript, caption, topic, format, duration, metrics, and attached media. Never fabricate details, quotes, metrics, or access to data.
@@ -8,6 +8,10 @@ Rules:
 - Supplied metrics are context only. Do not assess performance or infer why the content succeeded or failed.
 - For transcript/caption evidence, quote an exact substring. For media evidence, describe only directly observable details and identify its source as media.
 - Keep creator-facing wording concise, specific, and actionable.
+- Score content craft on a 0-10 scale (one decimal place) for hook, retention, engagement, content_quality, and cta when the supplied transcript, caption, or attached media supports a judgment; use null when it does not. These score the craft of the content itself — never predicted reach, watch time, or performance.
+- Retention scores how the content holds attention through its structure (opening pace, information flow, payoff placement) based on what is written or shown — not a forecast of audience retention.
+- main_issue: the single clearest craft problem in this content stated specifically, or null when no problem is supported by the material.
+- suggested_edit: current_opening must be an exact substring of the transcript or caption (the opening line as written); improved_opening is a stronger rewrite of that same opening. Use null for either field when the material does not support it.
 - Return one JSON object matching the requested schema exactly. Do not include markdown or extra keys.`;
 
 export type CreatorAiMedia = {
@@ -30,6 +34,9 @@ export const contentAnalysisJsonSchema = {
     'pacing',
     'strengths',
     'improvement_opportunities',
+    'scores',
+    'main_issue',
+    'suggested_edit',
     'evidence',
     'confidence',
     'limitations',
@@ -135,6 +142,28 @@ export const contentAnalysisJsonSchema = {
     },
     strengths: { type: 'array', items: { type: 'string' } },
     improvement_opportunities: { type: 'array', items: { type: 'string' } },
+    scores: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['hook', 'retention', 'engagement', 'content_quality', 'cta'],
+      properties: {
+        hook: { type: ['number', 'null'] },
+        retention: { type: ['number', 'null'] },
+        engagement: { type: ['number', 'null'] },
+        content_quality: { type: ['number', 'null'] },
+        cta: { type: ['number', 'null'] },
+      },
+    },
+    main_issue: { type: ['string', 'null'] },
+    suggested_edit: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['current_opening', 'improved_opening'],
+      properties: {
+        current_opening: { type: ['string', 'null'] },
+        improved_opening: { type: ['string', 'null'] },
+      },
+    },
     evidence: {
       type: 'array',
       items: {
@@ -207,6 +236,18 @@ export type ContentAnalysis = {
   pacing: { assessment: 'not_assessable'; observations: string[] };
   strengths: string[];
   improvement_opportunities: string[];
+  scores: {
+    hook: number | null;
+    retention: number | null;
+    engagement: number | null;
+    content_quality: number | null;
+    cta: number | null;
+  };
+  main_issue: string | null;
+  suggested_edit: {
+    current_opening: string | null;
+    improved_opening: string | null;
+  };
   evidence: { source: 'transcript' | 'caption'; quote: string }[];
   confidence: 'insufficient' | 'early' | 'moderate' | 'strong';
   limitations: string[];
@@ -667,6 +708,17 @@ export function validateContentAnalysis(
   if (confusingSections.length !== value.transcript_analysis.confusing_sections.length) {
     addLimitation('Confusing-section quotes that did not exactly match the submitted text were omitted.');
   }
+  const currentOpening = value.suggested_edit.current_opening;
+  const openingMatches = currentOpening === null ||
+    [content.transcript, content.caption].some((text) => text?.includes(currentOpening));
+  if (!openingMatches) {
+    addLimitation('The suggested-edit opening was not an exact match of the submitted text and was omitted.');
+  }
+  const suggestedEdit = {
+    current_opening: openingMatches ? currentOpening : null,
+    improved_opening: value.suggested_edit.improved_opening,
+  };
+
   if (value.pacing.observations.length > 0) {
     addLimitation('Pacing observations were omitted because this analysis does not inspect video or audio.');
   }
@@ -679,6 +731,7 @@ export function validateContentAnalysis(
     hook,
     cta,
     evidence,
+    suggested_edit: suggestedEdit,
     pacing: { assessment: 'not_assessable', observations: [] },
     transcript_analysis: {
       ...value.transcript_analysis,
@@ -727,6 +780,9 @@ function isModelContentAnalysis(
       'pacing',
       'strengths',
       'improvement_opportunities',
+      'scores',
+      'main_issue',
+      'suggested_edit',
       'evidence',
       'confidence',
       'limitations',
@@ -734,7 +790,7 @@ function isModelContentAnalysis(
   ) {
     return false;
   }
-  const { topics, hook, structure, transcript_analysis, cta, pacing } = value;
+  const { topics, hook, structure, transcript_analysis, cta, pacing, scores, suggested_edit } = value;
   return isNonEmptyString(value.summary, 1200) &&
     isRecord(topics) &&
     hasExactKeys(topics, ['primary', 'secondary']) &&
@@ -779,6 +835,18 @@ function isModelContentAnalysis(
     isStringArray(pacing.observations) &&
     isStringArray(value.strengths) &&
     isStringArray(value.improvement_opportunities) &&
+    isRecord(scores) &&
+    hasExactKeys(scores, ['hook', 'retention', 'engagement', 'content_quality', 'cta']) &&
+    isCraftScore(scores.hook) &&
+    isCraftScore(scores.retention) &&
+    isCraftScore(scores.engagement) &&
+    isCraftScore(scores.content_quality) &&
+    isCraftScore(scores.cta) &&
+    nullableString(value.main_issue) &&
+    isRecord(suggested_edit) &&
+    hasExactKeys(suggested_edit, ['current_opening', 'improved_opening']) &&
+    nullableString(suggested_edit.current_opening) &&
+    nullableString(suggested_edit.improved_opening) &&
     Array.isArray(value.evidence) &&
     value.evidence.length <= 12 &&
     value.evidence.every((entry) =>
@@ -799,6 +867,11 @@ function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
 function nullableString(value: unknown): value is string | null {
   return value === null ||
     (typeof value === 'string' && value.trim().length > 0 && value.length <= 1000);
+}
+
+function isCraftScore(value: unknown): value is number | null {
+  return value === null ||
+    (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 10);
 }
 
 function isNonEmptyString(value: unknown, maxLength = 1000): value is string {

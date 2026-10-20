@@ -15,17 +15,33 @@ export type InstagramMedia = {
   timestamp: string | null;
   likes: number | null;
   comments: number | null;
+  caption: string | null;
 };
 
 export type InstagramDashboard = {
-  profile: InstagramProfile & { followersCount: number | null };
+  profile: InstagramProfile & {
+    followersCount: number | null;
+    mediaCount: number | null;
+  };
   stats: {
     views: number | null;
     likes: number | null;
     comments: number | null;
     followers: number | null;
+    reach: number | null;
+    previous: {
+      views: number | null;
+      likes: number | null;
+      comments: number | null;
+    } | null;
   };
   media: InstagramMedia[];
+  daily: Array<{
+    date: string;
+    views: number | null;
+    likes: number | null;
+    comments: number | null;
+  }> | null;
 };
 
 export class DashboardRequestError extends Error {
@@ -125,8 +141,35 @@ function parseDashboard(value: unknown): InstagramDashboard {
       timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : null,
       likes: optionalCount(entry.likes),
       comments: optionalCount(entry.comments),
+      caption: typeof entry.caption === 'string' && entry.caption.trim().length > 0
+        ? entry.caption
+        : null,
     }];
   });
+
+  const previous = isRecord(value.stats.previous)
+    ? {
+      views: optionalCount(value.stats.previous.views),
+      likes: optionalCount(value.stats.previous.likes),
+      comments: optionalCount(value.stats.previous.comments),
+    }
+    : null;
+  const parsedDaily = Array.isArray(value.daily)
+    ? value.daily.flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry.date !== 'string') {
+        return [];
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) {
+        return [];
+      }
+      return [{
+        date: entry.date,
+        views: optionalCount(entry.views),
+        likes: optionalCount(entry.likes),
+        comments: optionalCount(entry.comments),
+      }];
+    })
+    : [];
 
   return {
     profile: {
@@ -134,14 +177,18 @@ function parseDashboard(value: unknown): InstagramDashboard {
       accountType: profile.accountType,
       profilePictureUrl: safeUrl(profile.profilePictureUrl),
       followersCount: optionalCount(profile.followersCount),
+      mediaCount: optionalCount(profile.mediaCount),
     },
     stats: {
       views: optionalCount(value.stats.views),
       likes: optionalCount(value.stats.likes),
       comments: optionalCount(value.stats.comments),
       followers: optionalCount(value.stats.followers),
+      reach: optionalCount(value.stats.reach),
+      previous,
     },
     media,
+    daily: parsedDaily.length > 0 ? parsedDaily : null,
   };
 }
 

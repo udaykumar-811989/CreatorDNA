@@ -19,14 +19,29 @@ export type EncryptedToken = {
 };
 
 export type InstagramDashboard = {
-  profile: InstagramProfile & { followersCount: number | null };
+  profile: InstagramProfile & {
+    followersCount: number | null;
+    mediaCount: number | null;
+  };
   stats: {
     views: number | null;
     likes: number | null;
     comments: number | null;
     followers: number | null;
+    reach: number | null;
+    previous: {
+      views: number | null;
+      likes: number | null;
+      comments: number | null;
+    } | null;
   };
   media: InstagramMedia[];
+  daily: Array<{
+    date: string;
+    views: number | null;
+    likes: number | null;
+    comments: number | null;
+  }> | null;
 };
 
 export type InstagramMedia = {
@@ -37,6 +52,7 @@ export type InstagramMedia = {
   timestamp: string | null;
   likes: number | null;
   comments: number | null;
+  caption: string | null;
 };
 
 export type InstagramErrorCode =
@@ -300,6 +316,38 @@ export function parseInstagramInsightValue(
   return optionalCount(totalValue?.value);
 }
 
+export function parseInstagramInsightSeries(
+  value: unknown,
+  metric: string,
+): Array<{ date: string; value: number }> | null {
+  const body = record(value);
+  const data = Array.isArray(body?.data) ? body.data : [];
+  const result = data
+    .map(record)
+    .find((item) => item?.name === metric) ?? null;
+  if (!result || !Array.isArray(result.values)) {
+    return null;
+  }
+  const points = result.values
+    .map(record)
+    .flatMap((entry) => {
+      if (!entry) {
+        return [];
+      }
+      const endTime = requiredString(entry.end_time);
+      const count = optionalCount(entry.value);
+      if (!endTime || count === null) {
+        return [];
+      }
+      const date = endTime.slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return [];
+      }
+      return [{ date, value: count }];
+    });
+  return points.length > 0 ? points : null;
+}
+
 export function normalizeInstagramMedia(value: unknown): InstagramMedia[] {
   const body = record(value);
   if (!Array.isArray(body?.data)) {
@@ -329,6 +377,9 @@ export function normalizeInstagramMedia(value: unknown): InstagramMedia[] {
         timestamp: requiredString(item.timestamp),
         likes: optionalCount(item.like_count),
         comments: optionalCount(item.comments_count),
+        caption: typeof item.caption === 'string' && item.caption.trim().length > 0
+          ? item.caption
+          : null,
       }];
     });
 }
@@ -398,54 +449,131 @@ export async function fetchInstagramDashboard(
   }
 
   const followersCount = optionalCount(profileData.followers_count);
+  const mediaCount = optionalCount(profileData.media_count);
   const mediaUrl = instagramGraphUrl('me/media');
   mediaUrl.searchParams.set(
     'fields',
-    'id,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count',
+    'id,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count,caption',
   );
   mediaUrl.searchParams.set('limit', '10');
 
   const now = Math.floor(Date.now() / 1000);
-  const since = now - 30 * 24 * 60 * 60;
-  const insightValues = await Promise.all(
-    (['views', 'likes', 'comments'] as const).map(async (metric) => {
-      const insightUrl = instagramGraphUrl(`${instagramUserId}/insights`);
-      insightUrl.searchParams.set('metric', metric);
-      insightUrl.searchParams.set('period', 'day');
-      insightUrl.searchParams.set('metric_type', 'total_value');
-      insightUrl.searchParams.set('since', String(since));
-      insightUrl.searchParams.set('until', String(now));
-      try {
-        return await instagramApiGet(insightUrl, accessToken, true);
-      } catch (error) {
-        if (
-          error instanceof InstagramApiError &&
-          error.code === 'reconnect_required'
-        ) {
-          throw error;
-        }
-        if (
-          error instanceof InstagramApiError &&
-          error.code === 'metric_unavailable'
-        ) {
+  const day = 24 * 60 * 60;
+  const requestWindowTotals = async (
+    metrics: readonly string[],
+    from: number,
+    to: number,
+    lenient: boolean,
+  ): Promise<unknown[]> =>
+    Promise.all(
+      metrics.map(async (metric) => {
+        const insightUrl = instagramGraphUrl(`${instagramUserId}/insights`);
+        insightUrl.searchParams.set('metric', metric);
+        insightUrl.searchParams.set('period', 'day');
+        insightUrl.searchParams.set('metric_type', 'total_value');
+        insightUrl.searchParams.set('since', String(from));
+        insightUrl.searchParams.set('until', String(to));
+        try {
+          return await instagramApiGet(insightUrl, accessToken, true);
+        } catch (error) {
+          if (
+            error instanceof InstagramApiError &&
+            error.code === 'reconnect_required'
+          ) {
+            throw error;
+          }
+          if (
+            !lenient &&
+            (!(error instanceof InstagramApiError) ||
+              error.code !== 'metric_unavailable')
+          ) {
+            throw error;
+          }
           return null;
         }
-        throw error;
-      }
-    }),
-  );
-  const mediaResponse = await instagramApiGet(mediaUrl, accessToken);
+      }),
+    );
+
+  // Current 30-day totals (strict, existing behaviour), previous 30-day totals
+  // for real growth deltas, and a 90-day daily series for charts/period filters.
+  // The optional windows are lenient: they must never break the core dashboard.
+  const [insightValues, previousValues, dailySeriesValues] = await Promise.all([
+    requestWindowTotals(['views', 'likes', 'comments', 'reach'], now - 30 * day, now, false),
+    requestWindowTotals(['views', 'likes', 'comments'], now - 60 * day, now - 30 * day, true),
+    Promise.all(
+      (['views', 'likes', 'comments'] as const).map(async (metric) => {
+        const insightUrl = instagramGraphUrl(`${instagramUserId}/insights`);
+        insightUrl.searchParams.set('metric', metric);
+        insightUrl.searchParams.set('period', 'day');
+        insightUrl.searchParams.set('since', String(now - 90 * day));
+        insightUrl.searchParams.set('until', String(now));
+        try {
+          return await instagramApiGet(insightUrl, accessToken, true);
+        } catch {
+          return null;
+        }
+      }),
+    ),
+  ]);
+  let mediaResponse: unknown;
+  try {
+    mediaResponse = await instagramApiGet(mediaUrl, accessToken);
+  } catch (error) {
+    if (
+      error instanceof InstagramApiError &&
+      error.code === 'reconnect_required'
+    ) {
+      throw error;
+    }
+    // Some API responses reject the caption field; retry without it rather than fail the dashboard.
+    mediaUrl.searchParams.set(
+      'fields',
+      'id,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count',
+    );
+    mediaResponse = await instagramApiGet(mediaUrl, accessToken);
+  }
   const media = normalizeInstagramMedia(mediaResponse);
 
+  const seriesByMetric = [
+    parseInstagramInsightSeries(dailySeriesValues[0], 'views'),
+    parseInstagramInsightSeries(dailySeriesValues[1], 'likes'),
+    parseInstagramInsightSeries(dailySeriesValues[2], 'comments'),
+  ];
+  const dailyDates = new Set<string>();
+  for (const points of seriesByMetric) {
+    for (const point of points ?? []) {
+      dailyDates.add(point.date);
+    }
+  }
+  const valueAt = (
+    points: Array<{ date: string; value: number }> | null,
+    date: string,
+  ): number | null => points?.find((point) => point.date === date)?.value ?? null;
+  const daily = dailyDates.size === 0
+    ? null
+    : [...dailyDates].sort().map((date) => ({
+      date,
+      views: valueAt(seriesByMetric[0], date),
+      likes: valueAt(seriesByMetric[1], date),
+      comments: valueAt(seriesByMetric[2], date),
+    }));
+
   return {
-    profile: { ...profile, followersCount },
+    profile: { ...profile, followersCount, mediaCount },
     stats: {
       views: parseInstagramInsightValue(insightValues[0], 'views'),
       likes: parseInstagramInsightValue(insightValues[1], 'likes'),
       comments: parseInstagramInsightValue(insightValues[2], 'comments'),
+      reach: parseInstagramInsightValue(insightValues[3], 'reach'),
       followers: followersCount,
+      previous: {
+        views: parseInstagramInsightValue(previousValues[0], 'views'),
+        likes: parseInstagramInsightValue(previousValues[1], 'likes'),
+        comments: parseInstagramInsightValue(previousValues[2], 'comments'),
+      },
     },
     media,
+    daily,
   };
 }
 
