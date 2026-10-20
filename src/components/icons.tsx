@@ -99,6 +99,28 @@ export function PlayIcon({ size = 24, color = '#000' }: IconProps) {
   );
 }
 
+export function VideoIcon({ size = 20, color = '#000', strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        d="M13.5 7H6.5A2.5 2.5 0 0 0 4 9.5v5A2.5 2.5 0 0 0 6.5 17h7a2.5 2.5 0 0 0 2.5-2.5v-5A2.5 2.5 0 0 0 13.5 7Z"
+        {...stroke(color, strokeWidth)}
+      />
+      <Path d="m17 10 3.4-2.1a.6.6 0 0 1 .9.5v7.2a.6.6 0 0 1-.9.5L17 14" {...stroke(color, strokeWidth)} />
+    </Svg>
+  );
+}
+
+export function TrashIcon({ size = 20, color = '#000', strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M5.5 7h13" {...stroke(color, strokeWidth)} />
+      <Path d="M9.5 7V5.5A1.5 1.5 0 0 1 11 4h2a1.5 1.5 0 0 1 1.5 1.5V7" {...stroke(color, strokeWidth)} />
+      <Path d="M7 7l.8 12.1a1.5 1.5 0 0 0 1.5 1.4h5.4a1.5 1.5 0 0 0 1.5-1.4L17 7" {...stroke(color, strokeWidth)} />
+    </Svg>
+  );
+}
+
 export function CheckIcon({ size = 20, color = '#000', strokeWidth = 2.4 }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24">

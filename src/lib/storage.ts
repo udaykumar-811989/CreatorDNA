@@ -25,6 +25,7 @@ export const storageKeys = {
   trendingIdeas: 'creatordna.trendingIdeas.v1',
   savedIdeas: 'creatordna.savedIdeas.v1',
   chat: 'creatordna.chat.v1',
+  fabPosition: 'creatordna.fabPosition.v1',
 };
 
 const memoryFallback = new Map<string, string>();

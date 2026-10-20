@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { DnaMark } from '../components/DnaMark';
-import { ChevronRightIcon, LinkOutIcon, LogoutIcon, DocIcon } from '../components/icons';
+import { ChevronRightIcon, GearIcon, LinkOutIcon, LogoutIcon, DocIcon } from '../components/icons';
 import { Avatar, Badge, ListRow, ScreenHeader } from '../components/ui';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
 import { colors, FAB_CLEARANCE, radius, type } from '../theme';
@@ -14,6 +14,7 @@ export function ProfileScreen({
   onReconnect,
   onOpenAnalyses,
   onViewDna,
+  onOpenSettings,
   onLogout,
 }: {
   profile: InstagramProfile | null;
@@ -23,6 +24,7 @@ export function ProfileScreen({
   onReconnect: () => void;
   onOpenAnalyses: () => void;
   onViewDna: () => void;
+  onOpenSettings: () => void;
   onLogout: () => void;
 }) {
   const username = dashboard?.profile.username ?? profile?.username ?? null;
@@ -84,6 +86,13 @@ export function ProfileScreen({
 
         {/* Rows */}
         <View style={styles.rowsCard}>
+          <ListRow
+            tone="dark"
+            icon={<GearIcon size={19} color="#9E8CFF" />}
+            label="Settings"
+            onPress={onOpenSettings}
+          />
+          <View style={styles.rowDivider} />
           <ListRow
             tone="dark"
             icon={<LinkOutIcon size={19} color="#9E8CFF" />}

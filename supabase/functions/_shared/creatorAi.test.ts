@@ -9,6 +9,7 @@ import {
   createAiProvider,
   GeminiProvider,
   OpenAiCompatibleProvider,
+  parseChatAttachment,
   validateContentAnalysis,
 } from './creatorAi';
 
@@ -296,4 +297,55 @@ test('zero and missing metrics remain exactly as supplied', () => {
   const zeroMetrics = { ...baseContent, metrics: { views: 0 } };
   assert.match(buildContentAnalysisPrompt(noMetrics), /"availableMetrics":\{\}/);
   assert.match(buildContentAnalysisPrompt(zeroMetrics), /"availableMetrics":\{"views":0\}/);
+});
+
+test('parseChatAttachment accepts valid images and videos', () => {
+  const image = parseChatAttachment({
+    kind: 'image',
+    mimeType: 'image/jpeg',
+    base64: 'aGVsbG8=',
+  });
+  assert.deepEqual(image, {
+    kind: 'image',
+    mimeType: 'image/jpeg',
+    base64: 'aGVsbG8=',
+  });
+  const video = parseChatAttachment({
+    kind: 'video',
+    mimeType: 'video/mp4',
+    base64: 'aGVsbG8=',
+  });
+  assert.equal(video?.kind, 'video');
+});
+
+test('parseChatAttachment treats a missing value as no attachment', () => {
+  assert.equal(parseChatAttachment(null), null);
+  assert.equal(parseChatAttachment(undefined), null);
+});
+
+test('parseChatAttachment rejects audio, unknown types, and bad payloads', () => {
+  assert.throws(
+    () => parseChatAttachment({ kind: 'audio', mimeType: 'audio/mp4', base64: 'aGVsbG8=' }),
+    /invalid_attachment/,
+  );
+  assert.throws(
+    () => parseChatAttachment({ kind: 'image', mimeType: 'image/tiff', base64: 'aGVsbG8=' }),
+    /invalid_attachment/,
+  );
+  assert.throws(
+    () => parseChatAttachment({ kind: 'image', mimeType: 'image/png', base64: 'not base64!!' }),
+    /invalid_attachment/,
+  );
+  assert.throws(
+    () => parseChatAttachment({ kind: 'image', mimeType: 'image/png', base64: '' }),
+    /invalid_attachment/,
+  );
+  assert.throws(
+    () => parseChatAttachment({
+      kind: 'video',
+      mimeType: 'video/mp4',
+      base64: 'a'.repeat(4_000_001),
+    }),
+    /invalid_attachment/,
+  );
 });

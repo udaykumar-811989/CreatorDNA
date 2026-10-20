@@ -4,6 +4,7 @@ import {
   CreatorAiMedia,
   CreatorContentInput,
   createAiProvider,
+  parseChatAttachment,
   validateContentAnalysis,
 } from '../_shared/creatorAi.ts';
 
@@ -685,11 +686,19 @@ async function handleChat(
 ): Promise<Response> {
   let body: unknown;
   try {
-    body = await readRequestJson(request, 100_000);
+    // Chat requests may carry one image/video attachment (base64, ≤ ~3 MB),
+    // so the body limit is far above the text-only chat ceiling.
+    body = await readRequestJson(request, 4_400_000);
   } catch {
     return jsonResponse({ error: 'invalid_chat_request' }, 400, headers);
   }
   if (!isRecord(body) || !Array.isArray(body.messages)) {
+    return jsonResponse({ error: 'invalid_chat_request' }, 400, headers);
+  }
+  let attachment: CreatorAiMedia | null = null;
+  try {
+    attachment = parseChatAttachment(body.attachment);
+  } catch {
     return jsonResponse({ error: 'invalid_chat_request' }, 400, headers);
   }
   const analysis = isRecord(body.analysis) ? body.analysis : null;
@@ -704,7 +713,7 @@ async function handleChat(
   if (
     analysisJson.length > 30_000 ||
     contextJson.length > 30_000 ||
-    message.length === 0 ||
+    (!attachment && message.length === 0) ||
     message.length > 2000 ||
     messages.length > 8 ||
     !messages.every((entry) =>
@@ -720,14 +729,18 @@ async function handleChat(
 
   try {
     const result = await configuredProvider(config).generateJson(
-      'You are CreatorDNA, a warm, friendly, practical creator coach with visibility into the creator’s whole app. Speak naturally like a helpful friend, not a report or corporate bot. You are given any of the following: a content analysis, app context (their Instagram profile, follower and engagement stats, recent media, generated Reel ideas, saved content plan, Creator DNA profile and scores, and performance stats), and the recent conversation. Answer questions and give actionable advice using all of it. Do not invent facts, metrics, or claims; say so plainly when something is unknown or was not provided. Keep replies focused and actionable. Return JSON with one string field named "reply".',
+      'You are CreatorDNA, a warm, friendly, practical creator coach with visibility into the creator’s whole app. Speak naturally like a helpful friend, not a report or corporate bot. You are given any of the following: a content analysis, app context (their Instagram profile, follower and engagement stats, recent media, generated Reel ideas, saved content plan, Creator DNA profile and scores, and performance stats), the recent conversation, and optionally one image or video the creator attached to their latest message. If an attachment is present, look at it carefully and reference its real contents. Answer questions and give actionable advice using all of it. Do not invent facts, metrics, or claims; say so plainly when something is unknown or was not provided. Keep replies focused and actionable. Return JSON with one string field named "reply".',
       JSON.stringify({
         analysis: analysis ?? undefined,
         appContext: context ?? undefined,
         recentConversation: messages,
         creatorMessage: message,
+        attachment: attachment
+          ? { kind: attachment.kind, mimeType: attachment.mimeType }
+          : undefined,
       }),
       chatReplySchema,
+      attachment,
     );
     if (!isRecord(result) || typeof result.reply !== 'string' || result.reply.length > 4000) {
       throw new CreatorAiError('malformed_model_response');

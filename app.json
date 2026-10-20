@@ -28,7 +28,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Allow Veyyra to record voice notes for Reel transcription."
+          "microphonePermission": "Allow CreatorDNA to record voice notes for Reel transcription."
         }
       ],
       "expo-asset"

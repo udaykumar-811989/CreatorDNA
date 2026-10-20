@@ -13,9 +13,25 @@ export type CreatorAiMedia = {
   name: string;
 };
 
+export type CreatorAiChatAttachmentMeta = {
+  kind: 'image' | 'video';
+  name: string;
+  mimeType: string;
+  /** Local preview uri for this session; may expire after a reload. */
+  uri?: string;
+};
+
 export type CreatorAiChatMessage = {
   role: 'user' | 'assistant';
   content: string;
+  attachment?: CreatorAiChatAttachmentMeta;
+};
+
+/** A chat attachment ready to send: validated base64 + a local preview uri. */
+export type CreatorAiChatAttachmentInput = Omit<CreatorAiMedia, 'kind'> & {
+  kind: 'image' | 'video';
+  name: string;
+  uri: string;
 };
 
 export type CreatorAiIdea = {
@@ -172,6 +188,7 @@ export async function sendCreatorAiChat(
   messages: CreatorAiChatMessage[],
   message: string,
   context?: CreatorAiChatContext | null,
+  attachment?: CreatorAiChatAttachmentInput | null,
 ): Promise<string> {
   const payload: Record<string, unknown> = {
     messages: messages.slice(-8),
@@ -182,6 +199,13 @@ export async function sendCreatorAiChat(
   }
   if (context) {
     payload.context = context;
+  }
+  if (attachment) {
+    payload.attachment = {
+      kind: attachment.kind,
+      mimeType: attachment.mimeType,
+      base64: attachment.base64,
+    };
   }
   const result = await postCreatorAi(functionUrl, anonKey, accessToken, 'chat', payload);
   if (typeof result.reply !== 'string' || !result.reply.trim()) {

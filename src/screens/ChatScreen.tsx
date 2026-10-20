@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -11,9 +12,14 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as ImagePicker from 'expo-image-picker';
 import { DnaMark } from '../components/DnaMark';
-import { BackIcon, SendIcon, SparkIcon } from '../components/icons';
-import type { CreatorAiChatMessage } from '../services/creatorAi';
+import { BackIcon, ImageIcon, SendIcon, SparkIcon, VideoIcon } from '../components/icons';
+import { readCreatorMedia } from '../services/creatorAi';
+import type {
+  CreatorAiChatAttachmentInput,
+  CreatorAiChatMessage,
+} from '../services/creatorAi';
 import { colors, radius, type } from '../theme';
 
 const STARTERS = [
@@ -21,6 +27,75 @@ const STARTERS = [
   'How can I grow faster?',
   'Review my latest analysis',
 ];
+
+// Mirrors what the backend accepts for chat attachments.
+const CHAT_MEDIA_TYPES: Record<'image' | 'video', readonly string[]> = {
+  image: ['image/jpeg', 'image/png', 'image/webp', 'image/heic'],
+  video: ['video/mp4', 'video/webm', 'video/quicktime'],
+};
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+};
+
+function guessMimeType(name: string, kind: 'image' | 'video'): string | null {
+  const extension = name.split('.').pop()?.toLowerCase() ?? '';
+  const mime = MIME_BY_EXTENSION[extension];
+  return mime && mime.startsWith(kind) ? mime : null;
+}
+
+// Shortens data URLs into object URLs so chat history stays small on disk.
+// Object URLs expire on reload — the bubble then falls back to a file chip.
+async function toPreviewUri(uri: string): Promise<string> {
+  if (!uri.startsWith('data:')) {
+    return uri;
+  }
+  try {
+    const blob = await (await fetch(uri)).blob();
+    return URL.createObjectURL(blob);
+  } catch {
+    return uri;
+  }
+}
+
+function BubbleAttachment({
+  attachment,
+  mine,
+}: {
+  attachment: NonNullable<CreatorAiChatMessage['attachment']>;
+  mine: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (attachment.kind === 'image' && attachment.uri && !failed) {
+    return (
+      <Image
+        source={{ uri: attachment.uri }}
+        style={styles.attachmentImage}
+        onError={() => setFailed(true)}
+        accessibilityLabel={attachment.name}
+      />
+    );
+  }
+  return (
+    <View style={[styles.attachmentChip, mine && styles.attachmentChipMine]}>
+      {attachment.kind === 'image' ? (
+        <ImageIcon size={15} color={mine ? '#FFFFFF' : '#C4A8FF'} />
+      ) : (
+        <VideoIcon size={15} color={mine ? '#FFFFFF' : '#C4A8FF'} />
+      )}
+      <Text style={[styles.attachmentChipText, mine && styles.attachmentChipTextMine]} numberOfLines={1}>
+        {attachment.name}
+      </Text>
+    </View>
+  );
+}
 
 export function ChatScreen({
   messages,
@@ -33,11 +108,14 @@ export function ChatScreen({
   messages: CreatorAiChatMessage[];
   sending: boolean;
   error: string | null;
-  onSend: (text: string) => void;
+  onSend: (text: string, attachment?: CreatorAiChatAttachmentInput) => void;
   onBack: () => void;
   onClear: () => void;
 }) {
   const [draft, setDraft] = useState('');
+  const [pending, setPending] = useState<CreatorAiChatAttachmentInput | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [pickError, setPickError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
@@ -45,14 +123,62 @@ export function ChatScreen({
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 80);
     return () => clearTimeout(timer);
-  }, [messages.length, sending]);
+  }, [messages.length, sending, pending]);
+
+  const pickAttachment = async (kind: 'image' | 'video') => {
+    if (picking || sending) {
+      return;
+    }
+    setPicking(true);
+    setPickError(null);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: kind === 'image' ? ['images'] : ['videos'],
+        quality: 1,
+      });
+      if (result.canceled || !result.assets?.[0]) {
+        return;
+      }
+      const asset = result.assets[0];
+      const name =
+        asset.fileName ??
+        asset.uri.split(/[\\/]/).pop() ??
+        (kind === 'image' ? 'image' : 'clip');
+      const mimeType = (asset.mimeType ?? guessMimeType(name, kind) ?? '').toLowerCase();
+      if (!CHAT_MEDIA_TYPES[kind].includes(mimeType)) {
+        setPickError(
+          kind === 'image'
+            ? 'Choose a JPEG, PNG, WebP or HEIC image.'
+            : 'Choose an MP4, WebM or MOV video.',
+        );
+        return;
+      }
+      const media = await readCreatorMedia(asset.uri, mimeType, name, kind);
+      const previewUri = await toPreviewUri(asset.uri);
+      setPending({ ...media, kind, name, uri: previewUri });
+    } catch (pickMediaError) {
+      setPickError(
+        pickMediaError instanceof Error
+          ? pickMediaError.message
+          : 'Could not read that file — try a smaller one (under 3 MB).',
+      );
+    } finally {
+      setPicking(false);
+    }
+  };
 
   const send = (text?: string) => {
     const content = (text ?? draft).trim();
-    if (!content || sending) return;
+    if (sending || picking) return;
+    if (!content && !pending) return;
     setDraft('');
-    onSend(content);
+    setPickError(null);
+    const attachment = pending;
+    setPending(null);
+    onSend(content, attachment ?? undefined);
   };
+
+  const canSend = draft.trim().length > 0 || pending !== null;
 
   return (
     <KeyboardAvoidingView
@@ -101,7 +227,7 @@ export function ChatScreen({
             <Text style={styles.emptyTitle}>Ask anything about your content</Text>
             <Text style={styles.emptyHint}>
               This assistant reads your real Instagram insights, Creator DNA, content plan, and
-              analyses before answering.
+              analyses before answering — and can look at an image or video you attach.
             </Text>
             <View style={styles.chips}>
               {STARTERS.map((starter) => (
@@ -131,11 +257,25 @@ export function ChatScreen({
                     end={{ x: 1, y: 1 }}
                     style={[styles.bubble, styles.bubbleMine]}
                   >
-                    <Text style={styles.bubbleMineText}>{message.content}</Text>
+                    {message.attachment ? (
+                      <BubbleAttachment attachment={message.attachment} mine />
+                    ) : null}
+                    {message.content ? (
+                      <Text style={[styles.bubbleMineText, message.attachment && { marginTop: 8 }]}>
+                        {message.content}
+                      </Text>
+                    ) : null}
                   </LinearGradient>
                 ) : (
                   <View style={[styles.bubble, styles.bubbleAi]}>
-                    <Text style={styles.bubbleAiText}>{message.content}</Text>
+                    {message.attachment ? (
+                      <BubbleAttachment attachment={message.attachment} mine={false} />
+                    ) : null}
+                    {message.content ? (
+                      <Text style={[styles.bubbleAiText, message.attachment && { marginTop: 8 }]}>
+                        {message.content}
+                      </Text>
+                    ) : null}
                   </View>
                 )}
               </View>
@@ -161,12 +301,73 @@ export function ChatScreen({
         ) : null}
       </ScrollView>
 
+      {/* Pending attachment preview */}
+      {pending ? (
+        <View style={styles.pendingRow}>
+          {pending.kind === 'image' ? (
+            <Image source={{ uri: pending.uri }} style={styles.pendingThumb} />
+          ) : (
+            <View style={[styles.pendingThumb, styles.pendingThumbVideo]}>
+              <VideoIcon size={18} color="#C4A8FF" />
+            </View>
+          )}
+          <Text style={styles.pendingName} numberOfLines={1}>
+            {pending.name}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Remove attachment"
+            onPress={() => setPending(null)}
+            hitSlop={10}
+            style={({ pressed }) => [styles.pendingRemove, pressed && { opacity: 0.6 }]}
+          >
+            <Text style={styles.pendingRemoveText}>✕</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {pickError ? (
+        <Text accessibilityRole="alert" style={styles.pickError}>
+          {pickError}
+        </Text>
+      ) : null}
+
       {/* Input */}
       <View style={styles.inputBar}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Attach an image"
+          disabled={picking || sending}
+          onPress={() => void pickAttachment('image')}
+          style={({ pressed }) => [
+            styles.attachButton,
+            (picking || sending) && { opacity: 0.45 },
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          <ImageIcon size={20} color={colors.onDarkSub} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Attach a video"
+          disabled={picking || sending}
+          onPress={() => void pickAttachment('video')}
+          style={({ pressed }) => [
+            styles.attachButton,
+            (picking || sending) && { opacity: 0.45 },
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          {picking ? (
+            <ActivityIndicator size="small" color={colors.onDarkSub} />
+          ) : (
+            <VideoIcon size={20} color={colors.onDarkSub} />
+          )}
+        </Pressable>
         <TextInput
           value={draft}
           onChangeText={setDraft}
-          placeholder="Ask about your content…"
+          placeholder={pending ? 'Add a note about the attachment…' : 'Ask about your content…'}
           placeholderTextColor={colors.onDarkDim}
           style={styles.input}
           multiline
@@ -175,11 +376,11 @@ export function ChatScreen({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Send message"
-          disabled={sending || draft.trim().length === 0}
+          disabled={sending || !canSend}
           onPress={() => send()}
           style={({ pressed }) => [
             styles.sendButton,
-            (sending || draft.trim().length === 0) && { opacity: 0.45 },
+            (sending || !canSend) && { opacity: 0.45 },
             pressed && { transform: [{ scale: 0.94 }] },
           ]}
         >
@@ -258,6 +459,26 @@ const styles = StyleSheet.create({
   bubbleMineText: { ...type.body, color: '#FFFFFF', fontSize: 14.5 },
   bubbleAiText: { ...type.body, color: '#E9E7FA', fontSize: 14.5 },
 
+  attachmentImage: {
+    width: 200,
+    height: 150,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  attachmentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: 'rgba(196,168,255,0.12)',
+    borderRadius: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    alignSelf: 'flex-start',
+  },
+  attachmentChipMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
+  attachmentChipText: { ...type.small, color: '#C4A8FF', fontWeight: '700', fontSize: 12.5, maxWidth: 170 },
+  attachmentChipTextMine: { color: '#FFFFFF' },
+
   typing: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   typingText: { ...type.small, color: colors.onDarkSub },
 
@@ -269,36 +490,78 @@ const styles = StyleSheet.create({
   },
   errorText: { ...type.small, color: '#FF9B9B', lineHeight: 18 },
 
+  pendingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 14,
+    marginBottom: 8,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: colors.darkBorder,
+    borderRadius: 12,
+    padding: 8,
+  },
+  pendingThumb: { width: 42, height: 42, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.3)' },
+  pendingThumbVideo: { alignItems: 'center', justifyContent: 'center' },
+  pendingName: { ...type.small, color: colors.onDark, flex: 1, fontWeight: '700' },
+  pendingRemove: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pendingRemoveText: { color: colors.onDark, fontSize: 13, fontWeight: '700' },
+
+  pickError: {
+    ...type.small,
+    color: '#FF9B9B',
+    marginHorizontal: 16,
+    marginBottom: 8,
+    fontSize: 12,
+  },
+
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 10,
-    paddingHorizontal: 14,
+    gap: 8,
+    paddingHorizontal: 12,
     paddingTop: 10,
     paddingBottom: Platform.OS === 'ios' ? 26 : 14,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.darkBorder,
     backgroundColor: 'rgba(8,11,27,0.72)',
   },
+  attachButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 4,
+  },
   input: {
     flex: 1,
-    minHeight: 46,
+    minHeight: 44,
     maxHeight: 130,
     backgroundColor: 'rgba(255,255,255,0.07)',
     borderWidth: 1,
     borderColor: colors.darkBorder,
     borderRadius: 22,
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingTop: 11,
+    paddingBottom: 11,
     color: colors.onDark,
     fontSize: 15,
   },
   sendButton: { borderRadius: 24, overflow: 'hidden' },
   sendFill: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     alignItems: 'center',
     justifyContent: 'center',
   },

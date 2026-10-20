@@ -27,6 +27,7 @@ export type Screen =
   | 'ideas'
   | 'plan'
   | 'profile'
+  | 'settings'
   | 'performance'
   | 'analysis'
   | 'recommendations'
@@ -53,4 +54,5 @@ export const NAV_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
   'plan',
   'profile',
   'performance',
+  'settings',
 ]);

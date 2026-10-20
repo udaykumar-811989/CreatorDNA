@@ -31,6 +31,7 @@ import {
   topicsBreakdown,
 } from './src/lib/derived';
 import {
+  CreatorAiChatAttachmentInput,
   CreatorAiChatContext,
   CreatorAiChatMessage,
   CreatorAiIdea,
@@ -66,8 +67,9 @@ import { PerformanceScreen } from './src/screens/PerformanceScreen';
 import { PlanScreen } from './src/screens/PlanScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
 import { RecommendationsScreen } from './src/screens/RecommendationsScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
 import { VideoAnalysisScreen } from './src/screens/VideoAnalysisScreen';
-import { colors } from './src/theme';
+import { colors, NAV_HEIGHT } from './src/theme';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -821,18 +823,32 @@ export default function App() {
     return context;
   };
 
-  const sendChatMessage = async (text: string) => {
+  const sendChatMessage = async (
+    text: string,
+    attachment?: CreatorAiChatAttachmentInput,
+  ) => {
     const message = text.trim();
-    if (!message || !creatorAiFunctionUrl || !supabaseAnonKey) {
+    if ((!message && !attachment) || !creatorAiFunctionUrl || !supabaseAnonKey) {
       return;
     }
     setChatSending(true);
     setChatError(null);
     const previousMessages = chatMessages;
-    const conversation = [
-      ...previousMessages,
-      { role: 'user' as const, content: message },
-    ].slice(-100);
+    const userMessage: CreatorAiChatMessage = {
+      role: 'user',
+      content: message,
+      ...(attachment
+        ? {
+            attachment: {
+              kind: attachment.kind,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              uri: attachment.uri,
+            },
+          }
+        : {}),
+    };
+    const conversation = [...previousMessages, userMessage].slice(-100);
     setChatMessages(conversation);
     try {
       const token = await getCreatorToken();
@@ -844,6 +860,7 @@ export default function App() {
         previousMessages.slice(-8),
         message,
         buildChatContext(),
+        attachment ?? null,
       );
       setChatMessages(
         [...conversation, { role: 'assistant' as const, content: reply }].slice(-100),
@@ -858,6 +875,24 @@ export default function App() {
       setChatSending(false);
     }
   };
+
+  const clearChat = useCallback(() => {
+    setChatMessages([]);
+    setChatError(null);
+  }, [setChatMessages]);
+
+  const eraseLocalData = useCallback(() => {
+    setAnalyses([]);
+    setIdeas([]);
+    setTrendingIdeas([]);
+    setSavedIdeas([]);
+    setChatMessages([]);
+    setSelectedAnalysisId(null);
+    setJob(null);
+    setAnalysisError(null);
+    setGenerateError(null);
+    setChatError(null);
+  }, [setAnalyses, setChatMessages, setIdeas, setSavedIdeas, setTrendingIdeas]);
 
   const navigateTab = useCallback((tab: NavTab) => {
     setScreen(tab === 'content' ? 'ideas' : tab);
@@ -907,15 +942,17 @@ export default function App() {
   const navActive: NavTab =
     screen === 'performance'
       ? 'dna'
-      : screen === 'ideas'
-        ? 'content'
-        : screen === 'home' ||
-            screen === 'dna' ||
-            screen === 'plan' ||
-            screen === 'profile'
-          ? screen
-          : 'home';
-  const navDark = screen === 'home' || screen === 'profile';
+      : screen === 'settings'
+        ? 'profile'
+        : screen === 'ideas'
+          ? 'content'
+          : screen === 'home' ||
+              screen === 'dna' ||
+              screen === 'plan' ||
+              screen === 'profile'
+            ? screen
+            : 'home';
+  const navDark = screen === 'home' || screen === 'profile' || screen === 'settings';
   const showFab = !NO_FAB.has(screen);
 
   return (
@@ -1066,14 +1103,25 @@ export default function App() {
           onReconnect={handleConnectEntry}
           onOpenAnalyses={() => setScreen('analysesList')}
           onViewDna={() => setScreen('dna')}
+          onOpenSettings={() => setScreen('settings')}
           onLogout={logout}
+        />
+      ) : screen === 'settings' ? (
+        <SettingsScreen
+          profile={profile}
+          dashboard={dashboard}
+          chatCount={chatMessages.length}
+          onBack={() => setScreen('profile')}
+          onReconnect={handleConnectEntry}
+          onClearChat={clearChat}
+          onEraseData={eraseLocalData}
         />
       ) : screen === 'chat' ? (
         <ChatScreen
           messages={chatMessages}
           sending={chatSending}
           error={chatError}
-          onSend={(text) => void sendChatMessage(text)}
+          onSend={(text, attachment) => void sendChatMessage(text, attachment)}
           onBack={() => setScreen(chatReturn === 'chat' ? 'home' : chatReturn)}
           onClear={() => setChatMessages([])}
         />
@@ -1092,7 +1140,12 @@ export default function App() {
       {showNav ? (
         <BottomNav active={navActive} onNavigate={navigateTab} tone={navDark ? 'dark' : 'light'} />
       ) : null}
-      {showFab ? <FloatingAiButton onPress={openChat} /> : null}
+      {showFab ? (
+        <FloatingAiButton
+          onPress={openChat}
+          bottomReserve={showNav ? NAV_HEIGHT + 10 : 8}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }

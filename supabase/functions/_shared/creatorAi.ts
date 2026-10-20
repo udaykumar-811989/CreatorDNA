@@ -630,6 +630,38 @@ export function createAiProvider(config: AiProviderConfig): AiProvider {
   return new OpenAiCompatibleProvider(config);
 }
 
+const chatAttachmentMaxBase64Length = 4_000_000;
+const chatAttachmentTypes: Record<'image' | 'video', readonly string[]> = {
+  image: ['image/jpeg', 'image/png', 'image/webp', 'image/heic'],
+  video: ['video/mp4', 'video/webm', 'video/quicktime'],
+};
+
+// One image or video attached to a chat message. Audio is intentionally
+// excluded — the chat surface only offers image and video attachments.
+export function parseChatAttachment(value: unknown): CreatorAiMedia | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (
+    !isRecord(value) ||
+    (value.kind !== 'image' && value.kind !== 'video') ||
+    typeof value.mimeType !== 'string' ||
+    !chatAttachmentTypes[value.kind].includes(value.mimeType) ||
+    typeof value.base64 !== 'string' ||
+    value.base64.length === 0 ||
+    value.base64.length > chatAttachmentMaxBase64Length ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+      .test(value.base64)
+  ) {
+    throw new Error('invalid_attachment');
+  }
+  return {
+    kind: value.kind,
+    mimeType: value.mimeType,
+    base64: value.base64,
+  };
+}
+
 export function buildContentAnalysisPrompt(
   content: CreatorContentInput,
   hasMedia = false,
