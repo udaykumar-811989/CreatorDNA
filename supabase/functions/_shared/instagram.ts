@@ -176,7 +176,10 @@ function normalizeAccountType(value: unknown): AccountType | null {
   if (value === 'Business') {
     return 'Business';
   }
-  if (value === 'Media_Creator') {
+  // Meta documents `Media_Creator`; accept the unqualified `Creator` label
+  // too in case the API returns it, so real creator accounts are never
+  // rejected as unsupported.
+  if (value === 'Media_Creator' || value === 'Creator') {
     return 'Media_Creator';
   }
   return null;

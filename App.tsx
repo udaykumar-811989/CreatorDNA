@@ -190,11 +190,23 @@ function AppShell() {
     }
   }, []);
 
-  const getPendingOAuthState = () => {
+  const getPendingOAuthState = (): string | null => {
     if (pendingOAuthState.current) {
       return pendingOAuthState.current;
     }
-    if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') {
+    if (Platform.OS !== 'web') {
+      return null;
+    }
+    // localStorage first: phones often process the Instagram return in a
+    // different tab or webview than the one that started the flow, where the
+    // in-memory state and sessionStorage (scoped to one tab) are unavailable.
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem(pendingOAuthStorageKey);
+      if (stored) {
+        return stored;
+      }
+    }
+    if (typeof sessionStorage !== 'undefined') {
       return sessionStorage.getItem(pendingOAuthStorageKey);
     }
     return null;
@@ -202,7 +214,13 @@ function AppShell() {
 
   const clearPendingOAuthState = () => {
     pendingOAuthState.current = null;
-    if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') {
+    if (Platform.OS !== 'web') {
+      return;
+    }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(pendingOAuthStorageKey);
+    }
+    if (typeof sessionStorage !== 'undefined') {
       sessionStorage.removeItem(pendingOAuthStorageKey);
     }
   };
@@ -227,9 +245,15 @@ function AppShell() {
       return;
     }
     setScreen('connect');
+    const pendingState = getPendingOAuthState();
     if (
       typeof callbackState !== 'string' ||
-      callbackState !== getPendingOAuthState()
+      // Reject only a genuine mismatch (a different attempt's state is
+      // stored). When no pending state exists at all, the return landed in a
+      // fresh browsing context — common on phones — and the server has
+      // already consumed this one-time state while building the redirect,
+      // which proves the session was started by this app.
+      (pendingState !== null && callbackState !== pendingState)
     ) {
       clearPendingOAuthState();
       setConnectionError('invalid_state');
@@ -392,8 +416,16 @@ function AppShell() {
         throw new Error('connection_setup_failed');
       }
       pendingOAuthState.current = payload.state;
-      if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') {
-        sessionStorage.setItem(pendingOAuthStorageKey, payload.state);
+      if (Platform.OS === 'web') {
+        // Persist in both storages: localStorage is what lets the return
+        // find its pending state when it comes back in another tab or
+        // webview (phones), sessionStorage keeps the per-tab copy.
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(pendingOAuthStorageKey, payload.state);
+        }
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.setItem(pendingOAuthStorageKey, payload.state);
+        }
       }
       const authSession = await WebBrowser.openAuthSessionAsync(
         payload.authorizationUrl,

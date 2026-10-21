@@ -60,6 +60,15 @@ test('profile parser accepts professional Creator and Business accounts only', (
       profilePictureUrl: 'https://cdn.example.test/profile.jpg',
     },
   );
+  // Some API responses use the unqualified `Creator` label.
+  assert.equal(
+    normalizeInstagramProfile({
+      user_id: '17840000000000001',
+      username: 'veyyra_creator_2',
+      account_type: 'Creator',
+    }).accountType,
+    'Media_Creator',
+  );
   assert.throws(
     () =>
       normalizeInstagramProfile({
