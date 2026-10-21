@@ -142,6 +142,12 @@ export function ConnectScreen({
           style={{ marginTop: 12 }}
         />
 
+        <Text style={styles.requirement}>
+          Connecting needs an Instagram Professional account (Creator or
+          Business) — personal accounts can’t be connected. Switch yours in
+          Instagram → Settings → Account → Account type.
+        </Text>
+
         {connectionState === 'failed' && connectionError ? (
           <Text accessibilityRole="alert" style={styles.error}>
             {connectionErrorMessages[connectionError] ??
@@ -337,6 +343,13 @@ const styles = StyleSheet.create({
     padding: 12,
     marginTop: 14,
     textAlign: 'center',
+    lineHeight: 18,
+  },
+  requirement: {
+    ...type.small,
+    color: colors.textDim,
+    textAlign: 'center',
+    marginTop: 16,
     lineHeight: 18,
   },
   privacy: {
