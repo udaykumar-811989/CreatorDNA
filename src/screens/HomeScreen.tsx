@@ -1,6 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useMemo } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { DnaMark } from '../components/DnaMark';
 import { ScoreRing } from '../components/ScoreRing';
 import { SparkIcon } from '../components/icons';
 import { Avatar, Card, GradientButton, StatTile } from '../components/ui';
@@ -68,6 +69,10 @@ export function HomeScreen({
         },
 
         greetRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
+        // Same lockup as the onboarding page: DNA mark beside the wordmark.
+        brandRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 2 },
+        brand: { color: c.onDark, fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
+        brandAccent: { color: isDark ? '#BC8CFF' : c.primary },
         greet: { ...type.h3, color: c.onDark, fontSize: 22, letterSpacing: -0.4 },
         greetSub: { ...type.small, color: c.onDarkSub, marginTop: 5, fontSize: 13.5 },
 
@@ -127,6 +132,13 @@ export function HomeScreen({
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.brandRow}>
+          <DnaMark size={30} />
+          <Text style={styles.brand}>
+            Creator<Text style={styles.brandAccent}>DNA</Text>
+          </Text>
+        </View>
+
         <View style={styles.greetRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.greet}>
