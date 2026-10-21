@@ -536,6 +536,10 @@ export class GeminiProvider implements AiProvider {
     }
 
     if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      console.error(
+        `gemini generateContent rejected: status=${response.status} body=${detail.slice(0, 300)}`,
+      );
       throw new CreatorAiError(
         response.status === 429 || response.status >= 500
           ? 'provider_unavailable'
@@ -868,43 +872,76 @@ export async function forwardGeminiUploadChunk(
  * Validates an uploaded file reference (shape, state, kind, size) and returns
  * the Gemini `file_data` part for it. Called server-side before any model
  * request, so clients can only reference files the Files API actually has.
+ *
+ * Fresh uploads report `PROCESSING` while Gemini prepares them (and files.get
+ * can briefly 5xx mid-processing), so this polls briefly instead of rejecting
+ * a creator's just-uploaded file — the failure that surfaced as
+ * "provider_rejected" on video analysis.
  */
 export async function resolveGeminiFileData(
   config: AiProviderConfig,
   fileUri: string,
   kind: CreatorAiMedia['kind'],
   fetcher: typeof fetch = fetch,
+  options?: { sleep?: (ms: number) => Promise<void>; maxWaitMs?: number },
 ): Promise<{ file_uri: string; mime_type: string }> {
   const origin = geminiOrigin(config);
   if (!isGeminiFileUri(fileUri)) {
     throw new CreatorAiError('provider_rejected');
   }
-  let response: Response;
-  try {
-    response = await fetcher(
-      `${origin}/v1beta/${fileUri}?key=${encodeURIComponent(config.apiKey)}`,
-      { signal: AbortSignal.timeout(20_000) },
-    );
-  } catch {
-    throw new CreatorAiError('provider_unavailable');
-  }
-  if (!response.ok) {
-    throw new CreatorAiError(
-      response.status === 429 || response.status >= 500
-        ? 'provider_unavailable'
-        : 'provider_rejected',
-    );
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new CreatorAiError('malformed_model_response');
+  const sleep = options?.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }));
+  const maxWaitMs = options?.maxWaitMs ?? 45_000;
+  const url = `${origin}/v1beta/${fileUri}?key=${encodeURIComponent(config.apiKey)}`;
+
+  const deadline = Date.now() + maxWaitMs;
+  let payload: Record<string, unknown> | null = null;
+  let lastError: CreatorAiError | null = null;
+  while (payload === null) {
+    try {
+      const response = await fetcher(url, { signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        console.error(
+          `gemini files.get: status=${response.status} body=${detail.slice(0, 200)}`,
+        );
+        // A missing or forbidden file won't become valid by waiting; 429/5xx
+        // and mid-processing blips might.
+        if (response.status !== 429 && response.status < 500) {
+          throw new CreatorAiError('provider_rejected');
+        }
+        lastError = new CreatorAiError('provider_unavailable');
+      } else {
+        const body: unknown = await response.json();
+        if (!isRecord(body) || body.name !== fileUri) {
+          throw new CreatorAiError('provider_rejected');
+        }
+        if (body.state === 'FAILED') {
+          throw new CreatorAiError('provider_rejected');
+        }
+        if (body.state === 'ACTIVE') {
+          payload = body;
+        } else {
+          // PROCESSING (or an unknown transient state) — keep waiting.
+          lastError = new CreatorAiError('provider_unavailable');
+        }
+      }
+    } catch (error) {
+      if (error instanceof CreatorAiError && error.code === 'provider_rejected') {
+        throw error;
+      }
+      lastError = error instanceof CreatorAiError
+        ? error
+        : new CreatorAiError('provider_unavailable');
+    }
+    if (payload === null) {
+      if (Date.now() >= deadline) {
+        throw lastError ?? new CreatorAiError('provider_unavailable');
+      }
+      await sleep(1_500);
+    }
   }
   if (
-    !isRecord(payload) ||
-    payload.name !== fileUri ||
-    payload.state !== 'ACTIVE' ||
     typeof payload.mimeType !== 'string' ||
     !payload.mimeType.startsWith(`${kind}/`)
   ) {

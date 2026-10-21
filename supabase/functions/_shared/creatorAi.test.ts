@@ -644,10 +644,10 @@ test('resolveGeminiFileData validates state, kind, and size before use', async (
   });
 
   await assert.rejects(
-    () => resolveGeminiFileData(geminiTestConfig, 'files/pending', 'video', fetcherFor({
-      name: 'files/pending',
+    () => resolveGeminiFileData(geminiTestConfig, 'files/failed', 'video', fetcherFor({
+      name: 'files/failed',
       mimeType: 'video/mp4',
-      state: 'PROCESSING',
+      state: 'FAILED',
     })),
     /provider_rejected/,
   );
@@ -675,6 +675,48 @@ test('resolveGeminiFileData validates state, kind, and size before use', async (
       state: 'ACTIVE',
     })),
     /provider_rejected/,
+  );
+});
+
+test('resolveGeminiFileData waits out PROCESSING instead of rejecting fresh uploads', async () => {
+  const active = {
+    name: 'files/warm-1',
+    mimeType: 'video/mp4',
+    state: 'ACTIVE',
+    sizeBytes: '9000',
+  };
+  let calls = 0;
+  const sequence = (async () => {
+    calls += 1;
+    if (calls === 1) return Response.json({ name: 'files/warm-1', state: 'PROCESSING' });
+    if (calls === 2) return new Response('server busy', { status: 500 }); // mid-processing blip
+    return Response.json(active);
+  }) as unknown as typeof fetch;
+  const sleeps: number[] = [];
+  const part = await resolveGeminiFileData(
+    geminiTestConfig,
+    'files/warm-1',
+    'video',
+    sequence,
+    { sleep: async (ms) => { sleeps.push(ms); }, maxWaitMs: 45_000 },
+  );
+  assert.equal(calls, 3);
+  assert.ok(sleeps.length >= 2);
+  assert.deepEqual(part, {
+    file_uri: 'https://generativelanguage.googleapis.com/v1beta/files/warm-1',
+    mime_type: 'video/mp4',
+  });
+});
+
+test('resolveGeminiFileData gives up with a bounded wait, not a hang', async () => {
+  const alwaysProcessing = (async () =>
+    Response.json({ name: 'files/stuck', state: 'PROCESSING' })) as unknown as typeof fetch;
+  await assert.rejects(
+    () => resolveGeminiFileData(geminiTestConfig, 'files/stuck', 'video', alwaysProcessing, {
+      sleep: async () => {},
+      maxWaitMs: 0,
+    }),
+    /provider_unavailable/,
   );
 });
 
