@@ -217,7 +217,11 @@ export function DnaScreen({
           </Card>
         )}
 
-        <GradientButton label="View Detailed Report" onPress={onViewReport} style={{ marginTop: 4 }} />
+        {/* Always available: analyze more content, or open the full report. */}
+        <View style={styles.bottomActions}>
+          <GradientButton label="Analyze new content" onPress={onAnalyze} />
+          <OutlineButton label="View Detailed Report" onPress={onViewReport} tone="light" />
+        </View>
       </ScrollView>
     </View>
   );
@@ -232,8 +236,9 @@ const styles = StyleSheet.create({
     gap: 14,
   },
 
-  brand: { ...type.h3, color: colors.text, fontSize: 22 },
+  brand: { ...type.h2, color: colors.text, fontSize: 25 },
   brandSub: { ...type.small, color: colors.textSub, marginTop: 2 },
+  bottomActions: { marginTop: 4, gap: 10 },
 
   profileCard: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   profileInfo: { flex: 1, minWidth: 0 },
