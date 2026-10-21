@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { DnaMark } from '../components/DnaMark';
 import {
   ClockIcon,
   GridIcon,
@@ -69,14 +68,9 @@ export function DnaScreen({
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.brandRow}>
-          <DnaMark size={38} />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.brand}>
-              Creator<Text style={styles.brandAccent}>DNA</Text>
-            </Text>
-            <Text style={styles.brandSub}>Your unique content fingerprint</Text>
-          </View>
+        <View>
+          <Text style={styles.brand}>DNA</Text>
+          <Text style={styles.brandSub}>Your unique content fingerprint</Text>
         </View>
 
         <Card style={styles.profileCard}>
@@ -238,9 +232,7 @@ const styles = StyleSheet.create({
     gap: 14,
   },
 
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   brand: { ...type.h3, color: colors.text, fontSize: 22 },
-  brandAccent: { color: colors.primary },
   brandSub: { ...type.small, color: colors.textSub, marginTop: 2 },
 
   profileCard: { flexDirection: 'row', alignItems: 'center', gap: 13 },
