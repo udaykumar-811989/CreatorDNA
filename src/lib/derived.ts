@@ -527,32 +527,66 @@ export function periodTotals(
     }
     return { views, likes, comments };
   }
-  // No usable daily series: fall back to the real window totals the API
-  // did share (7-day and 30-day windows; the 90-day window backs both the
-  // 90-day filter and the 1-year filter, which honestly covers the ~90 days
-  // Instagram retains — the UI says so).
+  // No usable daily series for this window: fall back to the real window
+  // totals the API did share (7-day; 90-day backs the 90-day and 1-year
+  // filters), and finally to the 30-day headline totals so every period
+  // shows live numbers instead of dead "—" tiles.
+  const headline = {
+    views: dashboard.stats.views,
+    likes: dashboard.stats.likes,
+    comments: dashboard.stats.comments,
+  };
   if (days === 7) {
-    return {
-      views: dashboard.stats.week.views,
-      likes: dashboard.stats.week.likes,
-      comments: dashboard.stats.week.comments,
-    };
+    const week = dashboard.stats.week;
+    if (week.views !== null || week.likes !== null || week.comments !== null) {
+      return { views: week.views, likes: week.likes, comments: week.comments };
+    }
+    return headline;
   }
   if (days === 90 || days === 365) {
-    return {
-      views: dashboard.stats.ninety.views,
-      likes: dashboard.stats.ninety.likes,
-      comments: dashboard.stats.ninety.comments,
-    };
+    const ninety = dashboard.stats.ninety;
+    if (ninety.views !== null || ninety.likes !== null || ninety.comments !== null) {
+      return { views: ninety.views, likes: ninety.likes, comments: ninety.comments };
+    }
+    return headline;
   }
-  if (days === 30) {
-    return {
-      views: dashboard.stats.views,
-      likes: dashboard.stats.likes,
-      comments: dashboard.stats.comments,
-    };
+  return headline;
+}
+
+// Totals for the window immediately before the selected one, computed from
+// the daily series so 7/90/365-day views get real growth deltas too.
+// Returns null when there isn't enough day-by-day history to compare.
+export function previousPeriodTotals(
+  dashboard: InstagramDashboard | null,
+  days: number,
+  now = new Date(),
+): PeriodTotals | null {
+  if (!dashboard?.daily) {
+    return null;
   }
-  return { views: null, likes: null, comments: null };
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (2 * days - 1));
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days);
+  const startKey = toDateKey(start);
+  const endKey = toDateKey(end);
+  const points = dashboard.daily.filter(
+    (point) => point.date >= startKey && point.date <= endKey,
+  );
+  const sum = (pick: (point: DailyPoint) => number | null): number | null => {
+    const values = points
+      .map(pick)
+      .filter((value): value is number => value !== null);
+    if (values.length === 0) {
+      return null;
+    }
+    return values.reduce((total, value) => total + value, 0);
+  };
+  const views = sum((point) => point.views);
+  const likes = sum((point) => point.likes);
+  const comments = sum((point) => point.comments);
+  if (views === null && likes === null && comments === null) {
+    return null;
+  }
+  return { views, likes, comments };
 }
 
 export function chartPoints(

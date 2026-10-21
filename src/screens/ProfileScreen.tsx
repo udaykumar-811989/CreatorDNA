@@ -168,11 +168,13 @@ export function ProfileScreen({
             onPress={onOpenSettings}
           />
           <View style={styles.rowDivider} />
+          {/* Non-destructive: tapping shows the connected account card —
+              only Logout or an explicit Reconnect ever ends the session. */}
           <ListRow
             tone={tone}
             icon={<LinkOutIcon size={19} color={iconColor} />}
             label="Connected Accounts"
-            value={connected ? 'Instagram ✓' : 'Not connected'}
+            value={connected ? `Instagram @${username}` : 'Not connected'}
             onPress={onReconnect}
           />
           <View style={styles.rowDivider} />

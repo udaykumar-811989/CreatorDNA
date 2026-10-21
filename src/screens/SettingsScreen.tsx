@@ -126,7 +126,7 @@ export function SettingsScreen({
   onClearChat: () => void;
   onEraseData: () => void;
 }) {
-  const [dialog, setDialog] = useState<'clearChat' | 'eraseData' | null>(null);
+  const [dialog, setDialog] = useState<'clearChat' | 'eraseData' | 'reconnect' | null>(null);
   const { mode, setMode } = useTheme();
   const c = useThemeColors();
   const isDark = mode === 'dark';
@@ -241,6 +241,8 @@ export function SettingsScreen({
         {/* Account */}
         <Text style={styles.sectionLabel}>Account</Text>
         <View style={styles.card}>
+          {/* Non-destructive: tapping shows the connected account card — the
+              explicit row below is the only thing that ends the session. */}
           <ListRow
             tone={tone}
             icon={<LinkOutIcon size={19} color={iconColor} />}
@@ -254,7 +256,7 @@ export function SettingsScreen({
             icon={<RefreshIcon size={18} color={iconColor} />}
             label="Reconnect Instagram"
             value="Fresh login"
-            onPress={onReconnect}
+            onPress={() => setDialog('reconnect')}
           />
         </View>
 
@@ -317,6 +319,24 @@ export function SettingsScreen({
         onConfirm={() => {
           setDialog(null);
           onEraseData();
+        }}
+        onCancel={() => setDialog(null)}
+        c={c}
+        isDark={isDark}
+      />
+      <ConfirmDialog
+        visible={dialog === 'reconnect'}
+        title="Reconnect Instagram?"
+        body={
+          username
+            ? `This signs this device out of @${username} and starts a fresh Instagram login. Your analyses, ideas and chat history stay untouched.`
+            : 'This starts a fresh Instagram login. Your analyses, ideas and chat history stay untouched.'
+        }
+        confirmLabel="Reconnect"
+        destructive
+        onConfirm={() => {
+          setDialog(null);
+          onReconnect();
         }}
         onCancel={() => setDialog(null)}
         c={c}

@@ -9,6 +9,7 @@ import {
   formatPercent,
   growthDelta,
   periodTotals,
+  previousPeriodTotals,
   topicsBreakdown,
 } from '../lib/derived';
 import type { AnalysisRecord } from '../lib/storage';
@@ -33,10 +34,17 @@ export function PerformanceScreen({
   const [days, setDays] = useState<number>(30);
 
   const totals = periodTotals(dashboard, days);
-  const previous = days === 30 ? dashboard?.stats.previous ?? null : null;
+  // 30 days compares against the server's real previous-30-day window; the
+  // other periods compare against the daily series' preceding window so
+  // every filter gets real deltas when the history exists.
+  const previous =
+    days === 30
+      ? dashboard?.stats.previous ?? null
+      : previousPeriodTotals(dashboard, days);
   const viewsDelta = previous ? growthDelta(totals.views, previous.views) : null;
   const likesDelta = previous ? growthDelta(totals.likes, previous.likes) : null;
   const commentsDelta = previous ? growthDelta(totals.comments, previous.comments) : null;
+  const hasDeltas = viewsDelta !== null || likesDelta !== null || commentsDelta !== null;
 
   const chartMetric =
     metric === 'Reach' ? 'reach' : metric === 'Engagement' ? 'engagement' : 'views';
@@ -106,11 +114,14 @@ export function PerformanceScreen({
             delta={commentsDelta}
           />
         </View>
-        {days === 30 ? (
-          <Text style={styles.deltaNote}>↑ deltas compare with your previous 30 days</Text>
-        ) : days === 365 ? (
+        {hasDeltas ? (
           <Text style={styles.deltaNote}>
-            Instagram keeps only the last 90 days of history — the 1-year view covers everything available.
+            ↑ deltas compare with your previous {days === 365 ? 'year' : `${days} days`}
+          </Text>
+        ) : null}
+        {days === 365 ? (
+          <Text style={styles.deltaNote}>
+            Instagram keeps up to ~90 days of insights — the 1-year view covers everything available.
           </Text>
         ) : null}
 

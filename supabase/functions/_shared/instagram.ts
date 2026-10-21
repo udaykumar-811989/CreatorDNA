@@ -534,18 +534,19 @@ export async function fetchInstagramDashboard(
     );
 
   // Current 30-day totals for the headline stats, previous 30-day totals for
-  // real growth deltas, and a 90-day daily series for charts/period filters.
+  // real growth deltas, and a ~90-day daily series for charts/period filters.
   // Every window is lenient so a metric hiccup (common on newly converted
   // accounts) degrades to null stats instead of taking the dashboard down —
   // auth failures still propagate as reconnect_required.
   // Instagram retains ~90 days of insights but rejects a single since/until
   // request spanning much more than a month — one 90-day day-series query
-  // was silently failing, which left every period except 30 days empty. The // day-series is fetched in three 27-day chunks instead (a failed chunk is
-  // skipped: shorter history beats none), and real 7- and 90-day window
-  // totals back the period filters when no day-series is shared at all.
+  // was silently failing, which left every period except 30 days empty. The
+  // day-series is fetched in three one-month chunks instead (a failed chunk
+  // is skipped: shorter history beats none), and the 7-/90-day window totals
+  // fall back to sums of that series when Meta rejects their wider window.
   const dailyWindows = [1, 2, 3].map((back) => ({
-    start: now - back * 27 * day,
-    end: now - (back - 1) * 27 * day,
+    start: now - back * 30 * day,
+    end: now - (back - 1) * 30 * day,
   }));
   const [insightValues, previousValues, dailySeriesValues, weekValues, ninetyValues] =
     await Promise.all([
@@ -634,6 +635,24 @@ export async function fetchInstagramDashboard(
       comments: valueAt(seriesByMetric[2], date),
     }));
 
+  // Window totals prefer the API's own sums; when Meta rejects a wide
+  // since/until window (the 90-day request often fails this way), sum the
+  // chunked day-series instead so the 90-day and 1-year filters stay live.
+  const sumSeriesWindow = (
+    points: Array<{ date: string; value: number }> | null,
+    days: number,
+  ): number | null => {
+    if (!points) {
+      return null;
+    }
+    const cutoff = new Date((now - (days - 1) * day) * 1000).toISOString().slice(0, 10);
+    const values = points.filter((point) => point.date >= cutoff);
+    if (values.length === 0) {
+      return null;
+    }
+    return values.reduce((total, point) => total + point.value, 0);
+  };
+
   return {
     profile: { ...profile, followersCount, mediaCount },
     stats: {
@@ -647,16 +666,23 @@ export async function fetchInstagramDashboard(
       saves: parseInstagramInsightValue(insightValues[5], 'saves'),
       profileViews: parseInstagramInsightValue(insightValues[6], 'profile_views'),
       // Real window totals for the period filters; null values mean Meta
-      // didn't share that metric for the window.
+      // didn't share that metric for the window and the day-series had no
+      // fallback to sum either.
       week: {
-        views: parseInstagramInsightValue(weekValues[0], 'views'),
-        likes: parseInstagramInsightValue(weekValues[1], 'likes'),
-        comments: parseInstagramInsightValue(weekValues[2], 'comments'),
+        views: parseInstagramInsightValue(weekValues[0], 'views')
+          ?? sumSeriesWindow(seriesByMetric[0], 7),
+        likes: parseInstagramInsightValue(weekValues[1], 'likes')
+          ?? sumSeriesWindow(seriesByMetric[1], 7),
+        comments: parseInstagramInsightValue(weekValues[2], 'comments')
+          ?? sumSeriesWindow(seriesByMetric[2], 7),
       },
       ninety: {
-        views: parseInstagramInsightValue(ninetyValues[0], 'views'),
-        likes: parseInstagramInsightValue(ninetyValues[1], 'likes'),
-        comments: parseInstagramInsightValue(ninetyValues[2], 'comments'),
+        views: parseInstagramInsightValue(ninetyValues[0], 'views')
+          ?? sumSeriesWindow(seriesByMetric[0], 90),
+        likes: parseInstagramInsightValue(ninetyValues[1], 'likes')
+          ?? sumSeriesWindow(seriesByMetric[1], 90),
+        comments: parseInstagramInsightValue(ninetyValues[2], 'comments')
+          ?? sumSeriesWindow(seriesByMetric[2], 90),
       },
       followers: followersCount,
       previous: {
