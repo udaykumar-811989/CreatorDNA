@@ -329,6 +329,7 @@ async function handleCallback(
     status: 'connected' | 'failed',
     receipt?: string,
     errorCode?: string,
+    errorDetail?: string,
   ) => {
     const destination = new URL(storedState.return_uri);
     destination.searchParams.set('instagram_status', status);
@@ -338,6 +339,9 @@ async function handleCallback(
     }
     if (errorCode) {
       destination.searchParams.set('instagram_error', errorCode);
+    }
+    if (errorDetail) {
+      destination.searchParams.set('instagram_error_detail', errorDetail);
     }
     headers.set('Location', destination.toString());
     return new Response(null, { status: 303, headers });
@@ -390,8 +394,13 @@ async function handleCallback(
     const code = error instanceof InstagramFlowError
       ? error.code
       : 'instagram_api_error';
-    console.error(`Instagram OAuth callback failed: ${code}`);
-    return redirectToApp('failed', undefined, code);
+    const detail = error instanceof InstagramFlowError
+      ? error.detail
+      : undefined;
+    console.error(
+      `Instagram OAuth callback failed: ${code}${detail ? ` detail=${detail}` : ''}`,
+    );
+    return redirectToApp('failed', undefined, code, detail);
   }
 }
 

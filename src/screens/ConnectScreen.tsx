@@ -49,6 +49,7 @@ export function ConnectScreen({
   onContinueWithoutInstagram,
   connectionState,
   connectionError,
+  connectionErrorDetail,
   profile,
 }: {
   onBack: () => void;
@@ -57,6 +58,7 @@ export function ConnectScreen({
   onContinueWithoutInstagram: () => void;
   connectionState: ConnectionState;
   connectionError: string | null;
+  connectionErrorDetail: string | null;
   profile: InstagramProfile | null;
 }) {
   return (
@@ -144,6 +146,9 @@ export function ConnectScreen({
           <Text accessibilityRole="alert" style={styles.error}>
             {connectionErrorMessages[connectionError] ??
               'Instagram connection failed. Please try again.'}
+            {connectionErrorDetail
+              ? ` (Instagram reports: ${connectionErrorDetail})`
+              : ''}
           </Text>
         ) : null}
 

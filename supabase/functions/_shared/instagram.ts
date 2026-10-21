@@ -63,7 +63,11 @@ export type InstagramErrorCode =
   | 'instagram_api_error';
 
 export class InstagramFlowError extends Error {
-  constructor(readonly code: InstagramErrorCode) {
+  constructor(
+    readonly code: InstagramErrorCode,
+    /** Raw provider detail (e.g. the rejected account_type) for display. */
+    readonly detail?: string,
+  ) {
     super(code);
     this.name = 'InstagramFlowError';
   }
@@ -173,13 +177,17 @@ export function assertRequiredPermissions(value: unknown): string[] {
 }
 
 function normalizeAccountType(value: unknown): AccountType | null {
-  if (value === 'Business') {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  // Match case/separator-insensitively ('Creator', 'Media_Creator',
+  // 'MEDIA CREATOR', …) so label drift never rejects a professional account
+  // as unsupported.
+  const label = value.trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (label === 'business') {
     return 'Business';
   }
-  // Meta documents `Media_Creator`; accept the unqualified `Creator` label
-  // too in case the API returns it, so real creator accounts are never
-  // rejected as unsupported.
-  if (value === 'Media_Creator' || value === 'Creator') {
+  if (label === 'creator' || label === 'mediacreator') {
     return 'Media_Creator';
   }
   return null;
@@ -199,7 +207,13 @@ export function normalizeInstagramProfile(value: unknown): InstagramProfile {
     !(typeof accountTypeValue === 'string' && accountTypeValue.trim() === '');
   if (!instagramUserId || !username || !accountType) {
     if (hasExplicitUnsupportedAccountType) {
-      throw new InstagramFlowError('unsupported_account');
+      // Carry the raw value to the app ("Instagram reports: …") so a stuck
+      // conversion or wrong-account login is visible instead of a dead end.
+      const reported = String(accountTypeValue).slice(0, 40);
+      console.error(
+        `Instagram rejected account_type=${JSON.stringify(reported)} for @${username || 'unknown'}`,
+      );
+      throw new InstagramFlowError('unsupported_account', reported);
     }
     throw new InstagramFlowError('invalid_profile');
   }

@@ -115,6 +115,9 @@ function AppShell() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectionErrorDetail, setConnectionErrorDetail] = useState<
+    string | null
+  >(null);
   const incomingUrl = Linking.useURL();
   const handledReceipts = useRef(new Set<string>());
   const handledOAuthStates = useRef(new Set<string>());
@@ -268,6 +271,11 @@ function AppShell() {
           ? query.instagram_error
           : 'oauth_rejected';
       setConnectionError(errorCode);
+      setConnectionErrorDetail(
+        typeof query.instagram_error_detail === 'string'
+          ? query.instagram_error_detail
+          : null,
+      );
       setConnectionState('failed');
       return;
     }
@@ -372,6 +380,7 @@ function AppShell() {
   const connectInstagram = useCallback(async () => {
     setConnectionState('connecting');
     setConnectionError(null);
+    setConnectionErrorDetail(null);
     try {
       if (!instagramFunctionUrl || !supabaseAnonKey) {
         throw new Error('Supabase client configuration is missing.');
@@ -1198,6 +1207,7 @@ function AppShell() {
           onContinueWithoutInstagram={continueWithoutInstagram}
           connectionState={connectionState}
           connectionError={connectionError}
+          connectionErrorDetail={connectionErrorDetail}
           profile={profile}
         />
       )}

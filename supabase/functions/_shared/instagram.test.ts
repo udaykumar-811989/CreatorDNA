@@ -69,6 +69,15 @@ test('profile parser accepts professional Creator and Business accounts only', (
     }).accountType,
     'Media_Creator',
   );
+  // Label drift in casing/format still counts as professional.
+  assert.equal(
+    normalizeInstagramProfile({
+      user_id: '17840000000000002',
+      username: 'veyyra_creator_3',
+      account_type: 'MEDIA CREATOR',
+    }).accountType,
+    'Media_Creator',
+  );
   assert.throws(
     () =>
       normalizeInstagramProfile({
@@ -76,7 +85,13 @@ test('profile parser accepts professional Creator and Business accounts only', (
         username: 'personal',
         account_type: 'Personal',
       }),
-    /unsupported_account/,
+    (error: unknown) =>
+      typeof error === 'object' &&
+      error !== null &&
+      (error as { code?: unknown }).code === 'unsupported_account' &&
+      // The raw value travels to the app so the creator can see exactly
+      // what Instagram reported.
+      (error as { detail?: unknown }).detail === 'Personal',
   );
   assert.throws(
     () =>
