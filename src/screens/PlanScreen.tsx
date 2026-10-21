@@ -47,6 +47,13 @@ export function PlanScreen({
   const plan = buildPlan(ideas);
   const upcoming = sortIdeas(ideas).slice(7);
   const days = plan;
+  // Real calendar date, e.g. "Wed, Oct 21" — the plan always builds from today.
+  const dateLabel = (date: Date) =>
+    date.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
 
   return (
     <View style={styles.screen}>
@@ -67,7 +74,7 @@ export function PlanScreen({
           {plan.map((day) => (
             <View key={day.index} style={[styles.weekDay, day.isToday && styles.weekDayActive]}>
               <Text style={[styles.weekLabel, day.isToday && styles.weekLabelActive]}>
-                {day.weekday.slice(0, 2)}
+                {day.weekday}
               </Text>
               <View style={[styles.weekCircle, day.isToday && styles.weekCircleActive]}>
                 <Text style={[styles.weekNumber, day.isToday && styles.weekNumberActive]}>
@@ -104,9 +111,7 @@ export function PlanScreen({
                     ]}
                   >
                     <View style={styles.dayCardHead}>
-                      <Text style={styles.dayCardDay}>
-                        Day {day.index + 1} • {day.weekday} {day.dayNumber}
-                      </Text>
+                      <Text style={styles.dayCardDay}>{dateLabel(day.date)}</Text>
                       {day.isToday ? <Badge label="Today" tone="purple" /> : null}
                     </View>
                     <Text style={styles.dayCardTitle} numberOfLines={2}>
@@ -122,7 +127,7 @@ export function PlanScreen({
                   </Pressable>
                 ) : (
                   <View key={day.index} style={[styles.dayCard, styles.dayCardEmpty]}>
-                    <Text style={styles.dayCardDay}>Day {day.index + 1}</Text>
+                    <Text style={styles.dayCardDay}>{dateLabel(day.date)}</Text>
                     <Text style={styles.dayCardEmptyText}>No idea planned — a rest day</Text>
                   </View>
                 ),

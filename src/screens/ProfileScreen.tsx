@@ -1,10 +1,12 @@
 import { LinearGradient } from 'expo-linear-gradient';
+import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { DnaMark } from '../components/DnaMark';
 import { ChevronRightIcon, GearIcon, LinkOutIcon, LogoutIcon, DocIcon } from '../components/icons';
 import { Avatar, Badge, ListRow, ScreenHeader } from '../components/ui';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
-import { colors, FAB_CLEARANCE, radius, type } from '../theme';
+import { useTheme, useThemeColors } from '../themeContext';
+import { FAB_CLEARANCE, radius, type } from '../theme';
 
 export function ProfileScreen({
   profile,
@@ -27,23 +29,93 @@ export function ProfileScreen({
   onOpenSettings: () => void;
   onLogout: () => void;
 }) {
+  const { mode } = useTheme();
+  const c = useThemeColors();
+  const isDark = mode === 'dark';
+  const tone = isDark ? ('dark' as const) : ('light' as const);
+  const iconColor = isDark ? '#9E8CFF' : c.primary;
+
   const username = dashboard?.profile.username ?? profile?.username ?? null;
   const accountType = dashboard?.profile.accountType ?? profile?.accountType ?? null;
   const connected = Boolean(username);
   const displayName = username ?? 'Creator';
 
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        screen: { flex: 1, backgroundColor: c.darkBg },
+        content: {
+          paddingHorizontal: 18,
+          paddingTop: 8,
+          paddingBottom: FAB_CLEARANCE,
+          gap: 16,
+        },
+
+        identity: { alignItems: 'center', gap: 8, marginTop: 6 },
+        name: { ...type.h2, color: c.onDark, fontSize: 26, marginTop: 10 },
+        handle: { ...type.small, color: c.onDarkSub, fontSize: 14 },
+
+        dnaCard: {
+          borderRadius: radius.md + 4,
+          overflow: 'hidden',
+          shadowColor: '#6C5CE7',
+          shadowOpacity: 0.35,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 7 },
+          elevation: 6,
+        },
+        dnaCardInner: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 13,
+          backgroundColor: c.primary,
+          padding: 18,
+        },
+        dnaTitle: { ...type.h4, color: '#FFFFFF', fontSize: 19 },
+        dnaSub: { ...type.small, color: 'rgba(255,255,255,0.82)', marginTop: 3 },
+
+        warning: {
+          ...type.small,
+          color: '#C67C05',
+          backgroundColor: c.amberSoft,
+          borderRadius: radius.sm,
+          padding: 12,
+          lineHeight: 18,
+        },
+
+        rowsCard: {
+          backgroundColor: c.darkCard,
+          borderWidth: 1,
+          borderColor: c.darkBorder,
+          borderRadius: radius.md + 2,
+          paddingHorizontal: 16,
+        },
+        rowDivider: { height: StyleSheet.hairlineWidth, backgroundColor: c.darkBorder },
+
+        footerNote: {
+          ...type.small,
+          color: c.onDarkDim,
+          textAlign: 'center',
+          fontSize: 11.5,
+          lineHeight: 17,
+          paddingHorizontal: 10,
+        },
+      }),
+    [c],
+  );
+
   return (
     <View style={styles.screen}>
-      <LinearGradient colors={[colors.darkBg, colors.darkBg2, colors.darkBg3]} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={[c.darkBg, c.darkBg2, c.darkBg3]} style={StyleSheet.absoluteFill} />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <ScreenHeader title="Profile" tone="dark" />
+        <ScreenHeader title="Profile" tone={tone} />
 
         <View style={styles.identity}>
           <Avatar
             uri={dashboard?.profile.profilePictureUrl ?? profile?.profilePictureUrl ?? null}
             name={username}
             size={88}
-            dark
+            dark={isDark}
           />
           <Text style={styles.name} numberOfLines={1}>
             {displayName}
@@ -73,7 +145,10 @@ export function ProfileScreen({
               </Text>
               <Text style={styles.dnaSub}>Your personalized growth plan</Text>
             </View>
-            <ChevronRightIcon size={20} color="rgba(255,255,255,0.75)" />
+            <ChevronRightIcon
+              size={20}
+              color={isDark ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.85)'}
+            />
           </View>
         </Pressable>
 
@@ -87,31 +162,31 @@ export function ProfileScreen({
         {/* Rows */}
         <View style={styles.rowsCard}>
           <ListRow
-            tone="dark"
-            icon={<GearIcon size={19} color="#9E8CFF" />}
+            tone={tone}
+            icon={<GearIcon size={19} color={iconColor} />}
             label="Settings"
             onPress={onOpenSettings}
           />
           <View style={styles.rowDivider} />
           <ListRow
-            tone="dark"
-            icon={<LinkOutIcon size={19} color="#9E8CFF" />}
+            tone={tone}
+            icon={<LinkOutIcon size={19} color={iconColor} />}
             label="Connected Accounts"
             value={connected ? 'Instagram ✓' : 'Not connected'}
             onPress={onReconnect}
           />
           <View style={styles.rowDivider} />
           <ListRow
-            tone="dark"
-            icon={<DocIcon size={19} color="#9E8CFF" />}
+            tone={tone}
+            icon={<DocIcon size={19} color={iconColor} />}
             label="My analyses"
             value={`${recordCount}`}
             onPress={onOpenAnalyses}
           />
           <View style={styles.rowDivider} />
           <ListRow
-            tone="dark"
-            icon={<LogoutIcon size={19} color="#FF8B8B" />}
+            tone={tone}
+            icon={<LogoutIcon size={19} color={isDark ? '#FF8B8B' : c.red} />}
             label="Logout"
             onPress={onLogout}
             danger
@@ -126,63 +201,3 @@ export function ProfileScreen({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.darkBg },
-  content: {
-    paddingHorizontal: 18,
-    paddingTop: 8,
-    paddingBottom: FAB_CLEARANCE,
-    gap: 16,
-  },
-
-  identity: { alignItems: 'center', gap: 8, marginTop: 6 },
-  name: { ...type.h2, color: colors.onDark, fontSize: 26, marginTop: 10 },
-  handle: { ...type.small, color: colors.onDarkSub, fontSize: 14 },
-
-  dnaCard: {
-    borderRadius: radius.md + 4,
-    overflow: 'hidden',
-    shadowColor: '#6C5CE7',
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 7 },
-    elevation: 6,
-  },
-  dnaCardInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 13,
-    backgroundColor: colors.primary,
-    padding: 18,
-  },
-  dnaTitle: { ...type.h4, color: '#FFFFFF', fontSize: 19 },
-  dnaSub: { ...type.small, color: 'rgba(255,255,255,0.82)', marginTop: 3 },
-
-  warning: {
-    ...type.small,
-    color: '#FFD66B',
-    backgroundColor: 'rgba(245,158,11,0.12)',
-    borderRadius: radius.sm,
-    padding: 12,
-    lineHeight: 18,
-  },
-
-  rowsCard: {
-    backgroundColor: colors.darkCard,
-    borderWidth: 1,
-    borderColor: colors.darkBorder,
-    borderRadius: radius.md + 2,
-    paddingHorizontal: 16,
-  },
-  rowDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.darkBorder },
-
-  footerNote: {
-    ...type.small,
-    color: colors.onDarkDim,
-    textAlign: 'center',
-    fontSize: 11.5,
-    lineHeight: 17,
-    paddingHorizontal: 10,
-  },
-});

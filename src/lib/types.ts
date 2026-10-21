@@ -37,6 +37,7 @@ export type Screen =
 
 export const LIGHT_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
   'connect',
+  'connected',
   'dna',
   'ideas',
   'plan',

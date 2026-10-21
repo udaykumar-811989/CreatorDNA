@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -20,7 +20,8 @@ import type {
   CreatorAiChatAttachmentInput,
   CreatorAiChatMessage,
 } from '../services/creatorAi';
-import { colors, radius, type } from '../theme';
+import { useTheme, useThemeColors } from '../themeContext';
+import { radius, type } from '../theme';
 
 const STARTERS = [
   'What should I post today?',
@@ -73,24 +74,64 @@ function BubbleAttachment({
   mine: boolean;
 }) {
   const [failed, setFailed] = useState(false);
+  const { mode } = useTheme();
+  const c = useThemeColors();
+  const isDark = mode === 'dark';
+  const chipIcon = mine ? '#FFFFFF' : isDark ? '#C4A8FF' : c.primary;
+
+  const s = useMemo(
+    () =>
+      StyleSheet.create({
+        attachmentImage: {
+          width: 200,
+          height: 150,
+          borderRadius: 12,
+          backgroundColor: 'rgba(0,0,0,0.25)',
+        },
+        attachmentChip: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 7,
+          backgroundColor: isDark ? 'rgba(196,168,255,0.12)' : c.primarySoft,
+          borderRadius: 10,
+          paddingHorizontal: 11,
+          paddingVertical: 8,
+          alignSelf: 'flex-start',
+        },
+        attachmentChipMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
+        attachmentChipText: {
+          ...type.small,
+          color: isDark ? '#C4A8FF' : c.primary,
+          fontWeight: '700',
+          fontSize: 12.5,
+          maxWidth: 170,
+        },
+        attachmentChipTextMine: { color: '#FFFFFF' },
+      }),
+    [c, isDark],
+  );
+
   if (attachment.kind === 'image' && attachment.uri && !failed) {
     return (
       <Image
         source={{ uri: attachment.uri }}
-        style={styles.attachmentImage}
+        style={s.attachmentImage}
         onError={() => setFailed(true)}
         accessibilityLabel={attachment.name}
       />
     );
   }
   return (
-    <View style={[styles.attachmentChip, mine && styles.attachmentChipMine]}>
+    <View style={[s.attachmentChip, mine && s.attachmentChipMine]}>
       {attachment.kind === 'image' ? (
-        <ImageIcon size={15} color={mine ? '#FFFFFF' : '#C4A8FF'} />
+        <ImageIcon size={15} color={chipIcon} />
       ) : (
-        <VideoIcon size={15} color={mine ? '#FFFFFF' : '#C4A8FF'} />
+        <VideoIcon size={15} color={chipIcon} />
       )}
-      <Text style={[styles.attachmentChipText, mine && styles.attachmentChipTextMine]} numberOfLines={1}>
+      <Text
+        style={[s.attachmentChipText, mine && s.attachmentChipTextMine]}
+        numberOfLines={1}
+      >
         {attachment.name}
       </Text>
     </View>
@@ -117,6 +158,214 @@ export function ChatScreen({
   const [picking, setPicking] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+
+  const { mode } = useTheme();
+  const c = useThemeColors();
+  const isDark = mode === 'dark';
+  // Light purple accent only reads on dark surfaces; use brand purple on white.
+  const accent = isDark ? '#C4A8FF' : c.primary;
+  const dangerText = isDark ? '#FF9B9B' : c.red;
+
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        screen: { flex: 1, backgroundColor: c.darkBg },
+
+        header: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          paddingHorizontal: 16,
+          paddingTop: 10,
+          paddingBottom: 12,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: c.darkBorder,
+        },
+        headerBack: {
+          width: 38,
+          height: 38,
+          borderRadius: 19,
+          backgroundColor: c.surface2,
+          borderWidth: isDark ? 0 : 1,
+          borderColor: c.darkBorder,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        headerTitle: { ...type.bodyBold, color: c.onDark, fontSize: 16.5 },
+        headerSub: { fontSize: 11.5, color: c.onDarkDim, fontWeight: '600', marginTop: 2 },
+        clearButton: { fontSize: 13, fontWeight: '700', color: c.onDarkSub },
+
+        messages: { padding: 16, gap: 10, flexGrow: 1 },
+
+        empty: { alignItems: 'center', paddingTop: 48, paddingHorizontal: 12 },
+        emptyIcon: {
+          width: 64,
+          height: 64,
+          borderRadius: 32,
+          backgroundColor: isDark ? 'rgba(196,168,255,0.12)' : c.primarySoft,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: 16,
+        },
+        emptyTitle: { ...type.h4, color: c.onDark, textAlign: 'center', fontSize: 18 },
+        emptyHint: {
+          ...type.small,
+          color: c.onDarkSub,
+          textAlign: 'center',
+          marginTop: 8,
+          lineHeight: 19,
+        },
+        chips: { marginTop: 22, gap: 9, alignSelf: 'stretch' },
+        chip: {
+          backgroundColor: c.surface1,
+          borderWidth: 1,
+          borderColor: c.darkBorder,
+          borderRadius: 999,
+          paddingVertical: 11,
+          paddingHorizontal: 18,
+          alignItems: 'center',
+        },
+        chipText: { ...type.small, color: c.onDark, fontSize: 13.5 },
+
+        bubbleRow: { flexDirection: 'row' },
+        bubbleRowMine: { justifyContent: 'flex-end' },
+        bubbleRowAi: { justifyContent: 'flex-start' },
+        bubble: {
+          maxWidth: '84%',
+          borderRadius: 18,
+          paddingHorizontal: 15,
+          paddingVertical: 11,
+        },
+        bubbleMine: { borderBottomRightRadius: 6 },
+        bubbleAi: {
+          backgroundColor: c.darkCard2,
+          borderWidth: 1,
+          borderColor: c.darkBorder,
+          borderBottomLeftRadius: 6,
+        },
+        bubbleMineText: { ...type.body, color: '#FFFFFF', fontSize: 14.5 },
+        bubbleAiText: { ...type.body, color: c.onDark, fontSize: 14.5 },
+
+        attachmentImage: {
+          width: 200,
+          height: 150,
+          borderRadius: 12,
+          backgroundColor: 'rgba(0,0,0,0.25)',
+        },
+        attachmentChip: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 7,
+          backgroundColor: isDark ? 'rgba(196,168,255,0.12)' : c.primarySoft,
+          borderRadius: 10,
+          paddingHorizontal: 11,
+          paddingVertical: 8,
+          alignSelf: 'flex-start',
+        },
+        attachmentChipMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
+        attachmentChipText: {
+          ...type.small,
+          color: isDark ? '#C4A8FF' : c.primary,
+          fontWeight: '700',
+          fontSize: 12.5,
+          maxWidth: 170,
+        },
+        attachmentChipTextMine: { color: '#FFFFFF' },
+
+        typing: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+        typingText: { ...type.small, color: c.onDarkSub },
+
+        errorBox: {
+          backgroundColor: 'rgba(239,68,68,0.12)',
+          borderRadius: radius.sm,
+          padding: 12,
+          marginTop: 4,
+        },
+        errorText: { ...type.small, color: dangerText, lineHeight: 18 },
+
+        pendingRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          marginHorizontal: 14,
+          marginBottom: 8,
+          backgroundColor: c.surface1,
+          borderWidth: 1,
+          borderColor: c.darkBorder,
+          borderRadius: 12,
+          padding: 8,
+        },
+        pendingThumb: {
+          width: 42,
+          height: 42,
+          borderRadius: 8,
+          backgroundColor: 'rgba(0,0,0,0.3)',
+        },
+        pendingThumbVideo: { alignItems: 'center', justifyContent: 'center' },
+        pendingName: { ...type.small, color: c.onDark, flex: 1, fontWeight: '700' },
+        pendingRemove: {
+          width: 28,
+          height: 28,
+          borderRadius: 14,
+          backgroundColor: c.surface3,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        pendingRemoveText: { color: c.onDark, fontSize: 13, fontWeight: '700' },
+
+        pickError: {
+          ...type.small,
+          color: dangerText,
+          marginHorizontal: 16,
+          marginBottom: 8,
+          fontSize: 12,
+        },
+
+        inputBar: {
+          flexDirection: 'row',
+          alignItems: 'flex-end',
+          gap: 8,
+          paddingHorizontal: 12,
+          paddingTop: 10,
+          paddingBottom: Platform.OS === 'ios' ? 26 : 14,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: c.darkBorder,
+          backgroundColor: c.footerBg,
+        },
+        attachButton: {
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: c.surface1,
+          marginBottom: 4,
+        },
+        input: {
+          flex: 1,
+          minHeight: 44,
+          maxHeight: 130,
+          backgroundColor: c.surface2,
+          borderWidth: 1,
+          borderColor: c.darkBorder,
+          borderRadius: 22,
+          paddingHorizontal: 16,
+          paddingTop: 11,
+          paddingBottom: 11,
+          color: c.onDark,
+          fontSize: 15,
+        },
+        sendButton: { borderRadius: 24, overflow: 'hidden' },
+        sendFill: {
+          width: 46,
+          height: 46,
+          borderRadius: 23,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+      }),
+    [c, isDark, dangerText],
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -185,7 +434,10 @@ export function ChatScreen({
       style={styles.screen}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <LinearGradient colors={[colors.darkBg, colors.darkBg2, colors.darkBg3]} style={StyleSheet.absoluteFill} />
+      <LinearGradient
+        colors={[c.darkBg, c.darkBg2, c.darkBg3]}
+        style={StyleSheet.absoluteFill}
+      />
 
       {/* Header */}
       <View style={styles.header}>
@@ -196,7 +448,7 @@ export function ChatScreen({
           hitSlop={12}
           style={({ pressed }) => [styles.headerBack, pressed && { opacity: 0.6 }]}
         >
-          <BackIcon size={20} color={colors.onDark} />
+          <BackIcon size={20} color={c.onDark} />
         </Pressable>
         <DnaMark size={34} />
         <View style={{ flex: 1 }}>
@@ -222,7 +474,7 @@ export function ChatScreen({
         {messages.length === 0 ? (
           <View style={styles.empty}>
             <View style={styles.emptyIcon}>
-              <SparkIcon size={26} color="#C4A8FF" />
+              <SparkIcon size={26} color={accent} />
             </View>
             <Text style={styles.emptyTitle}>Ask anything about your content</Text>
             <Text style={styles.emptyHint}>
@@ -252,7 +504,7 @@ export function ChatScreen({
               >
                 {mine ? (
                   <LinearGradient
-                    colors={colors.gradient}
+                    colors={c.gradient}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     style={[styles.bubble, styles.bubbleMine]}
@@ -286,7 +538,7 @@ export function ChatScreen({
         {sending ? (
           <View style={[styles.bubbleRow, styles.bubbleRowAi]}>
             <View style={[styles.bubble, styles.bubbleAi, styles.typing]}>
-              <ActivityIndicator size="small" color="#C4A8FF" />
+              <ActivityIndicator size="small" color={accent} />
               <Text style={styles.typingText}>CreatorDNA is thinking…</Text>
             </View>
           </View>
@@ -308,7 +560,7 @@ export function ChatScreen({
             <Image source={{ uri: pending.uri }} style={styles.pendingThumb} />
           ) : (
             <View style={[styles.pendingThumb, styles.pendingThumbVideo]}>
-              <VideoIcon size={18} color="#C4A8FF" />
+              <VideoIcon size={18} color={accent} />
             </View>
           )}
           <Text style={styles.pendingName} numberOfLines={1}>
@@ -345,7 +597,7 @@ export function ChatScreen({
             pressed && { opacity: 0.7 },
           ]}
         >
-          <ImageIcon size={20} color={colors.onDarkSub} />
+          <ImageIcon size={20} color={c.onDarkSub} />
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -359,16 +611,16 @@ export function ChatScreen({
           ]}
         >
           {picking ? (
-            <ActivityIndicator size="small" color={colors.onDarkSub} />
+            <ActivityIndicator size="small" color={c.onDarkSub} />
           ) : (
-            <VideoIcon size={20} color={colors.onDarkSub} />
+            <VideoIcon size={20} color={c.onDarkSub} />
           )}
         </Pressable>
         <TextInput
           value={draft}
           onChangeText={setDraft}
           placeholder={pending ? 'Add a note about the attachment…' : 'Ask about your content…'}
-          placeholderTextColor={colors.onDarkDim}
+          placeholderTextColor={c.onDarkDim}
           style={styles.input}
           multiline
           onSubmitEditing={() => send()}
@@ -384,7 +636,7 @@ export function ChatScreen({
             pressed && { transform: [{ scale: 0.94 }] },
           ]}
         >
-          <LinearGradient colors={colors.gradient} style={styles.sendFill}>
+          <LinearGradient colors={c.gradient} style={styles.sendFill}>
             <SendIcon size={20} color="#FFFFFF" />
           </LinearGradient>
         </Pressable>
@@ -392,177 +644,3 @@ export function ChatScreen({
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.darkBg },
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.darkBorder,
-  },
-  headerBack: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: 'rgba(255,255,255,0.07)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: { ...type.bodyBold, color: colors.onDark, fontSize: 16.5 },
-  headerSub: { fontSize: 11.5, color: colors.onDarkDim, fontWeight: '600', marginTop: 2 },
-  clearButton: { fontSize: 13, fontWeight: '700', color: colors.onDarkSub },
-
-  messages: { padding: 16, gap: 10, flexGrow: 1 },
-
-  empty: { alignItems: 'center', paddingTop: 48, paddingHorizontal: 12 },
-  emptyIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(196,168,255,0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  emptyTitle: { ...type.h4, color: colors.onDark, textAlign: 'center', fontSize: 18 },
-  emptyHint: {
-    ...type.small,
-    color: colors.onDarkSub,
-    textAlign: 'center',
-    marginTop: 8,
-    lineHeight: 19,
-  },
-  chips: { marginTop: 22, gap: 9, alignSelf: 'stretch' },
-  chip: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: colors.darkBorder,
-    borderRadius: 999,
-    paddingVertical: 11,
-    paddingHorizontal: 18,
-    alignItems: 'center',
-  },
-  chipText: { ...type.small, color: colors.onDark, fontSize: 13.5 },
-
-  bubbleRow: { flexDirection: 'row' },
-  bubbleRowMine: { justifyContent: 'flex-end' },
-  bubbleRowAi: { justifyContent: 'flex-start' },
-  bubble: { maxWidth: '84%', borderRadius: 18, paddingHorizontal: 15, paddingVertical: 11 },
-  bubbleMine: { borderBottomRightRadius: 6 },
-  bubbleAi: { backgroundColor: colors.darkCard2, borderWidth: 1, borderColor: colors.darkBorder, borderBottomLeftRadius: 6 },
-  bubbleMineText: { ...type.body, color: '#FFFFFF', fontSize: 14.5 },
-  bubbleAiText: { ...type.body, color: '#E9E7FA', fontSize: 14.5 },
-
-  attachmentImage: {
-    width: 200,
-    height: 150,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-  },
-  attachmentChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    backgroundColor: 'rgba(196,168,255,0.12)',
-    borderRadius: 10,
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-    alignSelf: 'flex-start',
-  },
-  attachmentChipMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
-  attachmentChipText: { ...type.small, color: '#C4A8FF', fontWeight: '700', fontSize: 12.5, maxWidth: 170 },
-  attachmentChipTextMine: { color: '#FFFFFF' },
-
-  typing: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-  typingText: { ...type.small, color: colors.onDarkSub },
-
-  errorBox: {
-    backgroundColor: 'rgba(239,68,68,0.12)',
-    borderRadius: radius.sm,
-    padding: 12,
-    marginTop: 4,
-  },
-  errorText: { ...type.small, color: '#FF9B9B', lineHeight: 18 },
-
-  pendingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginHorizontal: 14,
-    marginBottom: 8,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: colors.darkBorder,
-    borderRadius: 12,
-    padding: 8,
-  },
-  pendingThumb: { width: 42, height: 42, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.3)' },
-  pendingThumbVideo: { alignItems: 'center', justifyContent: 'center' },
-  pendingName: { ...type.small, color: colors.onDark, flex: 1, fontWeight: '700' },
-  pendingRemove: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pendingRemoveText: { color: colors.onDark, fontSize: 13, fontWeight: '700' },
-
-  pickError: {
-    ...type.small,
-    color: '#FF9B9B',
-    marginHorizontal: 16,
-    marginBottom: 8,
-    fontSize: 12,
-  },
-
-  inputBar: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: Platform.OS === 'ios' ? 26 : 14,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.darkBorder,
-    backgroundColor: 'rgba(8,11,27,0.72)',
-  },
-  attachButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    marginBottom: 4,
-  },
-  input: {
-    flex: 1,
-    minHeight: 44,
-    maxHeight: 130,
-    backgroundColor: 'rgba(255,255,255,0.07)',
-    borderWidth: 1,
-    borderColor: colors.darkBorder,
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingTop: 11,
-    paddingBottom: 11,
-    color: colors.onDark,
-    fontSize: 15,
-  },
-  sendButton: { borderRadius: 24, overflow: 'hidden' },
-  sendFill: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});

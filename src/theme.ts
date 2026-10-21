@@ -45,6 +45,44 @@ export const colors = {
 
   // Mock accents
   igGradient: ['#7438E8', '#C135BD', '#F56040', '#FFBD45'] as const,
+
+  // Themed surfaces for the dark-design screens (onboarding, auth, home,
+  // profile, settings, chat). Light mode overrides these below so those
+  // screens can render a full light variant from the same keys.
+  pageBg: '#070A1A',
+  entryBg: ['#070A1A', '#11132D', '#17102F'] as [string, string, string],
+  surface1: 'rgba(255,255,255,0.06)',
+  surface2: 'rgba(255,255,255,0.07)',
+  surface3: 'rgba(255,255,255,0.10)',
+  outlineSoft: 'rgba(255,255,255,0.35)',
+  footerBg: 'rgba(8,11,27,0.72)',
+  insightCard: '#1B1B3A',
+};
+
+export type ThemeMode = 'light' | 'dark';
+
+// Light-mode palette — same keys as `colors`, so a themed screen swaps the
+// whole object at once. Brand and status colors are shared across modes.
+// Default mode is 'dark', which reproduces the original mock exactly.
+export const lightColors: typeof colors = {
+  ...colors,
+  darkBg: '#F4F3FB',
+  darkBg2: '#FFFFFF',
+  darkBg3: '#EDEBF8',
+  darkCard: '#FFFFFF',
+  darkCard2: '#F3F1FC',
+  darkBorder: '#E6E3F4',
+  onDark: '#16142B',
+  onDarkSub: '#5E5A7C',
+  onDarkDim: '#9693AE',
+  pageBg: '#FFFFFF',
+  entryBg: ['#FFFFFF', '#FBFAFF', '#F4F1FF'] as [string, string, string],
+  surface1: '#F1EFFB',
+  surface2: '#FFFFFF',
+  surface3: '#E9E5FD',
+  outlineSoft: 'rgba(22,20,43,0.28)',
+  footerBg: 'rgba(255,255,255,0.96)',
+  insightCard: '#FFF8E8',
 };
 
 export const spacing = {

@@ -1,4 +1,5 @@
 import { LinearGradient } from 'expo-linear-gradient';
+import { useMemo } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ScoreRing } from '../components/ScoreRing';
 import { SparkIcon } from '../components/icons';
@@ -15,7 +16,8 @@ import {
 } from '../lib/derived';
 import type { AnalysisRecord } from '../lib/storage';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
-import { colors, FAB_CLEARANCE, radius, type } from '../theme';
+import { useTheme, useThemeColors } from '../themeContext';
+import { FAB_CLEARANCE, type } from '../theme';
 
 export function HomeScreen({
   profile,
@@ -40,6 +42,11 @@ export function HomeScreen({
   onConnect: () => void;
   onViewDna: () => void;
 }) {
+  const { mode } = useTheme();
+  const c = useThemeColors();
+  const isDark = mode === 'dark';
+  const tone = isDark ? ('dark' as const) : ('light' as const);
+
   const username = dashboard?.profile.username ?? profile?.username ?? null;
   const stats = dashboard?.stats ?? null;
   const viewsDelta = stats ? growthDelta(stats.views, stats.previous?.views ?? null) : null;
@@ -49,9 +56,73 @@ export function HomeScreen({
   const avgViews = averageDailyViews(dashboard);
   const rate = engagementRate(stats);
 
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        screen: { flex: 1, backgroundColor: c.darkBg },
+        content: {
+          paddingHorizontal: 18,
+          paddingTop: 10,
+          paddingBottom: FAB_CLEARANCE,
+          gap: 14,
+        },
+
+        greetRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
+        greet: { ...type.h3, color: c.onDark, fontSize: 22, letterSpacing: -0.4 },
+        greetSub: { ...type.small, color: c.onDarkSub, marginTop: 5, fontSize: 13.5 },
+
+        errorCard: { borderColor: c.darkBorder },
+        errorTitle: { ...type.h4, color: c.onDark },
+        errorBody: { ...type.small, color: c.onDarkSub, marginTop: 6, lineHeight: 18 },
+
+        growthCard: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: c.darkCard2,
+          paddingVertical: 18,
+          gap: 12,
+        },
+        growthLeft: { flex: 1 },
+        growthLabel: {
+          ...type.tiny,
+          color: c.onDarkSub,
+          textTransform: 'uppercase',
+        },
+        growthValue: { fontSize: 40, fontWeight: '800', letterSpacing: -1.4, marginTop: 8 },
+        growthCaption: { ...type.small, color: c.onDarkDim, marginTop: 4 },
+        growthRight: { alignItems: 'center', gap: 8, paddingRight: 4 },
+        ringLabel: { ...type.tiny, color: c.onDarkSub, textTransform: 'uppercase' },
+
+        statsRow: { flexDirection: 'row', gap: 10 },
+
+        insightCard: { backgroundColor: c.insightCard },
+        insightHead: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+        insightIcon: {
+          width: 30,
+          height: 30,
+          borderRadius: 15,
+          backgroundColor: isDark ? 'rgba(255, 214, 107, 0.14)' : c.amberSoft,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        insightTitle: { ...type.bodyBold, color: c.onDark, fontSize: 15.5 },
+        insightBody: { ...type.small, color: c.onDarkSub, marginTop: 10, lineHeight: 19, fontSize: 14 },
+
+        refreshing: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+          paddingTop: 2,
+        },
+        refreshingText: { ...type.small, color: c.onDarkDim },
+      }),
+    [c, isDark],
+  );
+
   return (
     <View style={styles.screen}>
-      <LinearGradient colors={[colors.darkBg, colors.darkBg2, colors.darkBg3]} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={[c.darkBg, c.darkBg2, c.darkBg3]} style={StyleSheet.absoluteFill} />
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -73,12 +144,12 @@ export function HomeScreen({
             uri={dashboard?.profile.profilePictureUrl ?? profile?.profilePictureUrl ?? null}
             name={username}
             size={48}
-            dark
+            dark={isDark}
           />
         </View>
 
         {error && !dashboard ? (
-          <Card tone="dark" style={styles.errorCard}>
+          <Card tone={tone} style={styles.errorCard}>
             <Text style={styles.errorTitle}>
               {error === 'reconnect_required'
                 ? 'Your Instagram session expired'
@@ -98,7 +169,7 @@ export function HomeScreen({
         ) : null}
 
         {!dashboard && !loading && !error ? (
-          <Card tone="dark" style={styles.errorCard}>
+          <Card tone={tone} style={styles.errorCard}>
             <Text style={styles.errorTitle}>No Instagram connected yet</Text>
             <Text style={styles.errorBody}>
               Link your account to see real views, engagement, and your Creator DNA score.
@@ -107,10 +178,10 @@ export function HomeScreen({
           </Card>
         ) : null}
 
-        <Card tone="dark" style={styles.growthCard}>
+        <Card tone={tone} style={styles.growthCard}>
           <View style={styles.growthLeft}>
             <Text style={styles.growthLabel}>Overall Growth</Text>
-            <Text style={[styles.growthValue, { color: viewsDelta ? (viewsDelta.up ? colors.green : colors.red) : colors.onDarkSub }]}>
+            <Text style={[styles.growthValue, { color: viewsDelta ? (viewsDelta.up ? c.green : c.red) : c.onDarkSub }]}>
               {loading && !stats
                 ? '···'
                 : viewsDelta
@@ -124,21 +195,21 @@ export function HomeScreen({
             </Text>
           </View>
           <View style={styles.growthRight}>
-            <ScoreRing value={dnaValue} size={92} tone="dark" />
+            <ScoreRing value={dnaValue} size={92} tone={tone} />
             <Text style={styles.ringLabel}>Creator DNA</Text>
           </View>
         </Card>
 
         <View style={styles.statsRow}>
-          <StatTile label="Total Posts" value={totalPosts === null ? '—' : String(totalPosts)} tone="dark" />
-          <StatTile label="Avg. Daily Views" value={formatCount(avgViews)} tone="dark" />
-          <StatTile label="Engagement Rate" value={formatPercent(rate)} tone="dark" />
+          <StatTile label="Total Posts" value={totalPosts === null ? '—' : String(totalPosts)} tone={tone} />
+          <StatTile label="Avg. Daily Views" value={formatCount(avgViews)} tone={tone} />
+          <StatTile label="Engagement Rate" value={formatPercent(rate)} tone={tone} />
         </View>
 
-        <Card tone="dark" style={styles.insightCard}>
+        <Card tone={tone} style={styles.insightCard}>
           <View style={styles.insightHead}>
             <View style={styles.insightIcon}>
-              <SparkIcon size={16} color="#FFD66B" />
+              <SparkIcon size={16} color={isDark ? '#FFD66B' : c.amber} />
             </View>
             <Text style={styles.insightTitle}>Quick Insights</Text>
           </View>
@@ -152,7 +223,7 @@ export function HomeScreen({
 
         {loading && dashboard ? (
           <View style={styles.refreshing}>
-            <ActivityIndicator size="small" color={colors.onDarkSub} />
+            <ActivityIndicator size="small" color={c.onDarkSub} />
             <Text style={styles.refreshingText}>Refreshing your data…</Text>
           </View>
         ) : null}
@@ -160,63 +231,3 @@ export function HomeScreen({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.darkBg },
-  content: {
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: FAB_CLEARANCE,
-    gap: 14,
-  },
-
-  greetRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
-  greet: { ...type.h3, color: colors.onDark, fontSize: 22, letterSpacing: -0.4 },
-  greetSub: { ...type.small, color: colors.onDarkSub, marginTop: 5, fontSize: 13.5 },
-
-  errorCard: { borderColor: colors.darkBorder },
-  errorTitle: { ...type.h4, color: colors.onDark },
-  errorBody: { ...type.small, color: colors.onDarkSub, marginTop: 6, lineHeight: 18 },
-
-  growthCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.darkCard2,
-    paddingVertical: 18,
-    gap: 12,
-  },
-  growthLeft: { flex: 1 },
-  growthLabel: {
-    ...type.tiny,
-    color: colors.onDarkSub,
-    textTransform: 'uppercase',
-  },
-  growthValue: { fontSize: 40, fontWeight: '800', letterSpacing: -1.4, marginTop: 8 },
-  growthCaption: { ...type.small, color: colors.onDarkDim, marginTop: 4 },
-  growthRight: { alignItems: 'center', gap: 8, paddingRight: 4 },
-  ringLabel: { ...type.tiny, color: colors.onDarkSub, textTransform: 'uppercase' },
-
-  statsRow: { flexDirection: 'row', gap: 10 },
-
-  insightCard: { backgroundColor: '#1B1B3A' },
-  insightHead: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-  insightIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: 'rgba(255, 214, 107, 0.14)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  insightTitle: { ...type.bodyBold, color: colors.onDark, fontSize: 15.5 },
-  insightBody: { ...type.small, color: colors.onDarkSub, marginTop: 10, lineHeight: 19, fontSize: 14 },
-
-  refreshing: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingTop: 2,
-  },
-  refreshingText: { ...type.small, color: colors.onDarkDim },
-});

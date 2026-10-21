@@ -70,6 +70,7 @@ import { RecommendationsScreen } from './src/screens/RecommendationsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { VideoAnalysisScreen } from './src/screens/VideoAnalysisScreen';
 import { colors, NAV_HEIGHT } from './src/theme';
+import { ThemeProvider, useTheme } from './src/themeContext';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -90,6 +91,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export default function App() {
+  return (
+    <ThemeProvider>
+      <AppShell />
+    </ThemeProvider>
+  );
+}
+
+function AppShell() {
   // ---------- Navigation & entry flow ----------
   const [screen, setScreen] = useState<Screen>('onboarding');
   const [onboardingStep, setOnboardingStep] = useState(0);
@@ -937,7 +946,28 @@ export default function App() {
     submitting || (job !== null && job.status !== 'completed' && job.status !== 'failed');
 
   // ---------- Render ----------
-  const isLight = LIGHT_SCREENS.has(screen);
+  // Pin the app viewport on web: scroll chaining / touch overscroll must
+  // never pan the document, otherwise the whole app (including the bottom
+  // bar) drifts upward while scrolling.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') {
+      return;
+    }
+    const el = document.createElement('style');
+    el.setAttribute('data-creatordna-root', '1');
+    el.textContent =
+      'html,body{overflow:hidden !important;overscroll-behavior:none;height:100%;}' +
+      '#root{position:fixed;inset:0;overflow:hidden;overscroll-behavior:none;}';
+    document.head.appendChild(el);
+    return () => {
+      el.remove();
+    };
+  }, []);
+
+  const { mode } = useTheme();
+  // Effective brightness of the current screen: light mode makes every
+  // screen light; in dark mode only the mock's light screens are light.
+  const isLight = mode === 'light' || LIGHT_SCREENS.has(screen);
   const showNav = NAV_SCREENS.has(screen);
   const navActive: NavTab =
     screen === 'performance'
@@ -952,7 +982,9 @@ export default function App() {
               screen === 'profile'
             ? screen
             : 'home';
-  const navDark = screen === 'home' || screen === 'profile' || screen === 'settings';
+  const navDark =
+    mode === 'dark' &&
+    (screen === 'home' || screen === 'profile' || screen === 'settings');
   const showFab = !NO_FAB.has(screen);
 
   return (
@@ -1153,5 +1185,8 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+    // Anchors the absolutely-positioned bottom bar to the app box on web so
+    // it can never resolve against (and drift with) the document.
+    position: 'relative',
   },
 });
