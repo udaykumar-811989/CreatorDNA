@@ -9,7 +9,10 @@ export type CreatorAiJob = {
 export type CreatorAiMedia = {
   kind: 'image' | 'video' | 'audio';
   mimeType: string;
-  base64: string;
+  /** Inline payload for small files (≤ 3 MB). */
+  base64?: string;
+  /** Gemini Files API reference for larger files (up to 1 GB). */
+  fileUri?: string;
   name: string;
 };
 
@@ -43,7 +46,45 @@ export type CreatorAiIdea = {
   priority?: 'high' | 'medium' | 'low';
 };
 
-const MAX_MEDIA_BYTES = 3_000_000;
+// Small files travel inline (base64 in the JSON body). Larger files stream
+// straight to Gemini's resumable upload service through the backend, which
+// keeps the API key server-side — videos and audio up to 1 GB, images up to
+// 20 MB (Gemini's own image limit).
+const INLINE_MEDIA_MAX_BYTES = 3_000_000;
+export const MEDIA_SIZE_CAPS: Record<CreatorAiMedia['kind'], number> = {
+  image: 20_000_000,
+  video: 1_073_741_824,
+  audio: 1_073_741_824,
+};
+// Gemini's resumable upload protocol requires every non-final chunk to be a
+// multiple of 8 MiB (8,388,608 bytes); the final chunk carries the remainder.
+const UPLOAD_CHUNK_BYTES = 8_388_608;
+
+function mediaSizeError(kind: CreatorAiMedia['kind']): string {
+  if (kind === 'image') {
+    return 'Images can be up to 20 MB — that is the AI model’s image limit.';
+  }
+  return 'Videos and audio can be up to 1 GB.';
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let base64 = '';
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index];
+    const second = bytes[index + 1];
+    const third = bytes[index + 2];
+    base64 += alphabet[first >> 2];
+    base64 += alphabet[((first & 3) << 4) | ((second ?? 0) >> 4)];
+    base64 += second === undefined
+      ? '=='
+      : `${alphabet[((second & 15) << 2) | ((third ?? 0) >> 6)]}${
+        third === undefined ? '=' : alphabet[third & 63]
+      }`;
+  }
+  return base64;
+}
 
 export async function readCreatorMedia(
   uri: string,
@@ -63,29 +104,156 @@ export async function readCreatorMedia(
   if (!response.ok) {
     throw new Error('Could not read the selected file. Please choose it again.');
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength === 0) {
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength === 0) {
     throw new Error('The selected file is empty.');
   }
-  if (bytes.byteLength > MAX_MEDIA_BYTES) {
-    throw new Error('Choose a media file smaller than 3 MB for this preview.');
+  if (buffer.byteLength > INLINE_MEDIA_MAX_BYTES) {
+    throw new Error(
+      'This file is too large to attach directly. Use the CreatorDNA upload (files up to 1 GB).',
+    );
   }
+  return { kind, mimeType, base64: arrayBufferToBase64(buffer), name };
+}
 
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let base64 = '';
-  for (let index = 0; index < bytes.length; index += 3) {
-    const first = bytes[index];
-    const second = bytes[index + 1];
-    const third = bytes[index + 2];
-    base64 += alphabet[first >> 2];
-    base64 += alphabet[((first & 3) << 4) | ((second ?? 0) >> 4)];
-    base64 += second === undefined
-      ? '=='
-      : `${alphabet[((second & 15) << 2) | ((third ?? 0) >> 6)]}${
-        third === undefined ? '=' : alphabet[third & 63]
-      }`;
+async function fetchMediaBlob(uri: string): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(uri);
+  } catch {
+    throw new Error('Could not read the selected file. Please choose it again.');
   }
-  return { kind, mimeType, base64, name };
+  if (!response.ok) {
+    throw new Error('Could not read the selected file. Please choose it again.');
+  }
+  return await response.blob();
+}
+
+export type CreatorMediaCredentials = {
+  functionUrl: string;
+  anonKey: string;
+  accessToken: string;
+};
+
+/** Asks the backend to mint a resumable Gemini upload session. */
+export async function initCreatorMediaUpload(
+  credentials: CreatorMediaCredentials,
+  input: { kind: CreatorAiMedia['kind']; mimeType: string; name: string; sizeBytes: number },
+): Promise<string> {
+  const result = await postCreatorAi(
+    credentials.functionUrl,
+    credentials.anonKey,
+    credentials.accessToken,
+    'upload',
+    {
+      kind: input.kind,
+      mimeType: input.mimeType,
+      name: input.name.slice(0, 200),
+      sizeBytes: input.sizeBytes,
+    },
+  );
+  if (
+    typeof result.uploadUrl !== 'string' ||
+    !result.uploadUrl.startsWith('https://generativelanguage.googleapis.com/upload/')
+  ) {
+    throw new Error('CreatorDNA returned an invalid upload session. Please retry.');
+  }
+  return result.uploadUrl;
+}
+
+/** Streams the file to Gemini in 6 MB chunks and returns its `files/…` URI. */
+export async function uploadCreatorMediaInChunks(
+  credentials: CreatorMediaCredentials,
+  uploadUrl: string,
+  blob: Blob,
+  onProgress?: (fraction: number) => void,
+): Promise<string> {
+  const total = blob.size;
+  let offset = 0;
+  while (offset < total) {
+    const end = Math.min(offset + UPLOAD_CHUNK_BYTES, total);
+    const finalize = end >= total;
+    const base64 = arrayBufferToBase64(await blob.slice(offset, end).arrayBuffer());
+    let sent = false;
+    for (let attempt = 0; attempt < 3 && !sent; attempt += 1) {
+      try {
+        const result = await postCreatorAi(
+          credentials.functionUrl,
+          credentials.anonKey,
+          credentials.accessToken,
+          'upload/chunk',
+          { uploadUrl, offset, base64, finalize },
+          150_000,
+        );
+        if (finalize) {
+          if (typeof result.fileUri !== 'string') {
+            throw new Error('CreatorDNA returned an invalid uploaded file. Please retry.');
+          }
+          onProgress?.(1);
+          return result.fileUri;
+        }
+        sent = true;
+      } catch (error) {
+        // Retry only chunks that never reached the server (network failure);
+        // ambiguous server errors surface so the upload restarts cleanly.
+        const networkFailure = error instanceof Error &&
+          error.message.startsWith('Could not reach');
+        if (!networkFailure || attempt === 2) {
+          throw error;
+        }
+      }
+    }
+    onProgress?.(end / total);
+    offset = end;
+  }
+  throw new Error('The upload ended early. Please try again.');
+}
+
+/**
+ * Prepares a picked file for analysis/chat: small files attach inline;
+ * larger ones upload to Gemini's Files API (up to 1 GB) and are referenced
+ * by URI. `onProgress` receives 0–1 during large uploads.
+ */
+export async function attachCreatorMedia(
+  uri: string,
+  mimeType: string,
+  name: string,
+  kind: CreatorAiMedia['kind'],
+  options?: {
+    credentials?: CreatorMediaCredentials | null;
+    onProgress?: (fraction: number) => void;
+  },
+): Promise<CreatorAiMedia> {
+  if (mimeType.length > 100 || !mimeType.startsWith(`${kind}/`)) {
+    throw new Error('This file type is not supported for that media option.');
+  }
+  const blob = await fetchMediaBlob(uri);
+  if (blob.size === 0) {
+    throw new Error('The selected file is empty.');
+  }
+  if (blob.size > MEDIA_SIZE_CAPS[kind]) {
+    throw new Error(mediaSizeError(kind));
+  }
+  if (blob.size <= INLINE_MEDIA_MAX_BYTES) {
+    return await readCreatorMedia(uri, mimeType, name, kind);
+  }
+  if (!options?.credentials) {
+    throw new Error('Large files need a CreatorDNA connection to upload.');
+  }
+  options.onProgress?.(0);
+  const uploadUrl = await initCreatorMediaUpload(options.credentials, {
+    kind,
+    mimeType,
+    name,
+    sizeBytes: blob.size,
+  });
+  const fileUri = await uploadCreatorMediaInChunks(
+    options.credentials,
+    uploadUrl,
+    blob,
+    options.onProgress,
+  );
+  return { kind, mimeType, name, fileUri };
 }
 
 async function postCreatorAi(
@@ -94,6 +262,7 @@ async function postCreatorAi(
   accessToken: string,
   route: string,
   payload: Record<string, unknown>,
+  timeoutMs = 90_000,
 ): Promise<Record<string, unknown>> {
   let response: Response;
   try {
@@ -105,7 +274,7 @@ async function postCreatorAi(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(90_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     throw new Error(`Could not reach CreatorDNA AI to ${route}. Check your connection and retry.`);
@@ -120,8 +289,13 @@ export async function transcribeCreatorAudio(
   media: CreatorAiMedia,
 ): Promise<string> {
   const result = await postCreatorAi(functionUrl, anonKey, accessToken, 'transcribe', {
-    media: { kind: media.kind, mimeType: media.mimeType, base64: media.base64 },
-  });
+    media: {
+      kind: media.kind,
+      mimeType: media.mimeType,
+      ...(media.base64 ? { base64: media.base64 } : {}),
+      ...(media.fileUri ? { fileUri: media.fileUri } : {}),
+    },
+  }, 175_000);
   if (typeof result.transcript !== 'string' || !result.transcript.trim()) {
     throw new Error('Gemini could not find clear speech in that recording. Try again or type the transcript.');
   }
@@ -204,10 +378,13 @@ export async function sendCreatorAiChat(
     payload.attachment = {
       kind: attachment.kind,
       mimeType: attachment.mimeType,
-      base64: attachment.base64,
+      ...(attachment.base64 ? { base64: attachment.base64 } : {}),
+      ...(attachment.fileUri ? { fileUri: attachment.fileUri } : {}),
     };
   }
-  const result = await postCreatorAi(functionUrl, anonKey, accessToken, 'chat', payload);
+  // Media attachments may reference a large uploaded file, which Gemini can
+  // take a while to process — allow more time than plain text chat.
+  const result = await postCreatorAi(functionUrl, anonKey, accessToken, 'chat', payload, 175_000);
   if (typeof result.reply !== 'string' || !result.reply.trim()) {
     throw new Error('CreatorDNA returned an empty chat reply. Please try again.');
   }
@@ -532,7 +709,8 @@ export async function submitCreatorContent(
             media: {
               kind: media.kind,
               mimeType: media.mimeType,
-              base64: media.base64,
+              ...(media.base64 ? { base64: media.base64 } : {}),
+              ...(media.fileUri ? { fileUri: media.fileUri } : {}),
               name: media.name,
             },
           }

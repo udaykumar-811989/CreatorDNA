@@ -20,9 +20,9 @@ import type { AnalysisSubmission } from '../lib/types';
 import { humanizeMediaType } from '../lib/derived';
 import { creatorAiFunctionUrl, supabaseAnonKey } from '../lib/config';
 import {
+  attachCreatorMedia,
   CreatorAiJob,
   CreatorAiMedia,
-  readCreatorMedia,
   transcribeCreatorAudio,
 } from '../services/creatorAi';
 import type { InstagramDashboard } from '../services/instagramDashboard';
@@ -56,10 +56,11 @@ export function AnalysisFormScreen({
   const [transcribing, setTranscribing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [uploadingMedia, setUploadingMedia] = useState<{ name: string; percent: number } | null>(null);
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   const busy =
-    submitting || (job !== null && job.status !== 'completed' && job.status !== 'failed');
+    submitting || uploadingMedia !== null || (job !== null && job.status !== 'completed' && job.status !== 'failed');
   const displayError =
     localError ?? (job?.status === 'failed' && job.error ? job.error : error);
 
@@ -68,14 +69,27 @@ export function AnalysisFormScreen({
     mimeType: string,
     name: string,
     kind: CreatorAiMedia['kind'],
-    size?: number | null,
   ) => {
-    if (size !== undefined && size !== null && size > 3_000_000) {
-      throw new Error('Choose a media file smaller than 3 MB for this preview.');
-    }
-    const loaded = await readCreatorMedia(uri, mimeType, name, kind);
-    setSelectedMedia({ ...loaded, uri });
     setLocalError(null);
+    try {
+      setUploadingMedia({ name, percent: 0 });
+      // Small files attach inline; anything larger (up to 1 GB for video and
+      // audio, 20 MB for images) streams to Gemini's Files API by reference.
+      const loaded = await attachCreatorMedia(uri, mimeType, name, kind, {
+        credentials: creatorAiFunctionUrl && supabaseAnonKey
+          ? {
+            functionUrl: creatorAiFunctionUrl,
+            anonKey: supabaseAnonKey,
+            accessToken: await getCreatorToken(),
+          }
+          : null,
+        onProgress: (fraction) =>
+          setUploadingMedia({ name, percent: Math.round(fraction * 100) }),
+      });
+      setSelectedMedia({ ...loaded, uri });
+    } finally {
+      setUploadingMedia(null);
+    }
   };
 
   const chooseImage = async () => {
@@ -93,7 +107,6 @@ export function AnalysisFormScreen({
           asset.mimeType ?? 'image/jpeg',
           asset.fileName ?? 'creator-image',
           'image',
-          asset.fileSize,
         );
       }
     } catch (pickError) {
@@ -121,7 +134,7 @@ export function AnalysisFormScreen({
       if (!kind) {
         throw new Error('Choose an audio or video file.');
       }
-      await setPickedMedia(asset.uri, mimeType, asset.name, kind, asset.size);
+      await setPickedMedia(asset.uri, mimeType, asset.name, kind);
     } catch (pickError) {
       setLocalError(pickError instanceof Error ? pickError.message : 'Could not open the file picker.');
     }
@@ -143,12 +156,16 @@ export function AnalysisFormScreen({
           Platform.OS === 'web' || audioRecorder.uri.toLowerCase().endsWith('.webm')
             ? 'audio/webm'
             : 'audio/mp4';
-        const voice = await readCreatorMedia(
-          audioRecorder.uri,
-          mimeType,
-          mimeType === 'audio/webm' ? 'voice-note.webm' : 'voice-note.m4a',
-          'audio',
-        );
+        const voiceName = mimeType === 'audio/webm' ? 'voice-note.webm' : 'voice-note.m4a';
+        const voice = await attachCreatorMedia(audioRecorder.uri, mimeType, voiceName, 'audio', {
+          credentials: creatorAiFunctionUrl && supabaseAnonKey
+            ? {
+              functionUrl: creatorAiFunctionUrl,
+              anonKey: supabaseAnonKey,
+              accessToken: await getCreatorToken(),
+            }
+            : null,
+        });
         setSelectedMedia({ ...voice, uri: audioRecorder.uri });
         if (!creatorAiFunctionUrl || !supabaseAnonKey) {
           throw new Error('Supabase is not configured for voice transcription.');
@@ -324,10 +341,20 @@ export function AnalysisFormScreen({
           />
         </View>
 
+        {uploadingMedia ? (
+          <View style={styles.attachment}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={styles.attachmentLabel} numberOfLines={1}>
+              Uploading {uploadingMedia.name}… {uploadingMedia.percent}%
+            </Text>
+          </View>
+        ) : null}
+
         {selectedMedia ? (
           <View style={styles.attachment}>
             <Text style={styles.attachmentLabel} numberOfLines={1}>
               📎 {selectedMedia.name}
+              {selectedMedia.fileUri ? ' · cloud upload' : ''}
             </Text>
             <Pressable
               accessibilityRole="button"

@@ -133,8 +133,10 @@ export function VideoAnalysisScreen({
           </View>
         </View>
 
-        {/* Performance score */}
-        <Card style={styles.scoreCard}>
+        {/* Performance score — the ring + copy layout only applies when a
+            score exists; the empty state needs a normal column card so its
+            text wraps inside the card instead of running off the screen. */}
+        <Card style={overall !== null ? styles.scoreCard : undefined}>
           {overall !== null ? (
             <>
               <View style={styles.scoreRingWrap}>

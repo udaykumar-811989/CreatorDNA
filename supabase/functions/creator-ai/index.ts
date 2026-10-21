@@ -1,10 +1,16 @@
 import {
+  AiProviderConfig,
   analyzeContent,
   CreatorAiError,
   CreatorAiMedia,
   CreatorContentInput,
   createAiProvider,
+  createGeminiUploadSession,
+  forwardGeminiUploadChunk,
+  isBase64Shape,
+  isGeminiFileUri,
   parseChatAttachment,
+  parseUploadInitRequest,
   validateContentAnalysis,
 } from '../_shared/creatorAi.ts';
 
@@ -353,12 +359,26 @@ function parseMedia(value: unknown): CreatorAiMedia | null {
     !isRecord(value) ||
     (value.kind !== 'image' && value.kind !== 'video' && value.kind !== 'audio') ||
     typeof value.mimeType !== 'string' ||
-    !allowedMediaTypes[value.kind].includes(value.mimeType) ||
+    !allowedMediaTypes[value.kind].includes(value.mimeType)
+  ) {
+    throw new Error('invalid_media');
+  }
+  // Large files reference an upload on Gemini's Files API instead of
+  // carrying base64 bytes in the request body.
+  if (typeof value.fileUri === 'string') {
+    if (!isGeminiFileUri(value.fileUri)) {
+      throw new Error('invalid_media');
+    }
+    return {
+      kind: value.kind,
+      mimeType: value.mimeType,
+      fileUri: value.fileUri,
+    };
+  }
+  if (
     typeof value.base64 !== 'string' ||
-    value.base64.length === 0 ||
     value.base64.length > mediaMaxBase64Length ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
-      .test(value.base64)
+    !isBase64Shape(value.base64)
   ) {
     throw new Error('invalid_media');
   }
@@ -634,6 +654,106 @@ function configuredProvider(config: FunctionConfig) {
   });
 }
 
+function aiProviderConfig(config: FunctionConfig): AiProviderConfig {
+  if (!config.aiEndpoint || !config.aiApiKey || !config.aiModel) {
+    throw new Error('ai_not_configured');
+  }
+  return {
+    endpoint: config.aiEndpoint,
+    apiKey: config.aiApiKey,
+    model: config.aiModel,
+  };
+}
+
+// Large media uploads (up to 1 GB): the client streams chunks straight to
+// Gemini's resumable upload URL — this backend only mints the session and
+// acknowledges chunks, so the file bytes never pass through Supabase.
+// Google requires non-final chunks in multiples of 8 MiB, so an encoded chunk
+// is at most 11,184,812 base64 characters (plus a small JSON envelope).
+const uploadChunkMaxBase64Length = 11_200_000;
+
+function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function handleUploadInit(
+  request: Request,
+  config: FunctionConfig,
+  headers: Headers,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await readRequestJson(request, 4_000);
+  } catch {
+    return jsonResponse({ error: 'invalid_upload_request' }, 400, headers);
+  }
+  let init: ReturnType<typeof parseUploadInitRequest>;
+  try {
+    init = parseUploadInitRequest(body);
+  } catch {
+    return jsonResponse({ error: 'invalid_upload_request' }, 400, headers);
+  }
+  try {
+    const uploadUrl = await createGeminiUploadSession(aiProviderConfig(config), init);
+    return jsonResponse({ uploadUrl }, 200, headers);
+  } catch (error) {
+    const code = error instanceof CreatorAiError ? error.code : 'upload_failed';
+    return jsonResponse({ error: code }, 502, headers);
+  }
+}
+
+async function handleUploadChunk(
+  request: Request,
+  config: FunctionConfig,
+  headers: Headers,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await readRequestJson(request, 13_000_000);
+  } catch (error) {
+    const tooLarge = error instanceof Error && error.message === 'request_too_large';
+    return jsonResponse(
+      { error: tooLarge ? 'chunk_too_large' : 'invalid_upload_chunk' },
+      tooLarge ? 413 : 400,
+      headers,
+    );
+  }
+  if (
+    !isRecord(body) ||
+    typeof body.uploadUrl !== 'string' ||
+    typeof body.offset !== 'number' ||
+    !Number.isInteger(body.offset) ||
+    body.offset < 0 ||
+    typeof body.base64 !== 'string' ||
+    body.base64.length > uploadChunkMaxBase64Length ||
+    !isBase64Shape(body.base64)
+  ) {
+    return jsonResponse({ error: 'invalid_upload_chunk' }, 400, headers);
+  }
+  try {
+    const result = await forwardGeminiUploadChunk(
+      aiProviderConfig(config),
+      body.uploadUrl,
+      {
+        offset: body.offset,
+        bytes: decodeBase64(body.base64),
+        finalize: body.finalize === true,
+      },
+    );
+    return result.done
+      ? jsonResponse({ fileUri: result.fileUri }, 200, headers)
+      : jsonResponse({ chunkReceived: true }, 200, headers);
+  } catch (error) {
+    const code = error instanceof CreatorAiError ? error.code : 'upload_failed';
+    return jsonResponse({ error: code }, 502, headers);
+  }
+}
+
 async function handleTranscribe(
   request: Request,
   config: FunctionConfig,
@@ -852,6 +972,35 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
   if (request.method === 'POST' && route.length === 1 && route[0] === 'transcribe') {
     return await handleTranscribe(request, config, headers);
+  }
+
+  if (request.method === 'POST' && route.length === 1 && route[0] === 'upload') {
+    try {
+      return await handleUploadInit(request, config, headers);
+    } catch {
+      return jsonResponse({ error: 'upload_service_unavailable' }, 503, headers);
+    }
+  }
+
+  if (
+    request.method === 'POST' &&
+    route.length === 2 &&
+    route[0] === 'upload' &&
+    route[1] === 'chunk'
+  ) {
+    try {
+      return await handleUploadChunk(request, config, headers);
+    } catch (error) {
+      console.error('upload chunk failed', error);
+      return jsonResponse(
+        {
+          error: 'upload_service_unavailable',
+          message: error instanceof Error ? error.message : String(error),
+        },
+        503,
+        headers,
+      );
+    }
   }
 
   if (request.method === 'POST' && route.length === 1 && route[0] === 'chat') {

@@ -15,7 +15,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { DnaMark } from '../components/DnaMark';
 import { BackIcon, ImageIcon, SendIcon, SparkIcon, VideoIcon } from '../components/icons';
-import { readCreatorMedia } from '../services/creatorAi';
+import { creatorAiFunctionUrl, supabaseAnonKey } from '../lib/config';
+import { attachCreatorMedia } from '../services/creatorAi';
 import type {
   CreatorAiChatAttachmentInput,
   CreatorAiChatMessage,
@@ -50,20 +51,6 @@ function guessMimeType(name: string, kind: 'image' | 'video'): string | null {
   const extension = name.split('.').pop()?.toLowerCase() ?? '';
   const mime = MIME_BY_EXTENSION[extension];
   return mime && mime.startsWith(kind) ? mime : null;
-}
-
-// Shortens data URLs into object URLs so chat history stays small on disk.
-// Object URLs expire on reload — the bubble then falls back to a file chip.
-async function toPreviewUri(uri: string): Promise<string> {
-  if (!uri.startsWith('data:')) {
-    return uri;
-  }
-  try {
-    const blob = await (await fetch(uri)).blob();
-    return URL.createObjectURL(blob);
-  } catch {
-    return uri;
-  }
 }
 
 function BubbleAttachment({
@@ -145,6 +132,7 @@ export function ChatScreen({
   onSend,
   onBack,
   onClear,
+  getCreatorToken,
 }: {
   messages: CreatorAiChatMessage[];
   sending: boolean;
@@ -152,10 +140,12 @@ export function ChatScreen({
   onSend: (text: string, attachment?: CreatorAiChatAttachmentInput) => void;
   onBack: () => void;
   onClear: () => void;
+  getCreatorToken: () => Promise<string>;
 }) {
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState<CreatorAiChatAttachmentInput | null>(null);
   const [picking, setPicking] = useState(false);
+  const [uploading, setUploading] = useState<{ name: string; percent: number } | null>(null);
   const [pickError, setPickError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -402,23 +392,36 @@ export function ChatScreen({
         );
         return;
       }
-      const media = await readCreatorMedia(asset.uri, mimeType, name, kind);
-      const previewUri = await toPreviewUri(asset.uri);
-      setPending({ ...media, kind, name, uri: previewUri });
+      setUploading({ name, percent: 0 });
+      // Small files attach inline; anything larger (up to 1 GB) streams to
+      // Gemini's Files API and is referenced by URI.
+      const attached = await attachCreatorMedia(asset.uri, mimeType, name, kind, {
+        credentials: creatorAiFunctionUrl && supabaseAnonKey
+          ? {
+            functionUrl: creatorAiFunctionUrl,
+            anonKey: supabaseAnonKey,
+            accessToken: await getCreatorToken(),
+          }
+          : null,
+        onProgress: (fraction) =>
+          setUploading({ name, percent: Math.round(fraction * 100) }),
+      });
+      setPending({ ...attached, kind, name, uri: asset.uri });
     } catch (pickMediaError) {
       setPickError(
         pickMediaError instanceof Error
           ? pickMediaError.message
-          : 'Could not read that file — try a smaller one (under 3 MB).',
+          : 'Could not read that file — try another one.',
       );
     } finally {
       setPicking(false);
+      setUploading(null);
     }
   };
 
   const send = (text?: string) => {
     const content = (text ?? draft).trim();
-    if (sending || picking) return;
+    if (sending || picking || uploading) return;
     if (!content && !pending) return;
     setDraft('');
     setPickError(null);
@@ -427,7 +430,7 @@ export function ChatScreen({
     onSend(content, attachment ?? undefined);
   };
 
-  const canSend = draft.trim().length > 0 || pending !== null;
+  const canSend = (draft.trim().length > 0 || pending !== null) && uploading === null;
 
   return (
     <KeyboardAvoidingView
@@ -553,6 +556,16 @@ export function ChatScreen({
         ) : null}
       </ScrollView>
 
+      {/* Upload progress for large attachments (up to 1 GB) */}
+      {uploading ? (
+        <View style={styles.pendingRow}>
+          <ActivityIndicator size="small" color={accent} />
+          <Text style={styles.pendingName} numberOfLines={1}>
+            Uploading {uploading.name}… {uploading.percent}%
+          </Text>
+        </View>
+      ) : null}
+
       {/* Pending attachment preview */}
       {pending ? (
         <View style={styles.pendingRow}>
@@ -589,7 +602,7 @@ export function ChatScreen({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Attach an image"
-          disabled={picking || sending}
+          disabled={picking || sending || uploading !== null}
           onPress={() => void pickAttachment('image')}
           style={({ pressed }) => [
             styles.attachButton,
@@ -602,7 +615,7 @@ export function ChatScreen({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Attach a video"
-          disabled={picking || sending}
+          disabled={picking || sending || uploading !== null}
           onPress={() => void pickAttachment('video')}
           style={({ pressed }) => [
             styles.attachButton,

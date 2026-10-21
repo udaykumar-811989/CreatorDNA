@@ -17,7 +17,10 @@ Rules:
 export type CreatorAiMedia = {
   kind: 'image' | 'video' | 'audio';
   mimeType: string;
-  base64: string;
+  /** Inline payload for small files (≤ 3 MB). */
+  base64?: string;
+  /** Gemini Files API reference for larger files (up to 1 GB). */
+  fileUri?: string;
 };
 
 export const contentAnalysisJsonSchema = {
@@ -274,13 +277,13 @@ export class CreatorAiError extends Error {
 }
 
 // Transient provider failures (HTTP 429/5xx, network errors) are retried with
-// backoff, bounded by a total budget that keeps the whole call inside the
-// client's 90s fetch timeout. Gemini reports overload as 503 "high demand",
-// which usually clears within seconds, so several attempts raise the odds of
-// riding out a spike instead of surfacing an error.
+// backoff, bounded by a total budget. The budget also covers large media:
+// Gemini can take a minute or more to process an uploaded video or audio
+// file (up to 1 GB via the Files API), so each attempt may run up to 150s
+// while the whole call stays inside the client's media-chat fetch timeout.
 const PROVIDER_RETRY_DELAYS_MS = [400, 1_200, 2_500, 5_000, 8_000];
-const PROVIDER_TOTAL_BUDGET_MS = 84_000;
-const PROVIDER_MAX_ATTEMPT_MS = 60_000;
+const PROVIDER_TOTAL_BUDGET_MS = 168_000;
+const PROVIDER_MAX_ATTEMPT_MS = 150_000;
 const PROVIDER_MIN_ATTEMPT_MS = 5_000;
 
 async function generateJsonWithRetry(
@@ -335,7 +338,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
     _schema?: unknown,
     media?: CreatorAiMedia | null,
   ): Promise<unknown> {
-    if (media && media.kind !== 'image') {
+    if (media && (media.kind !== 'image' || media.fileUri || !media.base64)) {
       throw new CreatorAiError('provider_rejected');
     }
     return await generateJsonWithRetry((timeoutMs) =>
@@ -477,6 +480,30 @@ export class GeminiProvider implements AiProvider {
       endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, '')}:generateContent`;
     }
 
+    let mediaParts: unknown[] = [];
+    if (media) {
+      if (media.fileUri) {
+        // Large uploads live on Gemini's Files API — reference them by URI.
+        mediaParts = [{
+          file_data: await resolveGeminiFileData(
+            this.config,
+            media.fileUri,
+            media.kind,
+            this.fetcher,
+          ),
+        }];
+      } else if (media.base64) {
+        mediaParts = [{
+          inline_data: {
+            mime_type: media.mimeType,
+            data: media.base64,
+          },
+        }];
+      } else {
+        throw new CreatorAiError('provider_rejected');
+      }
+    }
+
     let response: Response;
     try {
       response = await this.fetcher(endpoint.toString(), {
@@ -491,14 +518,7 @@ export class GeminiProvider implements AiProvider {
             role: 'user',
             parts: [
               { text: userPrompt },
-              ...(media
-                ? [{
-                  inline_data: {
-                    mime_type: media.mimeType,
-                    data: media.base64,
-                  },
-                }]
-                : []),
+              ...mediaParts,
             ],
           }],
           generationConfig: {
@@ -636,8 +656,287 @@ const chatAttachmentTypes: Record<'image' | 'video', readonly string[]> = {
   video: ['video/mp4', 'video/webm', 'video/quicktime'],
 };
 
-// One image or video attached to a chat message. Audio is intentionally
-// excluded — the chat surface only offers image and video attachments.
+// ---------- Large media via the Gemini Files API ----------
+//
+// Files up to 3 MB travel inline (base64 in the JSON body). Larger files are
+// streamed straight to Gemini's resumable upload service: the client asks
+// this backend to mint an upload session, forwards chunk acknowledgements,
+// and afterwards references the file by its `files/…` URI. That keeps the
+// API key server-side and lets creators attach up to 1 GB (videos/audio) —
+// Gemini's own image limit (~20 MB) caps images.
+
+export const geminiUploadSizeCaps: Record<CreatorAiMedia['kind'], number> = {
+  image: 20_000_000,
+  video: 1_073_741_824,
+  audio: 1_073_741_824,
+};
+
+const uploadMimeTypes: Record<CreatorAiMedia['kind'], readonly string[]> = {
+  image: ['image/jpeg', 'image/png', 'image/webp', 'image/heic'],
+  video: ['video/mp4', 'video/webm', 'video/quicktime'],
+  audio: [
+    'audio/mpeg',
+    'audio/mp4',
+    'audio/aac',
+    'audio/wav',
+    'audio/x-wav',
+    'audio/ogg',
+    'audio/webm',
+    'audio/flac',
+  ],
+};
+
+export type GeminiUploadInit = {
+  kind: CreatorAiMedia['kind'];
+  mimeType: string;
+  name: string;
+  sizeBytes: number;
+};
+
+export function parseUploadInitRequest(value: unknown): GeminiUploadInit {
+  if (
+    !isRecord(value) ||
+    (value.kind !== 'image' && value.kind !== 'video' && value.kind !== 'audio') ||
+    typeof value.mimeType !== 'string' ||
+    !uploadMimeTypes[value.kind].includes(value.mimeType) ||
+    typeof value.name !== 'string' ||
+    value.name.length === 0 ||
+    value.name.length > 200 ||
+    typeof value.sizeBytes !== 'number' ||
+    !Number.isInteger(value.sizeBytes) ||
+    value.sizeBytes <= 0 ||
+    value.sizeBytes > geminiUploadSizeCaps[value.kind]
+  ) {
+    throw new Error('invalid_upload_request');
+  }
+  return {
+    kind: value.kind,
+    mimeType: value.mimeType,
+    name: value.name.slice(0, 200),
+    sizeBytes: value.sizeBytes,
+  };
+}
+
+// Strict allow-list so a hostile client can never point the backend's chunk
+// proxy at an arbitrary URL (SSRF).
+export function isGeminiFileUri(value: unknown): value is string {
+  return typeof value === 'string' && /^files\/[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+export function isGeminiUploadUrl(value: unknown, config: AiProviderConfig): value is string {
+  return typeof value === 'string' &&
+    value.startsWith(`${geminiOrigin(config)}/upload/`);
+}
+
+function geminiOrigin(config: AiProviderConfig): string {
+  let origin: string;
+  try {
+    origin = new URL(config.endpoint).origin;
+  } catch {
+    throw new CreatorAiError('provider_rejected');
+  }
+  if (origin !== 'https://generativelanguage.googleapis.com') {
+    throw new CreatorAiError('provider_rejected');
+  }
+  return origin;
+}
+
+/** Starts a resumable upload session and returns its Google-hosted URL. */
+export async function createGeminiUploadSession(
+  config: AiProviderConfig,
+  init: GeminiUploadInit,
+  fetcher: typeof fetch = fetch,
+): Promise<string> {
+  const origin = geminiOrigin(config);
+  let response: Response;
+  try {
+    response = await fetcher(
+      `${origin}/upload/v1beta/files?key=${encodeURIComponent(config.apiKey)}`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Goog-Upload-Protocol': 'resumable',
+          'X-Goog-Upload-Command': 'start',
+          'X-Goog-Upload-Header-Content-Length': String(init.sizeBytes),
+          'X-Goog-Upload-Header-Content-Type': init.mimeType,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ file: { display_name: init.name } }),
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+  } catch {
+    throw new CreatorAiError('provider_unavailable');
+  }
+  const uploadUrl = response.headers.get('x-goog-upload-url');
+  if (!response.ok || !uploadUrl) {
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      console.error(
+        `gemini upload init rejected: status=${response.status} body=${detail.slice(0, 300)}`,
+      );
+    }
+    throw new CreatorAiError(
+      response.status === 429 || response.status >= 500
+        ? 'provider_unavailable'
+        : 'provider_rejected',
+    );
+  }
+  if (!uploadUrl.startsWith(`${origin}/upload/`)) {
+    throw new CreatorAiError('provider_rejected');
+  }
+  return uploadUrl;
+}
+
+export type GeminiUploadChunkResult =
+  | { done: false }
+  | { done: true; fileUri: string };
+
+/** Forwards one already-sequenced chunk to Gemini's upload session. */
+export async function forwardGeminiUploadChunk(
+  config: AiProviderConfig,
+  uploadUrl: string,
+  chunk: { offset: number; bytes: Uint8Array; finalize: boolean },
+  fetcher: typeof fetch = fetch,
+): Promise<GeminiUploadChunkResult> {
+  if (!isGeminiUploadUrl(uploadUrl, config)) {
+    throw new CreatorAiError('provider_rejected');
+  }
+  let response: Response;
+  try {
+    response = await fetcher(uploadUrl, {
+      method: 'POST',
+      headers: {
+        // Commands are comma-separated; "upload+finalize" is rejected as an
+        // invalid command. Verified live against the Files API.
+        'X-Goog-Upload-Command': chunk.finalize ? 'upload, finalize' : 'upload',
+        'X-Goog-Upload-Offset': String(chunk.offset),
+        'Content-Type': 'application/octet-stream',
+      },
+      body: chunk.bytes as unknown as BodyInit,
+      signal: AbortSignal.timeout(120_000),
+    });
+  } catch {
+    throw new CreatorAiError('provider_unavailable');
+  }
+  if (response.status === 308) {
+    // Classic "Resume Incomplete": the session accepted everything up to the
+    // next offset; nothing else to read from this response.
+    try {
+      await response.body?.cancel();
+    } catch {
+      // The body may already be consumed — the status is what matters.
+    }
+    return { done: false };
+  }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    console.error(
+      `gemini upload chunk rejected: status=${response.status} body=${detail.slice(0, 300)}`,
+    );
+    throw new CreatorAiError(
+      response.status === 429 || response.status >= 500
+        ? 'provider_unavailable'
+        : 'provider_rejected',
+    );
+  }
+  if (!chunk.finalize) {
+    // Intermediate chunks answer 200 with an empty body and
+    // `x-goog-upload-status: active`.
+    try {
+      await response.body?.cancel();
+    } catch {
+      // Empty body — nothing to read.
+    }
+    return { done: false };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new CreatorAiError('malformed_model_response');
+  }
+  // Finalize answers `{"file": {"name": "files/…", …}}`.
+  const file = isRecord(payload) && isRecord(payload.file) ? payload.file : null;
+  if (!file || !isGeminiFileUri(file.name)) {
+    throw new CreatorAiError('malformed_model_response');
+  }
+  return { done: true, fileUri: file.name };
+}
+
+/**
+ * Validates an uploaded file reference (shape, state, kind, size) and returns
+ * the Gemini `file_data` part for it. Called server-side before any model
+ * request, so clients can only reference files the Files API actually has.
+ */
+export async function resolveGeminiFileData(
+  config: AiProviderConfig,
+  fileUri: string,
+  kind: CreatorAiMedia['kind'],
+  fetcher: typeof fetch = fetch,
+): Promise<{ file_uri: string; mime_type: string }> {
+  const origin = geminiOrigin(config);
+  if (!isGeminiFileUri(fileUri)) {
+    throw new CreatorAiError('provider_rejected');
+  }
+  let response: Response;
+  try {
+    response = await fetcher(
+      `${origin}/v1beta/${fileUri}?key=${encodeURIComponent(config.apiKey)}`,
+      { signal: AbortSignal.timeout(20_000) },
+    );
+  } catch {
+    throw new CreatorAiError('provider_unavailable');
+  }
+  if (!response.ok) {
+    throw new CreatorAiError(
+      response.status === 429 || response.status >= 500
+        ? 'provider_unavailable'
+        : 'provider_rejected',
+    );
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new CreatorAiError('malformed_model_response');
+  }
+  if (
+    !isRecord(payload) ||
+    payload.name !== fileUri ||
+    payload.state !== 'ACTIVE' ||
+    typeof payload.mimeType !== 'string' ||
+    !payload.mimeType.startsWith(`${kind}/`)
+  ) {
+    throw new CreatorAiError('provider_rejected');
+  }
+  // sizeBytes arrives as a string in the Files API.
+  if (typeof payload.sizeBytes === 'string') {
+    const size = Number(payload.sizeBytes);
+    if (Number.isFinite(size) && size > geminiUploadSizeCaps[kind]) {
+      throw new CreatorAiError('provider_rejected');
+    }
+  }
+  return {
+    file_uri: `${origin}/v1beta/${fileUri}`,
+    mime_type: payload.mimeType,
+  };
+}
+
+/**
+ * Linear base64 shape check for multi-MB payloads. The grouped equivalent
+ * (`^(?:[A-Za-z0-9+/]{4})*…`) recurses once per group in V8's regexp engine
+ * and overflows the call stack at ~6 MB of input — this form stays iterative.
+ */
+export function isBase64Shape(value: string): boolean {
+  return value.length > 0 &&
+    value.length % 4 === 0 &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+}
+
+// One image or video attached to a chat message, either inline (small files)
+// or by Files API reference. Audio is intentionally excluded — the chat
+// surface only offers image and video attachments.
 export function parseChatAttachment(value: unknown): CreatorAiMedia | null {
   if (value === undefined || value === null) {
     return null;
@@ -646,12 +945,24 @@ export function parseChatAttachment(value: unknown): CreatorAiMedia | null {
     !isRecord(value) ||
     (value.kind !== 'image' && value.kind !== 'video') ||
     typeof value.mimeType !== 'string' ||
-    !chatAttachmentTypes[value.kind].includes(value.mimeType) ||
+    !chatAttachmentTypes[value.kind].includes(value.mimeType)
+  ) {
+    throw new Error('invalid_attachment');
+  }
+  if (typeof value.fileUri === 'string') {
+    if (!isGeminiFileUri(value.fileUri)) {
+      throw new Error('invalid_attachment');
+    }
+    return {
+      kind: value.kind,
+      mimeType: value.mimeType,
+      fileUri: value.fileUri,
+    };
+  }
+  if (
     typeof value.base64 !== 'string' ||
-    value.base64.length === 0 ||
     value.base64.length > chatAttachmentMaxBase64Length ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
-      .test(value.base64)
+    !isBase64Shape(value.base64)
   ) {
     throw new Error('invalid_attachment');
   }

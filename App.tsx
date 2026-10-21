@@ -1156,6 +1156,7 @@ function AppShell() {
           onSend={(text, attachment) => void sendChatMessage(text, attachment)}
           onBack={() => setScreen(chatReturn === 'chat' ? 'home' : chatReturn)}
           onClear={() => setChatMessages([])}
+          getCreatorToken={getCreatorToken}
         />
       ) : (
         <ConnectScreen
