@@ -29,6 +29,11 @@ export type InstagramDashboard = {
     comments: number | null;
     followers: number | null;
     reach: number | null;
+    // Account-level professional insights (30-day window); null when the
+    // metric isn't shared with the connected account.
+    shares: number | null;
+    saves: number | null;
+    profileViews: number | null;
     previous: {
       views: number | null;
       likes: number | null;
@@ -522,7 +527,15 @@ export async function fetchInstagramDashboard(
   // accounts) degrades to null stats instead of taking the dashboard down —
   // auth failures still propagate as reconnect_required.
   const [insightValues, previousValues, dailySeriesValues] = await Promise.all([
-    requestWindowTotals(['views', 'likes', 'comments', 'reach'], now - 30 * day, now, true),
+    // Account-level insights beyond the core trio: reach, shares, saves and
+    // profile visits power the professional-dashboard cards. Requested
+    // per-metric so one unavailable metric can't sink the others.
+    requestWindowTotals(
+      ['views', 'likes', 'comments', 'reach', 'shares', 'saves', 'profile_views'],
+      now - 30 * day,
+      now,
+      true,
+    ),
     requestWindowTotals(['views', 'likes', 'comments'], now - 60 * day, now - 30 * day, true),
     Promise.all(
       (['views', 'likes', 'comments'] as const).map(async (metric) => {
@@ -589,6 +602,11 @@ export async function fetchInstagramDashboard(
       likes: parseInstagramInsightValue(insightValues[1], 'likes'),
       comments: parseInstagramInsightValue(insightValues[2], 'comments'),
       reach: parseInstagramInsightValue(insightValues[3], 'reach'),
+      // Professional-dashboard insights; null when Meta doesn't share them
+      // (small or recently-converted accounts often don't).
+      shares: parseInstagramInsightValue(insightValues[4], 'shares'),
+      saves: parseInstagramInsightValue(insightValues[5], 'saves'),
+      profileViews: parseInstagramInsightValue(insightValues[6], 'profile_views'),
       followers: followersCount,
       previous: {
         views: parseInstagramInsightValue(previousValues[0], 'views'),

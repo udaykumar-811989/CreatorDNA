@@ -76,6 +76,51 @@ WebBrowser.maybeCompleteAuthSession();
 
 const pendingOAuthStorageKey = 'veyyra.instagram.oauth-state';
 
+// Email/password session token. Persisted so a page refresh returns the
+// creator to their dashboard instead of the sign-in screen; only an
+// explicit logout clears it.
+const authSessionStorageKey = 'creatordna.auth.session';
+
+const saveAuthSession = (token: string): void => {
+  try {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+      localStorage.setItem(authSessionStorageKey, token);
+    }
+  } catch {
+    // Storage can be unavailable (e.g. strict privacy settings). Sign-in
+    // still works for this tab, it just won't survive a refresh.
+  }
+};
+
+const loadAuthSession = (): string | null => {
+  try {
+    if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
+      return null;
+    }
+    const token = localStorage.getItem(authSessionStorageKey);
+    if (!token) {
+      return null;
+    }
+    // Supabase access tokens are short-lived JWTs — only restore one that
+    // hasn't expired (`exp`, seconds since epoch).
+    const payload = token.split('.')[1] ?? '';
+    const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: unknown };
+    return typeof decoded.exp === 'number' && decoded.exp * 1000 > Date.now() ? token : null;
+  } catch {
+    return null;
+  }
+};
+
+const clearAuthSession = (): void => {
+  try {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+      localStorage.removeItem(authSessionStorageKey);
+    }
+  } catch {
+    // Best-effort cleanup.
+  }
+};
+
 // The floating AI button is hidden only on the entry flow (where it would
 // fight the mock's layout) and inside the chat itself.
 const NO_FAB: ReadonlySet<Screen> = new Set<Screen>([
@@ -351,18 +396,28 @@ function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (incomingUrl || sessionRestoreStarted.current) {
+    // Only an actual Instagram OAuth return should preempt restore. On the
+    // web `incomingUrl` is *always* the current URL, which made every page
+    // refresh skip session restore and log the creator out.
+    const isInstagramReturn =
+      typeof incomingUrl === 'string' && incomingUrl.includes('instagram_status=');
+    if (isInstagramReturn || sessionRestoreStarted.current) {
       return;
     }
     sessionRestoreStarted.current = true;
     void loadInstagramSession()
       .then((token) => {
-        if (!token) {
+        if (token) {
+          setSessionToken(token);
+          setScreen('home');
+          void loadDashboard(token);
           return;
         }
-        setSessionToken(token);
-        setScreen('home');
-        void loadDashboard(token);
+        // Email/password session only (no Instagram connected): restoring it
+        // keeps the creator on their dashboard across refreshes too.
+        if (loadAuthSession()) {
+          setScreen('home');
+        }
       })
       .catch(() => {
         setConnectionError('session_restore_failed');
@@ -370,6 +425,15 @@ function AppShell() {
         setScreen('connect');
       });
   }, [incomingUrl, loadDashboard]);
+
+  // Restore the persisted email session token alongside the Instagram
+  // connection (state only — the screen restore above decides navigation).
+  useEffect(() => {
+    const stored = loadAuthSession();
+    if (stored) {
+      setSupabaseAccessToken(stored);
+    }
+  }, []);
 
   useEffect(() => {
     if (incomingUrl) {
@@ -474,6 +538,9 @@ function AppShell() {
           password,
         );
         setSupabaseAccessToken(token);
+        // Persist the email session so a refresh returns to the dashboard
+        // instead of the sign-in screen; logout clears it.
+        saveAuthSession(token);
         return true;
       } catch (error) {
         setAuthError(
@@ -537,6 +604,17 @@ function AppShell() {
 
   const logout = useCallback(() => {
     setSupabaseAccessToken(null);
+    // Logout is the only thing that ends a session — clear every persisted
+    // credential so a refresh stays signed out.
+    clearAuthSession();
+    void clearInstagramSession();
+    setSessionToken(null);
+    setProfile(null);
+    setDashboard(null);
+    setDashboardError(null);
+    setConnectionState('idle');
+    setConnectionError(null);
+    setSessionWarning(false);
     setAuthError(null);
     setOnboardingStep(0);
     setScreen('onboarding');

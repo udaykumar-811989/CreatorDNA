@@ -29,6 +29,11 @@ export type InstagramDashboard = {
     comments: number | null;
     followers: number | null;
     reach: number | null;
+    // 30-day account-level insights (professional dashboard); null when the
+    // metric isn't shared with the connected account.
+    shares: number | null;
+    saves: number | null;
+    profileViews: number | null;
     previous: {
       views: number | null;
       likes: number | null;
@@ -53,12 +58,31 @@ export class DashboardRequestError extends Error {
 
 const sessionStorageKey = 'veyyra.instagram.connection-session';
 
+// On the web the connection session lives in localStorage so refreshing the
+// page (or reopening the tab) keeps the creator signed in. sessionStorage
+// was tab-scoped, so any navigation that landed in a new tab silently
+// dropped the session and looked like a logout. Explicit logout clears it.
+function webSessionStorage(): Storage | null {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage;
+    }
+    if (typeof sessionStorage !== 'undefined') {
+      return sessionStorage;
+    }
+  } catch {
+    // Storage access can throw under strict browser privacy settings.
+  }
+  return null;
+}
+
 export async function saveInstagramSession(token: string): Promise<void> {
   if (Platform.OS === 'web') {
-    if (typeof sessionStorage === 'undefined') {
-      throw new Error('Browser session storage is unavailable.');
+    const storage = webSessionStorage();
+    if (!storage) {
+      throw new Error('Browser storage is unavailable.');
     }
-    sessionStorage.setItem(sessionStorageKey, token);
+    storage.setItem(sessionStorageKey, token);
     return;
   }
   await SecureStore.setItemAsync(sessionStorageKey, token);
@@ -66,15 +90,21 @@ export async function saveInstagramSession(token: string): Promise<void> {
 
 export async function loadInstagramSession(): Promise<string | null> {
   if (Platform.OS === 'web') {
-    return typeof sessionStorage === 'undefined'
-      ? null
-      : sessionStorage.getItem(sessionStorageKey);
+    // Prefer the durable storage; fall back to any legacy session-scoped value.
+    const storage = webSessionStorage();
+    return storage?.getItem(sessionStorageKey)
+      ?? (typeof sessionStorage !== 'undefined'
+        ? sessionStorage.getItem(sessionStorageKey)
+        : null);
   }
   return SecureStore.getItemAsync(sessionStorageKey);
 }
 
 export async function clearInstagramSession(): Promise<void> {
   if (Platform.OS === 'web') {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(sessionStorageKey);
+    }
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.removeItem(sessionStorageKey);
     }
@@ -185,6 +215,9 @@ function parseDashboard(value: unknown): InstagramDashboard {
       comments: optionalCount(value.stats.comments),
       followers: optionalCount(value.stats.followers),
       reach: optionalCount(value.stats.reach),
+      shares: optionalCount(value.stats.shares),
+      saves: optionalCount(value.stats.saves),
+      profileViews: optionalCount(value.stats.profileViews),
       previous,
     },
     media,

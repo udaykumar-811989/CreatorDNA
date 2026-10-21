@@ -249,6 +249,9 @@ test('dashboard reads only returned profile, media and insight data', async () =
       comments: null,
       reach: 42,
       followers: 321,
+      shares: 42,
+      saves: 42,
+      profileViews: 42,
       previous: { views: 1234, likes: 42, comments: null },
     });
     assert.equal(dashboard.daily, null);
@@ -271,9 +274,10 @@ test('dashboard reads only returned profile, media and insight data', async () =
         `dashboard /me fields missing ${field}: ${meFields}`,
       );
     }
+    // 7 current-window metrics + 3 previous-window + 3 daily-series fetches.
     assert.equal(
       requestedUrls.filter((url) => url.pathname.endsWith('/insights')).length,
-      10,
+      13,
     );
   } finally {
     globalThis.fetch = originalFetch;

@@ -4,7 +4,9 @@ import { LineChart } from '../components/LineChart';
 import { EmptyState, PillTabs, ScreenHeader, StatTile } from '../components/ui';
 import {
   chartPoints,
+  engagementRate,
   formatCount,
+  formatPercent,
   growthDelta,
   periodTotals,
   topicsBreakdown,
@@ -14,7 +16,9 @@ import type { InstagramDashboard } from '../services/instagramDashboard';
 import { colors, FAB_CLEARANCE, radius, type } from '../theme';
 
 const METRICS = ['Overview', 'Reach', 'Engagement'];
-const PERIODS = [7, 30, 90] as const;
+// 365 is labelled "1 year"; Instagram only retains 90 days of insights, so
+// the longer window sums whatever history exists and says so in the UI.
+const PERIODS = [7, 30, 90, 365] as const;
 
 export function PerformanceScreen({
   dashboard,
@@ -51,7 +55,7 @@ export function PerformanceScreen({
       ? stats.reach
       : null;
 
-  if (!dashboard) {
+  if (!dashboard || !stats) {
     return (
       <View style={styles.screen}>
         <ScrollView contentContainerStyle={styles.content}>
@@ -83,7 +87,7 @@ export function PerformanceScreen({
                 accessibilityRole="button"
                 style={[styles.periodPill, active && styles.periodPillActive]}
               >
-                {period} days
+                {period === 365 ? '1 year' : `${period} days`}
               </Text>
             );
           })}
@@ -104,7 +108,27 @@ export function PerformanceScreen({
         </View>
         {days === 30 ? (
           <Text style={styles.deltaNote}>↑ deltas compare with your previous 30 days</Text>
+        ) : days === 365 ? (
+          <Text style={styles.deltaNote}>
+            Instagram keeps only the last 90 days of history — the 1-year view covers everything available.
+          </Text>
         ) : null}
+
+        {/* Professional dashboard — real account-level insights */}
+        <View style={styles.chartCard}>
+          <Text style={styles.chartTitle}>Account Insights</Text>
+          <View style={styles.statsRow}>
+            <StatTile label="Followers" value={formatCount(stats.followers)} />
+            <StatTile label="Reach" value={formatCount(stats.reach)} />
+            <StatTile label="Eng. Rate" value={formatPercent(engagementRate(stats))} />
+          </View>
+          <View style={styles.statsRow}>
+            <StatTile label="Shares" value={formatCount(stats.shares)} />
+            <StatTile label="Saves" value={formatCount(stats.saves)} />
+            <StatTile label="Profile Visits" value={formatCount(stats.profileViews)} />
+          </View>
+          <Text style={styles.chartNote}>Real Instagram insights · last 30 days</Text>
+        </View>
 
         <View style={styles.chartCard}>
           <Text style={styles.chartTitle}>{chartTitle}</Text>
