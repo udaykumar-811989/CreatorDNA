@@ -256,6 +256,21 @@ test('dashboard reads only returned profile, media and insight data', async () =
     assert.equal(dashboard.profile.username, 'veyyra_creator');
     assert.equal(dashboard.media[0]?.id, 'media-1');
     assert.equal(dashboard.media[0]?.likes, 16);
+    // The /me call must request the fields it consumes — Meta returns only
+    // defaults otherwise, which the normalizer then rejects.
+    const meUrl = requestedUrls.find((url) => url.pathname.endsWith('/me'));
+    const meFields = meUrl?.searchParams.get('fields') ?? '';
+    for (const field of [
+      'user_id',
+      'account_type',
+      'followers_count',
+      'media_count',
+    ]) {
+      assert.ok(
+        meFields.includes(field),
+        `dashboard /me fields missing ${field}: ${meFields}`,
+      );
+    }
     assert.equal(
       requestedUrls.filter((url) => url.pathname.endsWith('/insights')).length,
       10,

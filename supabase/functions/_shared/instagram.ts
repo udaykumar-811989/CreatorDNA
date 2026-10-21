@@ -447,10 +447,15 @@ export async function fetchInstagramDashboard(
   instagramUserId: string,
   accessToken: string,
 ): Promise<InstagramDashboard> {
-  const profileResponse = await instagramApiGet(
-    instagramGraphUrl('me'),
-    accessToken,
+  // Ask for the exact fields we consume: without them Meta returns only the
+  // defaults, the profile normalizer rejects the account, and the dashboard
+  // dies as "reconnect required" with null stats.
+  const profileUrl = instagramGraphUrl('me');
+  profileUrl.searchParams.set(
+    'fields',
+    'user_id,username,account_type,profile_picture_url,followers_count,media_count',
   );
+  const profileResponse = await instagramApiGet(profileUrl, accessToken);
   const profileData = firstRecord(profileResponse);
   if (!profileData) {
     throw new InstagramApiError('instagram_api_error');
@@ -511,11 +516,13 @@ export async function fetchInstagramDashboard(
       }),
     );
 
-  // Current 30-day totals (strict, existing behaviour), previous 30-day totals
-  // for real growth deltas, and a 90-day daily series for charts/period filters.
-  // The optional windows are lenient: they must never break the core dashboard.
+  // Current 30-day totals for the headline stats, previous 30-day totals for
+  // real growth deltas, and a 90-day daily series for charts/period filters.
+  // Every window is lenient so a metric hiccup (common on newly converted
+  // accounts) degrades to null stats instead of taking the dashboard down —
+  // auth failures still propagate as reconnect_required.
   const [insightValues, previousValues, dailySeriesValues] = await Promise.all([
-    requestWindowTotals(['views', 'likes', 'comments', 'reach'], now - 30 * day, now, false),
+    requestWindowTotals(['views', 'likes', 'comments', 'reach'], now - 30 * day, now, true),
     requestWindowTotals(['views', 'likes', 'comments'], now - 60 * day, now - 30 * day, true),
     Promise.all(
       (['views', 'likes', 'comments'] as const).map(async (metric) => {

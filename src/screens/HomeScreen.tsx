@@ -56,6 +56,9 @@ export function HomeScreen({
   const totalPosts = dashboard?.profile.mediaCount ?? null;
   const avgViews = averageDailyViews(dashboard);
   const rate = engagementRate(stats);
+  // A connected account is never nagged to "Reconnect" from home — genuine
+  // session expiry is handled in Settings; home just offers a retry.
+  const sessionExpired = error === 'reconnect_required' && !profile;
 
   const styles = useMemo(
     () =>
@@ -149,7 +152,9 @@ export function HomeScreen({
                 ? 'Here’s how your account is performing.'
                 : loading
                   ? 'Loading your account…'
-                  : 'Connect Instagram to see how you’re performing.'}
+                  : profile
+                    ? 'Your Instagram is connected — your stats will appear here.'
+                    : 'Connect Instagram to see how you’re performing.'}
             </Text>
           </View>
           <Avatar
@@ -163,18 +168,18 @@ export function HomeScreen({
         {error && !dashboard ? (
           <Card tone={tone} style={styles.errorCard}>
             <Text style={styles.errorTitle}>
-              {error === 'reconnect_required'
+              {sessionExpired
                 ? 'Your Instagram session expired'
                 : 'We couldn’t load your data'}
             </Text>
             <Text style={styles.errorBody}>
-              {error === 'reconnect_required'
+              {sessionExpired
                 ? 'Reconnect your account to refresh your dashboard.'
                 : 'Please check your connection and try again.'}
             </Text>
             <GradientButton
-              label={error === 'reconnect_required' ? 'Reconnect Instagram' : 'Retry'}
-              onPress={error === 'reconnect_required' ? onReconnect : onRetry}
+              label={sessionExpired ? 'Reconnect Instagram' : 'Retry'}
+              onPress={sessionExpired ? onReconnect : onRetry}
               style={{ marginTop: 14 }}
             />
           </Card>
