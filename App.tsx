@@ -593,14 +593,19 @@ function AppShell() {
   }, []);
 
   const handleConnectEntry = useCallback(() => {
-    if (sessionToken || profile) {
-      void reconnectInstagram();
-    } else {
-      setConnectionState('idle');
+    if (sessionToken && profile) {
+      // Connected: show the account as-is — never tear down a live session
+      // from here. Only Logout (or an explicit Reconnect on an error card)
+      // ends a connection.
+      setConnectionState('connected');
       setConnectionError(null);
       setScreen('connect');
+      return;
     }
-  }, [profile, reconnectInstagram, sessionToken]);
+    setConnectionState('idle');
+    setConnectionError(null);
+    setScreen('connect');
+  }, [profile, sessionToken]);
 
   const logout = useCallback(() => {
     setSupabaseAccessToken(null);
@@ -1279,7 +1284,7 @@ function AppShell() {
         />
       ) : (
         <ConnectScreen
-          onBack={() => setScreen('onboarding')}
+          onBack={() => setScreen(sessionToken ? 'home' : 'onboarding')}
           onConnect={() => void connectInstagram()}
           onConnected={continueToDashboard}
           onContinueWithoutInstagram={continueWithoutInstagram}

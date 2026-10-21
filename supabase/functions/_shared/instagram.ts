@@ -34,6 +34,18 @@ export type InstagramDashboard = {
     shares: number | null;
     saves: number | null;
     profileViews: number | null;
+    // Real window totals backing the period filters when no day-series is
+    // shared; individual values are null when unavailable.
+    week: {
+      views: number | null;
+      likes: number | null;
+      comments: number | null;
+    };
+    ninety: {
+      views: number | null;
+      likes: number | null;
+      comments: number | null;
+    };
     previous: {
       views: number | null;
       likes: number | null;
@@ -526,32 +538,50 @@ export async function fetchInstagramDashboard(
   // Every window is lenient so a metric hiccup (common on newly converted
   // accounts) degrades to null stats instead of taking the dashboard down —
   // auth failures still propagate as reconnect_required.
-  const [insightValues, previousValues, dailySeriesValues] = await Promise.all([
-    // Account-level insights beyond the core trio: reach, shares, saves and
-    // profile visits power the professional-dashboard cards. Requested
-    // per-metric so one unavailable metric can't sink the others.
-    requestWindowTotals(
-      ['views', 'likes', 'comments', 'reach', 'shares', 'saves', 'profile_views'],
-      now - 30 * day,
-      now,
-      true,
-    ),
-    requestWindowTotals(['views', 'likes', 'comments'], now - 60 * day, now - 30 * day, true),
-    Promise.all(
-      (['views', 'likes', 'comments'] as const).map(async (metric) => {
-        const insightUrl = instagramGraphUrl(`${instagramUserId}/insights`);
-        insightUrl.searchParams.set('metric', metric);
-        insightUrl.searchParams.set('period', 'day');
-        insightUrl.searchParams.set('since', String(now - 90 * day));
-        insightUrl.searchParams.set('until', String(now));
-        try {
-          return await instagramApiGet(insightUrl, accessToken, true);
-        } catch {
-          return null;
-        }
-      }),
-    ),
-  ]);
+  // Instagram retains ~90 days of insights but rejects a single since/until
+  // request spanning much more than a month — one 90-day day-series query
+  // was silently failing, which left every period except 30 days empty. The // day-series is fetched in three 27-day chunks instead (a failed chunk is
+  // skipped: shorter history beats none), and real 7- and 90-day window
+  // totals back the period filters when no day-series is shared at all.
+  const dailyWindows = [1, 2, 3].map((back) => ({
+    start: now - back * 27 * day,
+    end: now - (back - 1) * 27 * day,
+  }));
+  const [insightValues, previousValues, dailySeriesValues, weekValues, ninetyValues] =
+    await Promise.all([
+      // Account-level insights beyond the core trio: reach, shares, saves and
+      // profile visits power the professional-dashboard cards. Requested
+      // per-metric so one unavailable metric can't sink the others.
+      requestWindowTotals(
+        ['views', 'likes', 'comments', 'reach', 'shares', 'saves', 'profile_views'],
+        now - 30 * day,
+        now,
+        true,
+      ),
+      requestWindowTotals(['views', 'likes', 'comments'], now - 60 * day, now - 30 * day, true),
+      Promise.all(
+        (['views', 'likes', 'comments'] as const).map(async (metric) => {
+          const chunks: unknown[] = [];
+          await Promise.all(
+            dailyWindows.map(async ({ start, end }) => {
+              const insightUrl = instagramGraphUrl(`${instagramUserId}/insights`);
+              insightUrl.searchParams.set('metric', metric);
+              insightUrl.searchParams.set('period', 'day');
+              insightUrl.searchParams.set('since', String(start));
+              insightUrl.searchParams.set('until', String(end));
+              try {
+                chunks.push(await instagramApiGet(insightUrl, accessToken, true));
+              } catch {
+                // Lenient: skip this chunk and keep the rest of the history.
+              }
+            }),
+          );
+          return chunks;
+        }),
+      ),
+      requestWindowTotals(['views', 'likes', 'comments'], now - 7 * day, now, true),
+      requestWindowTotals(['views', 'likes', 'comments'], now - 90 * day, now, true),
+    ]);
   let mediaResponse: unknown;
   try {
     mediaResponse = await instagramApiGet(mediaUrl, accessToken);
@@ -571,11 +601,20 @@ export async function fetchInstagramDashboard(
   }
   const media = normalizeInstagramMedia(mediaResponse);
 
-  const seriesByMetric = [
-    parseInstagramInsightSeries(dailySeriesValues[0], 'views'),
-    parseInstagramInsightSeries(dailySeriesValues[1], 'likes'),
-    parseInstagramInsightSeries(dailySeriesValues[2], 'comments'),
-  ];
+  const seriesByMetric = (['views', 'likes', 'comments'] as const).map(
+    (metric, metricIndex): Array<{ date: string; value: number }> | null => {
+      const merged = new Map<string, number>();
+      for (const chunk of dailySeriesValues[metricIndex] ?? []) {
+        for (const point of parseInstagramInsightSeries(chunk, metric) ?? []) {
+          // Adjacent chunks can repeat a boundary day; the newest value wins.
+          merged.set(point.date, point.value);
+        }
+      }
+      return merged.size > 0
+        ? [...merged.entries()].map(([date, value]) => ({ date, value }))
+        : null;
+    },
+  );
   const dailyDates = new Set<string>();
   for (const points of seriesByMetric) {
     for (const point of points ?? []) {
@@ -607,6 +646,18 @@ export async function fetchInstagramDashboard(
       shares: parseInstagramInsightValue(insightValues[4], 'shares'),
       saves: parseInstagramInsightValue(insightValues[5], 'saves'),
       profileViews: parseInstagramInsightValue(insightValues[6], 'profile_views'),
+      // Real window totals for the period filters; null values mean Meta
+      // didn't share that metric for the window.
+      week: {
+        views: parseInstagramInsightValue(weekValues[0], 'views'),
+        likes: parseInstagramInsightValue(weekValues[1], 'likes'),
+        comments: parseInstagramInsightValue(weekValues[2], 'comments'),
+      },
+      ninety: {
+        views: parseInstagramInsightValue(ninetyValues[0], 'views'),
+        likes: parseInstagramInsightValue(ninetyValues[1], 'likes'),
+        comments: parseInstagramInsightValue(ninetyValues[2], 'comments'),
+      },
       followers: followersCount,
       previous: {
         views: parseInstagramInsightValue(previousValues[0], 'views'),

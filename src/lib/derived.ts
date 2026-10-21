@@ -527,7 +527,24 @@ export function periodTotals(
     }
     return { views, likes, comments };
   }
-  // No daily series: only the real 30-day window totals exist.
+  // No usable daily series: fall back to the real window totals the API
+  // did share (7-day and 30-day windows; the 90-day window backs both the
+  // 90-day filter and the 1-year filter, which honestly covers the ~90 days
+  // Instagram retains — the UI says so).
+  if (days === 7) {
+    return {
+      views: dashboard.stats.week.views,
+      likes: dashboard.stats.week.likes,
+      comments: dashboard.stats.week.comments,
+    };
+  }
+  if (days === 90 || days === 365) {
+    return {
+      views: dashboard.stats.ninety.views,
+      likes: dashboard.stats.ninety.likes,
+      comments: dashboard.stats.ninety.comments,
+    };
+  }
   if (days === 30) {
     return {
       views: dashboard.stats.views,

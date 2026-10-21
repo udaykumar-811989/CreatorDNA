@@ -34,6 +34,18 @@ export type InstagramDashboard = {
     shares: number | null;
     saves: number | null;
     profileViews: number | null;
+    // Real window totals for the period filters (7-day; 90-day backs the
+    // 90-day and 1-year filters); values null when unavailable.
+    week: {
+      views: number | null;
+      likes: number | null;
+      comments: number | null;
+    };
+    ninety: {
+      views: number | null;
+      likes: number | null;
+      comments: number | null;
+    };
     previous: {
       views: number | null;
       likes: number | null;
@@ -184,6 +196,8 @@ function parseDashboard(value: unknown): InstagramDashboard {
       comments: optionalCount(value.stats.previous.comments),
     }
     : null;
+  const weekTotals = isRecord(value.stats.week) ? value.stats.week : null;
+  const ninetyTotals = isRecord(value.stats.ninety) ? value.stats.ninety : null;
   const parsedDaily = Array.isArray(value.daily)
     ? value.daily.flatMap((entry) => {
       if (!isRecord(entry) || typeof entry.date !== 'string') {
@@ -218,6 +232,16 @@ function parseDashboard(value: unknown): InstagramDashboard {
       shares: optionalCount(value.stats.shares),
       saves: optionalCount(value.stats.saves),
       profileViews: optionalCount(value.stats.profileViews),
+      week: {
+        views: optionalCount(weekTotals?.views),
+        likes: optionalCount(weekTotals?.likes),
+        comments: optionalCount(weekTotals?.comments),
+      },
+      ninety: {
+        views: optionalCount(ninetyTotals?.views),
+        likes: optionalCount(ninetyTotals?.likes),
+        comments: optionalCount(ninetyTotals?.comments),
+      },
       previous,
     },
     media,

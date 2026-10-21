@@ -135,12 +135,14 @@ export function ConnectScreen({
           onPress={connectionState === 'connected' ? onConnected : onConnect}
         />
 
-        <OutlineButton
-          label="Continue without Instagram"
-          onPress={onContinueWithoutInstagram}
-          tone="light"
-          style={{ marginTop: 12 }}
-        />
+        {connectionState === 'connected' ? null : (
+          <OutlineButton
+            label="Continue without Instagram"
+            onPress={onContinueWithoutInstagram}
+            tone="light"
+            style={{ marginTop: 12 }}
+          />
+        )}
 
         <Text style={styles.requirement}>
           Connecting needs an Instagram Professional account (Creator or
