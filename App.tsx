@@ -552,6 +552,13 @@ function AppShell() {
       } catch {
         setSessionWarning(true);
       }
+      // Instagram is connected now — this is the moment to ask "Save this
+      // account?" (email + this connection) for one-tap logins next time.
+      const saveEmail =
+        loadAuthSession()?.email?.trim().toLowerCase() ?? null;
+      if (saveEmail && !isAccountSaveDismissed(saveEmail)) {
+        setSaveAccountPrompt(saveEmail);
+      }
     } catch {
       setConnectionError('receipt_expired_or_used');
       setConnectionState('failed');
@@ -1547,15 +1554,10 @@ function AppShell() {
             setProfile(null);
             setDashboard(null);
             setDashboardError(null);
-            // Ask Save / Not now unless the user already decided for this
-            // email. Accounts auto-saved by an older build still get asked
-            // (the saved-entry check used to skip their popup entirely).
-            const normalized = email.trim().toLowerCase();
-            if (isAccountSaveDismissed(normalized)) {
-              setScreen('home');
-              return;
-            }
-            setSaveAccountPrompt(normalized);
+            // No prompt here — Save / Not now is asked when Instagram
+            // finishes connecting (the moment there's something worth
+            // saving for one-tap logins).
+            setScreen('home');
           }}
           authLoading={authLoading}
           authError={authError}
@@ -1737,13 +1739,15 @@ function AppShell() {
         />
       ) : null}
 
-      {/* Opt-in save prompt shown right after a password sign-in. */}
+      {/* Opt-in save prompt, shown the moment Instagram finishes connecting. */}
       {saveAccountPrompt ? (
         <SaveAccountPrompt
           email={saveAccountPrompt}
           onSave={() => {
             const email = saveAccountPrompt;
-            clearAccountSaveDismissed(email);
+            // One decision per account: don't re-ask at the next connect
+            // (Forget in the account switcher clears this marker).
+            markAccountSaveDismissed(email);
             const session = loadAuthSession();
             if (
               session?.refreshToken
@@ -1763,7 +1767,6 @@ function AppShell() {
               }));
             }
             setSaveAccountPrompt(null);
-            setScreen('home');
           }}
           onNotNow={() => {
             // Declining means "not saved" — also drop any entry an older
@@ -1771,7 +1774,6 @@ function AppShell() {
             markAccountSaveDismissed(saveAccountPrompt);
             setSavedAccounts(removeSavedAccount(saveAccountPrompt));
             setSaveAccountPrompt(null);
-            setScreen('home');
           }}
         />
       ) : null}
