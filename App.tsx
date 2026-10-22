@@ -58,6 +58,7 @@ import { AnalysesListScreen } from './src/screens/AnalysesListScreen';
 import { AnalysisFormScreen } from './src/screens/AnalysisFormScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 import { ChatScreen } from './src/screens/ChatScreen';
+import { SaveAccountPrompt, SavedAccountsSheet } from './src/components/AccountModals';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { ConnectedScreen } from './src/screens/ConnectedScreen';
 import { DnaScreen } from './src/screens/DnaScreen';
@@ -220,6 +221,67 @@ const removeSavedAccount = (email: string): SavedAccount[] => {
   );
   persistSavedAccounts(next);
   return next;
+};
+
+// The "Save this account?" prompt is asked once per email until the user
+// chooses — Save adds the account, Not now dismisses the prompt for good on
+// this device (a later ✕ Forget re-offers it).
+const saveDismissedStorageKey = 'creatordna.accounts.dismissed';
+
+const isAccountSaveDismissed = (email: string): boolean => {
+  try {
+    if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
+      return false;
+    }
+    const raw = localStorage.getItem(saveDismissedStorageKey);
+    if (!raw) {
+      return false;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.includes(email);
+  } catch {
+    return false;
+  }
+};
+
+const markAccountSaveDismissed = (email: string): void => {
+  try {
+    if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
+      return;
+    }
+    const raw = localStorage.getItem(saveDismissedStorageKey);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+    if (!list.includes(email)) {
+      localStorage.setItem(
+        saveDismissedStorageKey,
+        JSON.stringify([...list, email].slice(-20)),
+      );
+    }
+  } catch {
+    // Best-effort.
+  }
+};
+
+const clearAccountSaveDismissed = (email: string): void => {
+  try {
+    if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
+      return;
+    }
+    const raw = localStorage.getItem(saveDismissedStorageKey);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+    localStorage.setItem(
+      saveDismissedStorageKey,
+      JSON.stringify(list.filter((entry) => entry !== email)),
+    );
+  } catch {
+    // Best-effort.
+  }
 };
 
 // The floating AI button is hidden only on the entry flow (where it would
@@ -539,6 +601,10 @@ function AppShell() {
   // Accounts remembered on this device (email + Instagram connection) so
   // logout doesn't cost a password re-type — swap with one tap.
   const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>(() => loadSavedAccounts());
+  // Non-null = show the "Save this account?" prompt for this email.
+  const [saveAccountPrompt, setSaveAccountPrompt] = useState<string | null>(null);
+  // Open switcher sheet (long-press on the Profile tab).
+  const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
 
   const loginWithSavedAccount = useCallback(
     async (email: string): Promise<void> => {
@@ -607,6 +673,8 @@ function AppShell() {
 
   const forgetSavedAccount = useCallback((email: string) => {
     setSavedAccounts(removeSavedAccount(email));
+    // An explicit forget re-offers the save prompt at the next sign-in.
+    clearAccountSaveDismissed(email);
   }, []);
 
   // Keep the remembered account's Instagram details fresh for the swap list
@@ -616,13 +684,21 @@ function AppShell() {
       return;
     }
     const session = loadAuthSession();
-    if (!session?.email || !session.refreshToken) {
+    const email = session?.email;
+    if (!email || !session?.refreshToken) {
+      return;
+    }
+    // Only refresh accounts the user chose to save — never auto-add.
+    const existing = loadSavedAccounts().find(
+      (entry) => entry.email.toLowerCase() === email.toLowerCase(),
+    );
+    if (!existing) {
       return;
     }
     const shown = dashboard?.profile ?? profile;
     setSavedAccounts(upsertSavedAccount({
-      email: session.email,
-      refreshToken: session.refreshToken,
+      email,
+      refreshToken: session.refreshToken ?? existing.refreshToken,
       instagramToken: sessionToken,
       instagramUsername: shown?.username ?? null,
       instagramPictureUrl: shown?.profilePictureUrl ?? null,
@@ -734,28 +810,14 @@ function AppShell() {
         );
         setSupabaseAccessToken(session.accessToken);
         // Persist the email session so a refresh returns to the dashboard
-        // instead of the sign-in screen; logout clears it.
-        const normalizedEmail = email.trim().toLowerCase();
+        // instead of the sign-in screen; logout clears it. Whether the
+        // account is remembered for one-tap login is the caller's explicit
+        // Save / Not now prompt decision — never automatic.
         saveAuthSession({
           token: session.accessToken,
-          email: normalizedEmail,
+          email: email.trim().toLowerCase(),
           refreshToken: session.refreshToken,
         });
-        // Remember the account for one-tap re-login and swapping after
-        // logout (keeping any Instagram connection already saved for it).
-        if (session.refreshToken) {
-          const existing = loadSavedAccounts().find(
-            (entry) => entry.email.toLowerCase() === normalizedEmail,
-          );
-          setSavedAccounts(upsertSavedAccount({
-            email: normalizedEmail,
-            refreshToken: session.refreshToken,
-            instagramToken: existing?.instagramToken ?? null,
-            instagramUsername: existing?.instagramUsername ?? null,
-            instagramPictureUrl: existing?.instagramPictureUrl ?? null,
-            savedAt: Date.now(),
-          }));
-        }
         return true;
       } catch (error) {
         setAuthError(
@@ -823,20 +885,26 @@ function AppShell() {
   }, [profile, sessionToken]);
 
   const logout = useCallback(() => {
-    // Remember this account (with its Instagram connection) for one-tap
-    // re-login and swapping — only "Forget" on the sign-in screen removes
-    // it. Then end the live session everywhere.
+    // Refresh (never create) the saved entry for this account so a saved
+    // user's Instagram connection stays current across logouts. Saving is
+    // opt-in via the sign-in prompt — logout alone doesn't add accounts.
     const session = loadAuthSession();
-    if (session?.email && session.refreshToken) {
-      const shown = dashboard?.profile ?? profile;
-      setSavedAccounts(upsertSavedAccount({
-        email: session.email,
-        refreshToken: session.refreshToken,
-        instagramToken: sessionToken,
-        instagramUsername: shown?.username ?? null,
-        instagramPictureUrl: shown?.profilePictureUrl ?? null,
-        savedAt: Date.now(),
-      }));
+    const email = session?.email;
+    if (email && session?.refreshToken) {
+      const existing = loadSavedAccounts().find(
+        (entry) => entry.email.toLowerCase() === email.toLowerCase(),
+      );
+      if (existing) {
+        const shown = dashboard?.profile ?? profile;
+        setSavedAccounts(upsertSavedAccount({
+          email,
+          refreshToken: session.refreshToken,
+          instagramToken: sessionToken,
+          instagramUsername: shown?.username ?? null,
+          instagramPictureUrl: shown?.profilePictureUrl ?? null,
+          savedAt: Date.now(),
+        }));
+      }
     }
     setSupabaseAccessToken(null);
     // Logout is the only thing that ends a live session — clear every
@@ -1255,9 +1323,8 @@ function AppShell() {
     setAnalysisError(null);
     setGenerateError(null);
     setChatError(null);
-    // Saved swap accounts are local data too — forget them on request.
-    setSavedAccounts([]);
-    persistSavedAccounts([]);
+    // Saved accounts are intentionally kept — they're login credentials,
+    // not content data, and removing them would break one-tap sign-in.
   }, [setAnalyses, setChatMessages, setIdeas, setSavedIdeas, setTrendingIdeas]);
 
   const navigateTab = useCallback((tab: NavTab) => {
@@ -1377,7 +1444,17 @@ function AppShell() {
             setProfile(null);
             setDashboard(null);
             setDashboardError(null);
-            setScreen('home');
+            const normalized = email.trim().toLowerCase();
+            const alreadySaved = loadSavedAccounts().some(
+              (entry) => entry.email.toLowerCase() === normalized,
+            );
+            if (alreadySaved || isAccountSaveDismissed(normalized)) {
+              setScreen('home');
+              return;
+            }
+            // First sign-in for this account: ask Save / Not now before
+            // entering the app (staying on this screen until they choose).
+            setSaveAccountPrompt(normalized);
           }}
           authLoading={authLoading}
           authError={authError}
@@ -1539,7 +1616,12 @@ function AppShell() {
       )}
 
       {showNav ? (
-        <BottomNav active={navActive} onNavigate={navigateTab} tone={navDark ? 'dark' : 'light'} />
+        <BottomNav
+          active={navActive}
+          onNavigate={navigateTab}
+          onProfileLongPress={() => setAccountSwitcherOpen(true)}
+          tone={navDark ? 'dark' : 'light'}
+        />
       ) : null}
       {showFab ? (
         <FloatingAiButton
@@ -1547,6 +1629,57 @@ function AppShell() {
           bottomReserve={showNav ? NAV_HEIGHT + 10 : 8}
         />
       ) : null}
+
+      {/* Opt-in save prompt shown right after a password sign-in. */}
+      {saveAccountPrompt ? (
+        <SaveAccountPrompt
+          email={saveAccountPrompt}
+          onSave={() => {
+            const email = saveAccountPrompt;
+            const session = loadAuthSession();
+            if (
+              session?.refreshToken
+              && session.email
+              && session.email.toLowerCase() === email.toLowerCase()
+            ) {
+              const existing = loadSavedAccounts().find(
+                (entry) => entry.email.toLowerCase() === email.toLowerCase(),
+              );
+              setSavedAccounts(upsertSavedAccount({
+                email,
+                refreshToken: session.refreshToken,
+                instagramToken: existing?.instagramToken ?? null,
+                instagramUsername: existing?.instagramUsername ?? null,
+                instagramPictureUrl: existing?.instagramPictureUrl ?? null,
+                savedAt: Date.now(),
+              }));
+            }
+            setSaveAccountPrompt(null);
+            setScreen('home');
+          }}
+          onNotNow={() => {
+            markAccountSaveDismissed(saveAccountPrompt);
+            setSaveAccountPrompt(null);
+            setScreen('home');
+          }}
+        />
+      ) : null}
+
+      {/* Long-press the Profile tab: swap between remembered accounts. */}
+      <SavedAccountsSheet
+        visible={accountSwitcherOpen}
+        accounts={savedAccounts.map((account) => ({
+          email: account.email,
+          instagramUsername: account.instagramUsername,
+          instagramPictureUrl: account.instagramPictureUrl,
+        }))}
+        onClose={() => setAccountSwitcherOpen(false)}
+        onPick={(email) => {
+          setAccountSwitcherOpen(false);
+          void loginWithSavedAccount(email);
+        }}
+        onForget={(email) => forgetSavedAccount(email)}
+      />
     </SafeAreaView>
   );
 }

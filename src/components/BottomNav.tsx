@@ -20,10 +20,13 @@ const tabs: Array<{
 export function BottomNav({
   active,
   onNavigate,
+  onProfileLongPress,
   tone = 'light',
 }: {
   active: NavTab;
   onNavigate: (tab: NavTab) => void;
+  /** Long-press on the Profile tab opens the saved-accounts switcher. */
+  onProfileLongPress?: () => void;
   tone?: 'light' | 'dark';
 }) {
   const isDark = tone === 'dark';
