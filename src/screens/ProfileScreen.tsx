@@ -17,6 +17,7 @@ export function ProfileScreen({
   onOpenAnalyses,
   onViewDna,
   onOpenSettings,
+  onSwitchAccount,
   onLogout,
 }: {
   profile: InstagramProfile | null;
@@ -27,6 +28,9 @@ export function ProfileScreen({
   onOpenAnalyses: () => void;
   onViewDna: () => void;
   onOpenSettings: () => void;
+  /** Opens the saved-accounts switcher (visible alternative to the
+   *  long-press on the Profile tab). */
+  onSwitchAccount: () => void;
   onLogout: () => void;
 }) {
   const { mode } = useTheme();
@@ -176,6 +180,15 @@ export function ProfileScreen({
             label="Connected Accounts"
             value={connected ? `Instagram @${username}` : 'Not connected'}
             onPress={onReconnect}
+          />
+          <View style={styles.rowDivider} />
+          {/* Visible alternative to the long-press shortcut: opens the same
+              saved-accounts sheet in place. */}
+          <ListRow
+            tone={tone}
+            label="Switch account"
+            value="Saved logins"
+            onPress={onSwitchAccount}
           />
           <View style={styles.rowDivider} />
           <ListRow

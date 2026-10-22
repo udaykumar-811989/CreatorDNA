@@ -1,4 +1,4 @@
-import { useRef, type ComponentType } from 'react';
+import { useEffect, useRef, type ComponentType } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, NAV_HEIGHT } from '../theme';
 import { DnaIcon, HomeIcon, IdeasIcon, PersonIcon, PlanIcon } from './icons';
@@ -35,11 +35,25 @@ export function BottomNav({
   // 550ms, and swallow the release so the tab doesn't also navigate.
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressConsumed = useRef(false);
+  // Chrome/Android cancels presses (text-selection slop) while the finger is
+  // still down — that must NOT kill a hold in progress. Raw window-level
+  // touch tracking separates a real finger-lift (cancel the hold) from a
+  // mid-hold jitter (keep the timer), and a move of >40px is a scroll or
+  // drag, never a hold.
+  const touchActive = useRef(false);
+  const touchOrigin = useRef({ x: 0, y: 0 });
+  const clearLongPressTimer = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
   const beginLongPress = (key: NavTab) => {
     longPressConsumed.current = false;
     if (key !== 'profile' || !onProfileLongPress) {
       return;
     }
+    clearLongPressTimer();
     longPressTimer.current = setTimeout(() => {
       longPressTimer.current = null;
       longPressConsumed.current = true;
@@ -47,11 +61,59 @@ export function BottomNav({
     }, 550);
   };
   const endLongPress = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
+    // Mouse release always cancels (touchActive false). On touch, pressOut
+    // may fire mid-hold when the finger jitters past the press slop — keep
+    // the timer while the finger is still on screen; the capture listeners
+    // below clear it on a real touchend or a >40px drag.
+    if (touchActive.current) {
+      return;
     }
+    clearLongPressTimer();
   };
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const onStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) {
+        return;
+      }
+      touchActive.current = true;
+      touchOrigin.current = { x: touch.clientX, y: touch.clientY };
+    };
+    const onMove = (event: TouchEvent) => {
+      if (!touchActive.current || !longPressTimer.current) {
+        return;
+      }
+      const touch = event.touches[0];
+      if (!touch) {
+        return;
+      }
+      const dx = touch.clientX - touchOrigin.current.x;
+      const dy = touch.clientY - touchOrigin.current.y;
+      if (Math.abs(dx) > 40 || Math.abs(dy) > 40) {
+        clearLongPressTimer();
+      }
+    };
+    const onEnd = () => {
+      touchActive.current = false;
+      clearLongPressTimer();
+    };
+    // Capture phase, so touchend updates `touchActive` before
+    // react-native-web fires press-out (a plain tap cancels cleanly).
+    window.addEventListener('touchstart', onStart, { passive: true, capture: true });
+    window.addEventListener('touchmove', onMove, { passive: true, capture: true });
+    window.addEventListener('touchend', onEnd, { capture: true });
+    window.addEventListener('touchcancel', onEnd, { capture: true });
+    return () => {
+      window.removeEventListener('touchstart', onStart, { capture: true });
+      window.removeEventListener('touchmove', onMove, { capture: true });
+      window.removeEventListener('touchend', onEnd, { capture: true });
+      window.removeEventListener('touchcancel', onEnd, { capture: true });
+      clearLongPressTimer();
+    };
+  }, []);
   return (
     <View
       style={[

@@ -225,8 +225,9 @@ const removeSavedAccount = (email: string): SavedAccount[] => {
 
 // The "Save this account?" prompt is asked once per email until the user
 // chooses — Save adds the account, Not now dismisses the prompt for good on
-// this device (a later ✕ Forget re-offers it).
-const saveDismissedStorageKey = 'creatordna.accounts.dismissed';
+// this device (a later ✕ Forget re-offers it). v2 of the key wipes any
+// dismissal left by older builds, which had no visible way to undo it.
+const saveDismissedStorageKey = 'creatordna.accounts.dismissed.v2';
 
 const isAccountSaveDismissed = (email: string): boolean => {
   try {
@@ -1415,7 +1416,12 @@ function AppShell() {
     el.setAttribute('data-creatordna-root', '1');
     el.textContent =
       'html,body{overflow:hidden !important;overscroll-behavior:none;height:100%;}' +
-      '#root{position:fixed;inset:0;overflow:hidden;overscroll-behavior:none;}';
+      '#root{position:fixed;inset:0;overflow:hidden;overscroll-behavior:none;}' +
+      // Android Chrome starts text selection / callouts on long-press, which
+      // cancels presses mid-hold — keep app chrome unselectable (form fields
+      // stay selectable).
+      '#root,#root *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}' +
+      '#root input,#root textarea,#root [contenteditable="true"]{-webkit-user-select:text;user-select:text;}';
     document.head.appendChild(el);
     return () => {
       el.remove();
@@ -1455,6 +1461,13 @@ function AppShell() {
   );
   const [panResponder] = useState(() =>
     PanResponder.create({
+      // Capture phase: claim clearly-horizontal moves before nested
+      // ScrollViews can (Chrome/Android otherwise steals the gesture and
+      // the swipe-navigation never sees it). Vertical moves are never
+      // captured, so scrolling is untouched.
+      onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+        Math.abs(gesture.dx) > 24 &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy) * 2,
       onMoveShouldSetPanResponder: (_event, gesture) =>
         Math.abs(gesture.dx) > 24 &&
         Math.abs(gesture.dx) > Math.abs(gesture.dy) * 2,
@@ -1683,6 +1696,7 @@ function AppShell() {
           onOpenAnalyses={() => setScreen('analysesList')}
           onViewDna={() => setScreen('dna')}
           onOpenSettings={() => setScreen('settings')}
+          onSwitchAccount={() => setAccountSwitcherOpen(true)}
           onLogout={logout}
         />
       ) : screen === 'settings' ? (
