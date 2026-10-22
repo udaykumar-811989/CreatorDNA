@@ -46,6 +46,7 @@ export function ConnectScreen({
   onBack,
   onConnect,
   onConnected,
+  onConnectDifferent,
   onContinueWithoutInstagram,
   connectionState,
   connectionError,
@@ -55,6 +56,8 @@ export function ConnectScreen({
   onBack: () => void;
   onConnect: () => void;
   onConnected: () => void;
+  /** Swap the connection to a different Instagram account (non-destructive). */
+  onConnectDifferent: () => void;
   onContinueWithoutInstagram: () => void;
   connectionState: ConnectionState;
   connectionError: string | null;
@@ -134,6 +137,15 @@ export function ConnectScreen({
           disabled={connectionState === 'connecting'}
           onPress={connectionState === 'connected' ? onConnected : onConnect}
         />
+
+        {connectionState === 'connected' && profile ? (
+          <OutlineButton
+            label="Connect a different account"
+            onPress={onConnectDifferent}
+            tone="light"
+            style={{ marginTop: 12 }}
+          />
+        ) : null}
 
         {connectionState === 'connected' ? null : (
           <OutlineButton

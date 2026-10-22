@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import { useRef, type ComponentType } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, NAV_HEIGHT } from '../theme';
 import { DnaIcon, HomeIcon, IdeasIcon, PersonIcon, PlanIcon } from './icons';
@@ -30,6 +30,28 @@ export function BottomNav({
   tone?: 'light' | 'dark';
 }) {
   const isDark = tone === 'dark';
+  // react-native-web doesn't reliably fire onLongPress on Pressable, so the
+  // Profile long-press is tracked manually: hold → open the switcher after
+  // 550ms, and swallow the release so the tab doesn't also navigate.
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressConsumed = useRef(false);
+  const beginLongPress = (key: NavTab) => {
+    longPressConsumed.current = false;
+    if (key !== 'profile' || !onProfileLongPress) {
+      return;
+    }
+    longPressTimer.current = setTimeout(() => {
+      longPressTimer.current = null;
+      longPressConsumed.current = true;
+      onProfileLongPress();
+    }, 550);
+  };
+  const endLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
   return (
     <View
       style={[
@@ -53,7 +75,18 @@ export function BottomNav({
             accessibilityRole="tab"
             accessibilityState={{ selected: isActive }}
             accessibilityLabel={label}
-            onPress={() => onNavigate(key)}
+            accessibilityHint={
+              key === 'profile' ? 'Long press to switch saved accounts' : undefined
+            }
+            onPress={() => {
+              if (longPressConsumed.current) {
+                longPressConsumed.current = false;
+                return;
+              }
+              onNavigate(key);
+            }}
+            onPressIn={() => beginLongPress(key)}
+            onPressOut={endLongPress}
             style={styles.item}
           >
             <Icon size={23} color={color} strokeWidth={isActive ? 2.1 : 1.8} />

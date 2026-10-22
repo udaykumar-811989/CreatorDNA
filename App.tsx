@@ -777,6 +777,13 @@ function AppShell() {
       );
       if (authSession.type === 'success' && authSession.url) {
         await handleInstagramReturn(authSession.url);
+      } else if (profile && sessionToken) {
+        // Cancelling a "connect a different account" swap must never log the
+        // connected account out — the live session is untouched, so return to
+        // its connected view instead of a failure state.
+        clearPendingOAuthState();
+        setConnectionState('connected');
+        setConnectionError(null);
       } else {
         clearPendingOAuthState();
         setConnectionError('login_cancelled');
@@ -784,14 +791,19 @@ function AppShell() {
       }
     } catch (error) {
       clearPendingOAuthState();
-      setConnectionError(
-        error instanceof Error && /^[a-z_]+$/.test(error.message)
-          ? error.message
-          : 'connection_setup_failed',
-      );
-      setConnectionState('failed');
+      if (profile && sessionToken) {
+        setConnectionState('connected');
+        setConnectionError(null);
+      } else {
+        setConnectionError(
+          error instanceof Error && /^[a-z_]+$/.test(error.message)
+            ? error.message
+            : 'connection_setup_failed',
+        );
+        setConnectionState('failed');
+      }
     }
-  }, [handleInstagramReturn]);
+  }, [handleInstagramReturn, profile, sessionToken]);
 
   // ---------- Auth ----------
   const authenticate = useCallback(
@@ -1444,16 +1456,14 @@ function AppShell() {
             setProfile(null);
             setDashboard(null);
             setDashboardError(null);
+            // Ask Save / Not now unless the user already decided for this
+            // email. Accounts auto-saved by an older build still get asked
+            // (the saved-entry check used to skip their popup entirely).
             const normalized = email.trim().toLowerCase();
-            const alreadySaved = loadSavedAccounts().some(
-              (entry) => entry.email.toLowerCase() === normalized,
-            );
-            if (alreadySaved || isAccountSaveDismissed(normalized)) {
+            if (isAccountSaveDismissed(normalized)) {
               setScreen('home');
               return;
             }
-            // First sign-in for this account: ask Save / Not now before
-            // entering the app (staying on this screen until they choose).
             setSaveAccountPrompt(normalized);
           }}
           authLoading={authLoading}
@@ -1607,6 +1617,11 @@ function AppShell() {
           onBack={() => setScreen(sessionToken ? 'home' : 'onboarding')}
           onConnect={() => void connectInstagram()}
           onConnected={continueToDashboard}
+          onConnectDifferent={() => {
+            // Fresh OAuth replaces the connection on success; nothing is
+            // cleared up front, so cancelling keeps the current account.
+            void connectInstagram();
+          }}
           onContinueWithoutInstagram={continueWithoutInstagram}
           connectionState={connectionState}
           connectionError={connectionError}
@@ -1636,6 +1651,7 @@ function AppShell() {
           email={saveAccountPrompt}
           onSave={() => {
             const email = saveAccountPrompt;
+            clearAccountSaveDismissed(email);
             const session = loadAuthSession();
             if (
               session?.refreshToken
@@ -1658,7 +1674,10 @@ function AppShell() {
             setScreen('home');
           }}
           onNotNow={() => {
+            // Declining means "not saved" — also drop any entry an older
+            // auto-saving build created for this email.
             markAccountSaveDismissed(saveAccountPrompt);
+            setSavedAccounts(removeSavedAccount(saveAccountPrompt));
             setSaveAccountPrompt(null);
             setScreen('home');
           }}
