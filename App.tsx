@@ -38,6 +38,7 @@ import {
   CreatorAiJob,
   generateCreatorIdeas,
   getCreatorAiJob,
+  refreshCreatorAiSession,
   sendCreatorAiChat,
   signInAnonymouslyForCreatorAi,
   signInForCreatorAi,
@@ -76,15 +77,35 @@ WebBrowser.maybeCompleteAuthSession();
 
 const pendingOAuthStorageKey = 'veyyra.instagram.oauth-state';
 
-// Email/password session token. Persisted so a page refresh returns the
-// creator to their dashboard instead of the sign-in screen; only an
-// explicit logout clears it.
+// Active email session (token + the account it belongs to). Persisted so a
+// page refresh returns the creator to their dashboard; only an explicit
+// logout clears it — and logout still remembers the account for one-tap
+// re-login and account swapping.
 const authSessionStorageKey = 'creatordna.auth.session';
+const savedAccountsStorageKey = 'creatordna.accounts.v1';
+const maxSavedAccounts = 5;
 
-const saveAuthSession = (token: string): void => {
+type AuthSessionRecord = {
+  token: string;
+  email: string | null;
+  refreshToken: string | null;
+};
+
+// A remembered account: enough to sign back in without typing anything —
+// the Supabase refresh token plus that account's Instagram connection.
+type SavedAccount = {
+  email: string;
+  refreshToken: string;
+  instagramToken: string | null;
+  instagramUsername: string | null;
+  instagramPictureUrl: string | null;
+  savedAt: number;
+};
+
+const saveAuthSession = (session: AuthSessionRecord): void => {
   try {
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
-      localStorage.setItem(authSessionStorageKey, token);
+      localStorage.setItem(authSessionStorageKey, JSON.stringify(session));
     }
   } catch {
     // Storage can be unavailable (e.g. strict privacy settings). Sign-in
@@ -92,20 +113,33 @@ const saveAuthSession = (token: string): void => {
   }
 };
 
-const loadAuthSession = (): string | null => {
+const loadAuthSession = (): AuthSessionRecord | null => {
   try {
     if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
       return null;
     }
-    const token = localStorage.getItem(authSessionStorageKey);
-    if (!token) {
+    const raw = localStorage.getItem(authSessionStorageKey);
+    if (!raw) {
       return null;
+    }
+    // Older builds stored the bare token string; accept both shapes.
+    let session: AuthSessionRecord = { token: raw, email: null, refreshToken: null };
+    if (raw.startsWith('{')) {
+      const parsed = JSON.parse(raw) as Partial<AuthSessionRecord>;
+      if (typeof parsed.token !== 'string') {
+        return null;
+      }
+      session = {
+        token: parsed.token,
+        email: typeof parsed.email === 'string' ? parsed.email : null,
+        refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : null,
+      };
     }
     // Supabase access tokens are short-lived JWTs — only restore one that
     // hasn't expired (`exp`, seconds since epoch).
-    const payload = token.split('.')[1] ?? '';
+    const payload = session.token.split('.')[1] ?? '';
     const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: unknown };
-    return typeof decoded.exp === 'number' && decoded.exp * 1000 > Date.now() ? token : null;
+    return typeof decoded.exp === 'number' && decoded.exp * 1000 > Date.now() ? session : null;
   } catch {
     return null;
   }
@@ -119,6 +153,73 @@ const clearAuthSession = (): void => {
   } catch {
     // Best-effort cleanup.
   }
+};
+
+const loadSavedAccounts = (): SavedAccount[] => {
+  try {
+    if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
+      return [];
+    }
+    const raw = localStorage.getItem(savedAccountsStorageKey);
+    if (!raw) {
+      return [];
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.flatMap((entry): SavedAccount[] => {
+      if (typeof entry !== 'object' || entry === null) {
+        return [];
+      }
+      const account = entry as Record<string, unknown>;
+      if (typeof account.email !== 'string' || typeof account.refreshToken !== 'string') {
+        return [];
+      }
+      return [{
+        email: account.email,
+        refreshToken: account.refreshToken,
+        instagramToken: typeof account.instagramToken === 'string' ? account.instagramToken : null,
+        instagramUsername: typeof account.instagramUsername === 'string' ? account.instagramUsername : null,
+        instagramPictureUrl: typeof account.instagramPictureUrl === 'string' ? account.instagramPictureUrl : null,
+        savedAt: typeof account.savedAt === 'number' ? account.savedAt : 0,
+      }];
+    });
+  } catch {
+    return [];
+  }
+};
+
+const persistSavedAccounts = (accounts: SavedAccount[]): void => {
+  try {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+      localStorage.setItem(
+        savedAccountsStorageKey,
+        JSON.stringify(accounts.slice(0, maxSavedAccounts)),
+      );
+    }
+  } catch {
+    // Best-effort: without storage the swap list just won't persist.
+  }
+};
+
+const upsertSavedAccount = (account: SavedAccount): SavedAccount[] => {
+  const next = [
+    account,
+    ...loadSavedAccounts().filter(
+      (existing) => existing.email.toLowerCase() !== account.email.toLowerCase(),
+    ),
+  ].slice(0, maxSavedAccounts);
+  persistSavedAccounts(next);
+  return next;
+};
+
+const removeSavedAccount = (email: string): SavedAccount[] => {
+  const next = loadSavedAccounts().filter(
+    (account) => account.email.toLowerCase() !== email.toLowerCase(),
+  );
+  persistSavedAccounts(next);
+  return next;
 };
 
 // The floating AI button is hidden only on the entry flow (where it would
@@ -431,9 +532,103 @@ function AppShell() {
   useEffect(() => {
     const stored = loadAuthSession();
     if (stored) {
-      setSupabaseAccessToken(stored);
+      setSupabaseAccessToken(stored.token);
     }
   }, []);
+
+  // Accounts remembered on this device (email + Instagram connection) so
+  // logout doesn't cost a password re-type — swap with one tap.
+  const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>(() => loadSavedAccounts());
+
+  const loginWithSavedAccount = useCallback(
+    async (email: string): Promise<void> => {
+      if (!supabaseUrl || !supabaseAnonKey) {
+        return;
+      }
+      const account = loadSavedAccounts().find(
+        (entry) => entry.email.toLowerCase() === email.toLowerCase(),
+      );
+      if (!account) {
+        return;
+      }
+      setAuthLoading(true);
+      setAuthError(null);
+      try {
+        // Silent sign-in with the stored refresh token — no password typed.
+        const session = await refreshCreatorAiSession(
+          supabaseUrl,
+          supabaseAnonKey,
+          account.refreshToken,
+        );
+        // Supabase rotates refresh tokens on use; store the new one.
+        const refreshToken = session.refreshToken ?? account.refreshToken;
+        saveAuthSession({ token: session.accessToken, email: account.email, refreshToken });
+        setSupabaseAccessToken(session.accessToken);
+        setSavedAccounts(upsertSavedAccount({ ...account, refreshToken, savedAt: Date.now() }));
+        // Swap into this account: drop the previous account's live state and
+        // restore this account's own Instagram connection if it has one.
+        setProfile(null);
+        setDashboard(null);
+        setDashboardError(null);
+        setConnectionError(null);
+        setConnectionState('idle');
+        setSessionWarning(false);
+        if (account.instagramToken) {
+          try {
+            await saveInstagramSession(account.instagramToken);
+          } catch {
+            setSessionWarning(true);
+          }
+          setSessionToken(account.instagramToken);
+          setScreen('home');
+          void loadDashboard(account.instagramToken);
+        } else {
+          // Never leave the previous account's Instagram session behind.
+          void clearInstagramSession();
+          setSessionToken(null);
+          setScreen('home');
+        }
+      } catch (error) {
+        const code = error instanceof Error ? error.message : '';
+        if (code === 'saved_login_revoked') {
+          // The stored credential no longer works — forget it so the list
+          // only ever shows accounts that can actually sign in.
+          setSavedAccounts(removeSavedAccount(account.email));
+          setAuthError('That saved account needs its password once — sign in below.');
+        } else {
+          setAuthError('Could not reach sign-in. Check your connection and try again.');
+        }
+      } finally {
+        setAuthLoading(false);
+      }
+    },
+    [loadDashboard, supabaseAnonKey, supabaseUrl],
+  );
+
+  const forgetSavedAccount = useCallback((email: string) => {
+    setSavedAccounts(removeSavedAccount(email));
+  }, []);
+
+  // Keep the remembered account's Instagram details fresh for the swap list
+  // (runs after connect, dashboard loads, and profile changes).
+  useEffect(() => {
+    if (!sessionToken) {
+      return;
+    }
+    const session = loadAuthSession();
+    if (!session?.email || !session.refreshToken) {
+      return;
+    }
+    const shown = dashboard?.profile ?? profile;
+    setSavedAccounts(upsertSavedAccount({
+      email: session.email,
+      refreshToken: session.refreshToken,
+      instagramToken: sessionToken,
+      instagramUsername: shown?.username ?? null,
+      instagramPictureUrl: shown?.profilePictureUrl ?? null,
+      savedAt: Date.now(),
+    }));
+  }, [dashboard, profile, sessionToken]);
 
   useEffect(() => {
     if (incomingUrl) {
@@ -531,16 +726,36 @@ function AppShell() {
         if (!supabaseUrl || !supabaseAnonKey) {
           throw new Error('Supabase Auth is not configured in this app.');
         }
-        const token = await signInForCreatorAi(
+        const session = await signInForCreatorAi(
           supabaseUrl,
           supabaseAnonKey,
           email,
           password,
         );
-        setSupabaseAccessToken(token);
+        setSupabaseAccessToken(session.accessToken);
         // Persist the email session so a refresh returns to the dashboard
         // instead of the sign-in screen; logout clears it.
-        saveAuthSession(token);
+        const normalizedEmail = email.trim().toLowerCase();
+        saveAuthSession({
+          token: session.accessToken,
+          email: normalizedEmail,
+          refreshToken: session.refreshToken,
+        });
+        // Remember the account for one-tap re-login and swapping after
+        // logout (keeping any Instagram connection already saved for it).
+        if (session.refreshToken) {
+          const existing = loadSavedAccounts().find(
+            (entry) => entry.email.toLowerCase() === normalizedEmail,
+          );
+          setSavedAccounts(upsertSavedAccount({
+            email: normalizedEmail,
+            refreshToken: session.refreshToken,
+            instagramToken: existing?.instagramToken ?? null,
+            instagramUsername: existing?.instagramUsername ?? null,
+            instagramPictureUrl: existing?.instagramPictureUrl ?? null,
+            savedAt: Date.now(),
+          }));
+        }
         return true;
       } catch (error) {
         setAuthError(
@@ -608,9 +823,24 @@ function AppShell() {
   }, [profile, sessionToken]);
 
   const logout = useCallback(() => {
+    // Remember this account (with its Instagram connection) for one-tap
+    // re-login and swapping — only "Forget" on the sign-in screen removes
+    // it. Then end the live session everywhere.
+    const session = loadAuthSession();
+    if (session?.email && session.refreshToken) {
+      const shown = dashboard?.profile ?? profile;
+      setSavedAccounts(upsertSavedAccount({
+        email: session.email,
+        refreshToken: session.refreshToken,
+        instagramToken: sessionToken,
+        instagramUsername: shown?.username ?? null,
+        instagramPictureUrl: shown?.profilePictureUrl ?? null,
+        savedAt: Date.now(),
+      }));
+    }
     setSupabaseAccessToken(null);
-    // Logout is the only thing that ends a session — clear every persisted
-    // credential so a refresh stays signed out.
+    // Logout is the only thing that ends a live session — clear every
+    // persisted credential so a refresh stays signed out.
     clearAuthSession();
     void clearInstagramSession();
     setSessionToken(null);
@@ -623,7 +853,7 @@ function AppShell() {
     setAuthError(null);
     setOnboardingStep(0);
     setScreen('onboarding');
-  }, []);
+  }, [dashboard, profile, sessionToken]);
 
   // ---------- Creator AI: token, analysis, ideas, chat ----------
   const getCreatorToken = useCallback(async (): Promise<string> => {
@@ -1025,6 +1255,9 @@ function AppShell() {
     setAnalysisError(null);
     setGenerateError(null);
     setChatError(null);
+    // Saved swap accounts are local data too — forget them on request.
+    setSavedAccounts([]);
+    persistSavedAccounts([]);
   }, [setAnalyses, setChatMessages, setIdeas, setSavedIdeas, setTrendingIdeas]);
 
   const navigateTab = useCallback((tab: NavTab) => {
@@ -1137,6 +1370,9 @@ function AppShell() {
             if (!signedIn) {
               return;
             }
+            // Fresh sign-in: never keep another account's live Instagram
+            // session (its saved copy lives with its own account entry).
+            void clearInstagramSession();
             setSessionToken(null);
             setProfile(null);
             setDashboard(null);
@@ -1147,6 +1383,13 @@ function AppShell() {
           authError={authError}
           onConnectInstagram={() => setScreen('connect')}
           onContinueWithoutInstagram={continueWithoutInstagram}
+          savedAccounts={savedAccounts.map((account) => ({
+            email: account.email,
+            instagramUsername: account.instagramUsername,
+            instagramPictureUrl: account.instagramPictureUrl,
+          }))}
+          onLoginSaved={(email) => void loginWithSavedAccount(email)}
+          onForgetSavedAccount={forgetSavedAccount}
         />
       ) : screen === 'connected' && profile ? (
         <ConnectedScreen

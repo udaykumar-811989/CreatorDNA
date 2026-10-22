@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { DnaMark } from '../components/DnaMark';
 import { BackIcon } from '../components/icons';
-import { GradientButton } from '../components/ui';
+import { Avatar, GradientButton } from '../components/ui';
 import { useTheme, useThemeColors } from '../themeContext';
 import { radius, type } from '../theme';
 
@@ -14,6 +14,9 @@ export function AuthScreen({
   authError,
   onConnectInstagram,
   onContinueWithoutInstagram,
+  savedAccounts,
+  onLoginSaved,
+  onForgetSavedAccount,
 }: {
   onBack: () => void;
   onSignIn: (email: string, password: string) => void;
@@ -21,6 +24,14 @@ export function AuthScreen({
   authError: string | null;
   onConnectInstagram: () => void;
   onContinueWithoutInstagram: () => void;
+  // Accounts remembered on this device for one-tap re-login and swapping.
+  savedAccounts: Array<{
+    email: string;
+    instagramUsername: string | null;
+    instagramPictureUrl: string | null;
+  }>;
+  onLoginSaved: (email: string) => void;
+  onForgetSavedAccount: (email: string) => void;
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -92,6 +103,45 @@ export function AuthScreen({
           justifyContent: 'center',
         },
         outlineLabel: { color: c.onDark, fontSize: 15, fontWeight: '700' },
+        savedWrap: { marginBottom: 22, gap: 10 },
+        savedTitle: {
+          ...type.tiny,
+          color: c.onDarkSub,
+          textTransform: 'uppercase',
+          marginBottom: 2,
+        },
+        savedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+        savedAccount: {
+          flex: 1,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          backgroundColor: c.surface1,
+          borderWidth: 1,
+          borderColor: c.darkBorder,
+          borderRadius: 14,
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+        },
+        savedIdentity: { flex: 1 },
+        savedHandle: { color: c.onDark, fontSize: 15, fontWeight: '700' },
+        savedEmail: { color: c.onDarkSub, fontSize: 12.5, marginTop: 2 },
+        savedGo: { color: c.onDarkSub, fontSize: 17, fontWeight: '700' },
+        savedForget: {
+          width: 30,
+          height: 30,
+          borderRadius: 15,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: c.surface2,
+        },
+        savedForgetGlyph: { color: c.onDarkSub, fontSize: 12, fontWeight: '700' },
+        savedHint: {
+          ...type.tiny,
+          color: c.onDarkDim,
+          textAlign: 'center',
+          marginTop: 2,
+        },
         link: {
           color: c.onDarkSub,
           fontSize: 14,
@@ -128,6 +178,55 @@ export function AuthScreen({
             Sign in to continue your CreatorDNA progress.
           </Text>
         </View>
+
+        {savedAccounts.length > 0 ? (
+          <View style={styles.savedWrap}>
+            <Text style={styles.savedTitle}>Continue as</Text>
+            {savedAccounts.map((account) => (
+              <View key={account.email} style={styles.savedRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={authLoading}
+                  onPress={() => onLoginSaved(account.email)}
+                  style={({ pressed }) => [
+                    styles.savedAccount,
+                    authLoading && { opacity: 0.6 },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Avatar
+                    uri={account.instagramPictureUrl}
+                    name={account.instagramUsername ?? account.email}
+                    size={38}
+                  />
+                  <View style={styles.savedIdentity}>
+                    <Text style={styles.savedHandle} numberOfLines={1}>
+                      {account.instagramUsername ? `@${account.instagramUsername}` : account.email}
+                    </Text>
+                    <Text style={styles.savedEmail} numberOfLines={1}>
+                      {account.instagramUsername
+                        ? account.email
+                        : 'Tap to sign in — no password needed'}
+                    </Text>
+                  </View>
+                  <Text style={styles.savedGo}>{authLoading ? '…' : '→'}</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Forget ${account.email}`}
+                  onPress={() => onForgetSavedAccount(account.email)}
+                  hitSlop={10}
+                  style={({ pressed }) => [styles.savedForget, pressed && { opacity: 0.5 }]}
+                >
+                  <Text style={styles.savedForgetGlyph}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+            <Text style={styles.savedHint}>
+              Saved on this device — tap to swap accounts without typing a password.
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.form}>
           <View style={styles.field}>

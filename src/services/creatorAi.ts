@@ -631,7 +631,7 @@ export async function signInForCreatorAi(
   anonKey: string,
   email: string,
   password: string,
-): Promise<string> {
+): Promise<{ accessToken: string; refreshToken: string | null }> {
   let response: Response;
   try {
     response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
@@ -651,7 +651,62 @@ export async function signInForCreatorAi(
   if (typeof body.access_token !== 'string' || body.access_token.length < 20) {
     throw new Error('Sign-in returned an invalid session. Please try again.');
   }
-  return body.access_token;
+  return {
+    accessToken: body.access_token,
+    // The refresh token powers one-tap re-login for remembered accounts.
+    refreshToken:
+      typeof body.refresh_token === 'string' && body.refresh_token.length > 10
+        ? body.refresh_token
+        : null,
+  };
+}
+
+export async function refreshCreatorAiSession(
+  supabaseUrl: string,
+  anonKey: string,
+  refreshToken: string,
+): Promise<{ accessToken: string; refreshToken: string | null }> {
+  let response: Response;
+  try {
+    response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+      method: 'POST',
+      headers: {
+        apikey: anonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    throw new Error('Could not reach sign-in. Check your connection and retry.');
+  }
+  if (!response.ok) {
+    // 400/401 = the stored credential was revoked or expired (caller forgets
+    // the account and falls back to password sign-in); anything else is a
+    // transient Supabase hiccup worth retrying.
+    throw new Error(
+      response.status === 400 || response.status === 401
+        ? 'saved_login_revoked'
+        : 'saved_login_unavailable',
+    );
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error('saved_login_unavailable');
+  }
+  const session = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
+  if (typeof session.access_token !== 'string' || session.access_token.length < 20) {
+    throw new Error('saved_login_unavailable');
+  }
+  return {
+    accessToken: session.access_token,
+    refreshToken:
+      typeof session.refresh_token === 'string' && session.refresh_token.length > 10
+        ? session.refresh_token
+        : null,
+  };
 }
 
 export async function signInAnonymouslyForCreatorAi(
