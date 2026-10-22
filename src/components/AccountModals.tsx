@@ -49,12 +49,15 @@ export function SaveAccountPrompt({
  */
 export function SavedAccountsSheet({
   visible,
+  currentEmail,
   accounts,
   onPick,
   onForget,
   onClose,
 }: {
   visible: boolean;
+  /** The signed-in email, so the list can badge the active account. */
+  currentEmail?: string | null;
   accounts: Array<{
     email: string;
     instagramUsername: string | null;
@@ -85,7 +88,12 @@ export function SavedAccountsSheet({
               account will appear here.
             </Text>
           ) : (
-            accounts.map((account) => (
+            accounts.map((account) => {
+              const isCurrent =
+                !!currentEmail &&
+                account.email.trim().toLowerCase() ===
+                  currentEmail.trim().toLowerCase();
+              return (
               <View key={account.email} style={styles.row}>
                 <Pressable
                   accessibilityRole="button"
@@ -98,9 +106,16 @@ export function SavedAccountsSheet({
                     size={38}
                   />
                   <View style={styles.identity}>
-                    <Text style={styles.handleText} numberOfLines={1}>
-                      {account.instagramUsername ? `@${account.instagramUsername}` : account.email}
-                    </Text>
+                    <View style={styles.handleRow}>
+                      <Text style={styles.handleText} numberOfLines={1}>
+                        {account.instagramUsername ? `@${account.instagramUsername}` : account.email}
+                      </Text>
+                      {isCurrent ? (
+                        <View style={styles.currentBadge}>
+                          <Text style={styles.currentBadgeText}>Current</Text>
+                        </View>
+                      ) : null}
+                    </View>
                     <Text style={styles.emailText} numberOfLines={1}>
                       {account.instagramUsername ? account.email : 'Tap to sign in'}
                     </Text>
@@ -117,7 +132,8 @@ export function SavedAccountsSheet({
                   <Text style={styles.forgetGlyph}>✕</Text>
                 </Pressable>
               </View>
-            ))
+              );
+            })
           )}
 
           <Pressable
@@ -213,6 +229,20 @@ function makeSheetStyles(c: ReturnType<typeof useThemeColors>) {
       paddingVertical: 10,
     },
     identity: { flex: 1 },
+    handleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    currentBadge: {
+      backgroundColor: 'rgba(124, 108, 246, 0.16)',
+      borderRadius: 6,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+    },
+    currentBadgeText: {
+      color: '#7C6CF6',
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 0.4,
+      textTransform: 'uppercase',
+    },
     handleText: { color: c.onDark, fontSize: 15, fontWeight: '700' },
     emailText: { color: c.onDarkSub, fontSize: 12.5, marginTop: 2 },
     go: { color: c.onDarkSub, fontSize: 17, fontWeight: '700' },

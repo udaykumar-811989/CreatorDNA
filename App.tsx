@@ -3,7 +3,7 @@ import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Platform, SafeAreaView, StyleSheet } from 'react-native';
+import { PanResponder, Platform, SafeAreaView, StyleSheet } from 'react-native';
 
 import { BottomNav, NavTab } from './src/components/BottomNav';
 import { FloatingAiButton } from './src/components/FloatingAiButton';
@@ -607,7 +607,10 @@ function AppShell() {
   const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
 
   const loginWithSavedAccount = useCallback(
-    async (email: string): Promise<void> => {
+    async (
+      email: string,
+      options?: { stayOnScreen?: boolean },
+    ): Promise<void> => {
       if (!supabaseUrl || !supabaseAnonKey) {
         return;
       }
@@ -646,13 +649,25 @@ function AppShell() {
             setSessionWarning(true);
           }
           setSessionToken(account.instagramToken);
-          setScreen('home');
+          if (options?.stayOnScreen) {
+            // Picked from the Connect page's own account list: swap in
+            // place — the connected card updates when its dashboard lands.
+            setConnectionState('connected');
+            setScreen('connect');
+          } else {
+            setScreen('home');
+          }
           void loadDashboard(account.instagramToken);
         } else {
           // Never leave the previous account's Instagram session behind.
           void clearInstagramSession();
           setSessionToken(null);
-          setScreen('home');
+          if (options?.stayOnScreen) {
+            setConnectionState('idle');
+            setScreen('connect');
+          } else {
+            setScreen('home');
+          }
         }
       } catch (error) {
         const code = error instanceof Error ? error.message : '';
@@ -1423,9 +1438,85 @@ function AppShell() {
     (screen === 'home' || screen === 'profile' || screen === 'settings');
   const showFab = !NO_FAB.has(screen);
 
+  // Mobile "slide navigation": a horizontal swipe across the page moves
+  // between the bottom-nav screens (previous/next tab), and on detail
+  // screens a right-swipe goes back — like the iOS edge gesture. Only
+  // clearly-horizontal moves are claimed, so vertical scrolling is
+  // untouched.
+  const slideHandlerRef = useRef<((direction: 'left' | 'right') => void) | null>(
+    null,
+  );
+  const [panResponder] = useState(() =>
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        Math.abs(gesture.dx) > 24 &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy) * 2,
+      onPanResponderRelease: (_event, gesture) => {
+        if (
+          Math.abs(gesture.dx) >= 60 &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 2
+        ) {
+          slideHandlerRef.current?.(gesture.dx < 0 ? 'left' : 'right');
+        }
+      },
+    }),
+  );
+
+  const handleSlide = (direction: 'left' | 'right') => {
+    const tabScreens: string[] = ['home', 'ideas', 'dna', 'plan', 'profile'];
+    const tabIndex = tabScreens.indexOf(screen);
+    if (tabIndex >= 0) {
+      const next =
+        tabScreens[direction === 'left' ? tabIndex + 1 : tabIndex - 1];
+      if (next) {
+        setScreen(next as Screen);
+      }
+      return;
+    }
+    if (direction !== 'right') {
+      return;
+    }
+    switch (screen) {
+      case 'auth':
+        setScreen('onboarding');
+        return;
+      case 'connect':
+        setScreen(sessionToken ? 'home' : 'onboarding');
+        return;
+      case 'connected':
+        setScreen('connect');
+        return;
+      case 'chat':
+        setScreen(chatReturn);
+        return;
+      case 'analysis':
+        setScreen(analysisReturn);
+        return;
+      case 'recommendations':
+        setScreen('analysis');
+        return;
+      case 'analysisForm':
+        setScreen(formReturn);
+        return;
+      case 'analysesList':
+        setScreen('profile');
+        return;
+      case 'performance':
+        setScreen('dna');
+        return;
+      case 'settings':
+        setScreen('profile');
+        return;
+      default:
+        return;
+    }
+  };
+  slideHandlerRef.current = handleSlide;
+
   return (
     <SafeAreaView
       style={[styles.safeArea, { backgroundColor: isLight ? colors.white : colors.darkBg }]}
+      {...panResponder.panHandlers}
     >
       <StatusBar style={isLight ? 'dark' : 'light'} />
       {screen === 'onboarding' ? (
@@ -1622,6 +1713,7 @@ function AppShell() {
             // cleared up front, so cancelling keeps the current account.
             void connectInstagram();
           }}
+          onShowAccounts={() => setAccountSwitcherOpen(true)}
           onContinueWithoutInstagram={continueWithoutInstagram}
           connectionState={connectionState}
           connectionError={connectionError}
@@ -1684,9 +1776,11 @@ function AppShell() {
         />
       ) : null}
 
-      {/* Long-press the Profile tab: swap between remembered accounts. */}
+      {/* Long-press the Profile tab (or tap the connected card on the
+          Connect page): swap between remembered accounts. */}
       <SavedAccountsSheet
         visible={accountSwitcherOpen}
+        currentEmail={loadAuthSession()?.email ?? null}
         accounts={savedAccounts.map((account) => ({
           email: account.email,
           instagramUsername: account.instagramUsername,
@@ -1695,7 +1789,11 @@ function AppShell() {
         onClose={() => setAccountSwitcherOpen(false)}
         onPick={(email) => {
           setAccountSwitcherOpen(false);
-          void loginWithSavedAccount(email);
+          void loginWithSavedAccount(email, {
+            // Swapping from the Connect page stays there (login on the same
+            // page); elsewhere it lands on home.
+            stayOnScreen: screen === 'connect',
+          });
         }}
         onForget={(email) => forgetSavedAccount(email)}
       />

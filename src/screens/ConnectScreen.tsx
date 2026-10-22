@@ -47,6 +47,7 @@ export function ConnectScreen({
   onConnect,
   onConnected,
   onConnectDifferent,
+  onShowAccounts,
   onContinueWithoutInstagram,
   connectionState,
   connectionError,
@@ -58,6 +59,8 @@ export function ConnectScreen({
   onConnected: () => void;
   /** Swap the connection to a different Instagram account (non-destructive). */
   onConnectDifferent: () => void;
+  /** Open the saved-accounts switcher without leaving this page. */
+  onShowAccounts: () => void;
   onContinueWithoutInstagram: () => void;
   connectionState: ConnectionState;
   connectionError: string | null;
@@ -89,7 +92,12 @@ export function ConnectScreen({
         <InstagramIllustration />
 
         {connectionState === 'connected' && profile ? (
-          <View style={styles.connectedCard}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Connected Instagram account @${profile.username}. Opens your saved accounts to switch.`}
+            onPress={onShowAccounts}
+            style={({ pressed }) => [styles.connectedCard, pressed && { opacity: 0.85 }]}
+          >
             <View style={styles.connectedHead}>
               <Text style={styles.connectedTitle}>Instagram connected</Text>
               <View style={styles.connectedCheck}>
@@ -101,11 +109,12 @@ export function ConnectScreen({
               <View style={{ flex: 1 }}>
                 <Text style={styles.connectedUsername}>@{profile.username}</Text>
                 <Text style={styles.connectedType}>
-                  {profile.accountType === 'Media_Creator' ? 'Creator' : 'Business'} account
+                  {profile.accountType === 'Media_Creator' ? 'Creator' : 'Business'} account · Tap to switch
                 </Text>
               </View>
+              <ChevronRightIcon size={20} color={colors.textDim} />
             </View>
-          </View>
+          </Pressable>
         ) : (
           <View style={styles.permissionCard}>
             {permissions.map((permission, index) => (
