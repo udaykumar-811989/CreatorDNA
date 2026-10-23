@@ -204,7 +204,7 @@ export function AuthScreen({
                       {account.instagramUsername ? `@${account.instagramUsername}` : account.email}
                     </Text>
                     <Text style={styles.savedEmail} numberOfLines={1}>
-                      {account.instagramUsername
+                      {account.instagramUsername && !account.email.startsWith('ig:')
                         ? account.email
                         : 'Tap to sign in — no password needed'}
                     </Text>

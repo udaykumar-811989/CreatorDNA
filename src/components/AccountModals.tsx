@@ -117,7 +117,11 @@ export function SavedAccountsSheet({
                       ) : null}
                     </View>
                     <Text style={styles.emailText} numberOfLines={1}>
-                      {account.instagramUsername ? account.email : 'Tap to sign in'}
+                      {account.instagramUsername
+                        ? account.email.startsWith('ig:')
+                          ? 'Tap to sign in'
+                          : account.email
+                        : 'Tap to sign in'}
                     </Text>
                   </View>
                   <Text style={styles.go}>→</Text>

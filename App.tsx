@@ -492,17 +492,29 @@ function AppShell() {
       } catch {
         setSessionWarning(true);
       }
-      // Instagram is connected now — if this account still isn't saved on
-      // the device, offer "Save this account?" (email + this connection).
-      const saveEmail =
+      // The Instagram connection IS the sign-in moment in this app — no
+      // password is typed anywhere. Offer "Save this account?" right here;
+      // if it's already saved, refresh the stored connection silently
+      // instead (Instagram tokens rotate on every login).
+      const igHandle = actualProfile.username;
+      const authEmail =
         loadAuthSession()?.email?.trim().toLowerCase() ?? null;
-      if (
-        saveEmail &&
-        !loadSavedAccounts().some(
-          (entry) => entry.email.toLowerCase() === saveEmail,
-        )
-      ) {
-        setSaveAccountPrompt(saveEmail);
+      const stored = loadSavedAccounts().find(
+        (entry) =>
+          entry.instagramUsername?.toLowerCase() === igHandle.toLowerCase() ||
+          entry.instagramToken === token ||
+          (!!authEmail && entry.email.toLowerCase() === authEmail),
+      );
+      if (stored) {
+        setSavedAccounts(upsertSavedAccount({
+          ...stored,
+          instagramToken: token,
+          instagramUsername: igHandle,
+          instagramPictureUrl:
+            actualProfile.profilePictureUrl ?? stored.instagramPictureUrl,
+        }));
+      } else {
+        setSaveAccountPrompt({ email: authEmail, handle: igHandle });
       }
     } catch {
       setConnectionError('receipt_expired_or_used');
@@ -553,8 +565,13 @@ function AppShell() {
   // Accounts remembered on this device (email + Instagram connection) so
   // logout doesn't cost a password re-type — swap with one tap.
   const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>(() => loadSavedAccounts());
-  // Non-null = show the "Save this account?" prompt for this email.
-  const [saveAccountPrompt, setSaveAccountPrompt] = useState<string | null>(null);
+  // Non-null = show the "Save this account?" prompt. `email` is set when a
+  // password login created the session; `handle` is the connected Instagram
+  // identity — the sign-in path in this app usually has no password at all.
+  const [saveAccountPrompt, setSaveAccountPrompt] = useState<{
+    email: string | null;
+    handle: string;
+  } | null>(null);
   // Open switcher sheet (long-press on the Profile tab).
   const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
 
@@ -575,6 +592,42 @@ function AppShell() {
       setAuthLoading(true);
       setAuthError(null);
       try {
+        // Instagram-only saved account (no password is ever involved in
+        // this app's usual flow): restore the stored connection directly —
+        // there is no credential to refresh.
+        if (!account.refreshToken) {
+          setProfile(null);
+          setDashboard(null);
+          setDashboardError(null);
+          setConnectionError(null);
+          setSessionWarning(false);
+          if (account.instagramToken) {
+            try {
+              await saveInstagramSession(account.instagramToken);
+            } catch {
+              setSessionWarning(true);
+            }
+            setSessionToken(account.instagramToken);
+            setConnectionState('connected');
+            if (options?.stayOnScreen) {
+              setScreen('connect');
+            } else {
+              setScreen('home');
+            }
+            void loadDashboard(account.instagramToken);
+          } else {
+            // Never leave the previous account's Instagram session behind.
+            void clearInstagramSession();
+            setSessionToken(null);
+            setConnectionState('idle');
+            if (options?.stayOnScreen) {
+              setScreen('connect');
+            } else {
+              setScreen('home');
+            }
+          }
+          return;
+        }
         // Silent sign-in with the stored refresh token — no password typed.
         const session = await refreshCreatorAiSession(
           supabaseUrl,
@@ -644,30 +697,35 @@ function AppShell() {
   }, []);
 
   // Keep the remembered account's Instagram details fresh for the swap list
-  // (runs after connect, dashboard loads, and profile changes).
+  // (runs after connect, dashboard loads, and profile changes). Password
+  // sessions refresh their email entry; Instagram-only sessions refresh the
+  // entry saved under their handle. Only refresh — never auto-create.
   useEffect(() => {
     if (!sessionToken) {
       return;
     }
     const session = loadAuthSession();
     const email = session?.email;
-    if (!email || !session?.refreshToken) {
-      return;
-    }
-    // Only refresh accounts the user chose to save — never auto-add.
-    const existing = loadSavedAccounts().find(
-      (entry) => entry.email.toLowerCase() === email.toLowerCase(),
+    const shown = dashboard?.profile ?? profile;
+    const existing = loadSavedAccounts().find((entry) =>
+      email && session?.refreshToken
+        ? entry.email.toLowerCase() === email.toLowerCase()
+        : Boolean(
+            shown &&
+              entry.instagramUsername?.toLowerCase() ===
+                shown.username.toLowerCase(),
+          ),
     );
     if (!existing) {
       return;
     }
-    const shown = dashboard?.profile ?? profile;
     setSavedAccounts(upsertSavedAccount({
-      email,
-      refreshToken: session.refreshToken ?? existing.refreshToken,
+      ...existing,
+      refreshToken: session?.refreshToken ?? existing.refreshToken,
       instagramToken: sessionToken,
-      instagramUsername: shown?.username ?? null,
-      instagramPictureUrl: shown?.profilePictureUrl ?? null,
+      instagramUsername: shown?.username ?? existing.instagramUsername,
+      instagramPictureUrl:
+        shown?.profilePictureUrl ?? existing.instagramPictureUrl,
       savedAt: Date.now(),
     }));
   }, [dashboard, profile, sessionToken]);
@@ -898,7 +956,10 @@ function AppShell() {
     setSessionWarning(false);
     setAuthError(null);
     setOnboardingStep(0);
-    setScreen('onboarding');
+    // With saved accounts, logging out lands straight on the login screen
+    // showing them (Instagram-style one-tap return); fresh devices start at
+    // onboarding.
+    setScreen(loadSavedAccounts().length > 0 ? 'auth' : 'onboarding');
   }, [dashboard, profile, sessionToken]);
 
   // ---------- Creator AI: token, analysis, ideas, chat ----------
@@ -1520,7 +1581,7 @@ function AppShell() {
                 (entry) => entry.email.toLowerCase() === normalized,
               )
             ) {
-              setSaveAccountPrompt(normalized);
+              setSaveAccountPrompt({ email: normalized, handle: '' });
               return;
             }
             setScreen('home');
@@ -1706,28 +1767,50 @@ function AppShell() {
         />
       ) : null}
 
-      {/* Instagram-style "Save login info?" — asked at password login and
-          after an Instagram connect whenever the account isn't saved here. */}
+      {/* Instagram-style "Save login info?" — asked the moment the account
+          signs in here: a password login or (the usual case) an Instagram
+          connect. */}
       {saveAccountPrompt ? (
         <SaveAccountPrompt
-          email={saveAccountPrompt}
+          email={saveAccountPrompt.email ?? `@${saveAccountPrompt.handle}`}
           onSave={() => {
-            const email = saveAccountPrompt;
+            const prompt = saveAccountPrompt;
             const session = loadAuthSession();
+            const igToken = sessionToken;
+            const igProfile = profile;
             if (
-              session?.refreshToken
-              && session.email
-              && session.email.toLowerCase() === email.toLowerCase()
+              prompt.email &&
+              session?.refreshToken &&
+              session.email &&
+              session.email.toLowerCase() === prompt.email.toLowerCase()
             ) {
+              // Password-created account: the credential itself, plus
+              // whatever Instagram connection is live right now.
               const existing = loadSavedAccounts().find(
-                (entry) => entry.email.toLowerCase() === email.toLowerCase(),
+                (entry) =>
+                  entry.email.toLowerCase() === prompt.email!.toLowerCase(),
               );
               setSavedAccounts(upsertSavedAccount({
-                email,
+                email: prompt.email,
                 refreshToken: session.refreshToken,
-                instagramToken: existing?.instagramToken ?? null,
-                instagramUsername: existing?.instagramUsername ?? null,
-                instagramPictureUrl: existing?.instagramPictureUrl ?? null,
+                instagramToken: igToken ?? existing?.instagramToken ?? null,
+                instagramUsername:
+                  igProfile?.username ?? existing?.instagramUsername ?? null,
+                instagramPictureUrl:
+                  igProfile?.profilePictureUrl ??
+                  existing?.instagramPictureUrl ??
+                  null,
+                savedAt: Date.now(),
+              }));
+            } else if (igProfile && igToken) {
+              // Instagram-only account (this app's usual flow): the handle
+              // is the identity — nothing password-related exists to store.
+              setSavedAccounts(upsertSavedAccount({
+                email: `ig:${igProfile.username.toLowerCase()}`,
+                refreshToken: '',
+                instagramToken: igToken,
+                instagramUsername: igProfile.username,
+                instagramPictureUrl: igProfile.profilePictureUrl,
                 savedAt: Date.now(),
               }));
             }
@@ -1740,8 +1823,13 @@ function AppShell() {
           }}
           onNotNow={() => {
             // Declining = don't save; an unsaved account is asked again at
-            // the next login or Instagram connect.
-            setSavedAccounts(removeSavedAccount(saveAccountPrompt));
+            // the next sign-in (login screen or Instagram connect).
+            const prompt = saveAccountPrompt;
+            setSavedAccounts(
+              removeSavedAccount(
+                prompt.email ?? `ig:${prompt.handle.toLowerCase()}`,
+              ),
+            );
             setSaveAccountPrompt(null);
             if (screen === 'auth') {
               setScreen('home');
