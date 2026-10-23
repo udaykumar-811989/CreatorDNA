@@ -494,16 +494,15 @@ function AppShell() {
       }
       // The Instagram connection IS the sign-in moment in this app — no
       // password is typed anywhere. Offer "Save this account?" right here;
-      // if it's already saved, refresh the stored connection silently
-      // instead (Instagram tokens rotate on every login).
+      // a match on THIS Instagram account (handle or token) refreshes the
+      // stored connection silently instead. Never match on email: that let
+      // connecting a different account hijack the saved entry, so the list
+      // could never grow past a single row and switching seemed impossible.
       const igHandle = actualProfile.username;
-      const authEmail =
-        loadAuthSession()?.email?.trim().toLowerCase() ?? null;
       const stored = loadSavedAccounts().find(
         (entry) =>
           entry.instagramUsername?.toLowerCase() === igHandle.toLowerCase() ||
-          entry.instagramToken === token ||
-          (!!authEmail && entry.email.toLowerCase() === authEmail),
+          entry.instagramToken === token,
       );
       if (stored) {
         setSavedAccounts(upsertSavedAccount({
@@ -514,7 +513,7 @@ function AppShell() {
             actualProfile.profilePictureUrl ?? stored.instagramPictureUrl,
         }));
       } else {
-        setSaveAccountPrompt({ email: authEmail, handle: igHandle });
+        setSaveAccountPrompt({ email: null, handle: igHandle });
       }
     } catch {
       setConnectionError('receipt_expired_or_used');
@@ -1778,6 +1777,9 @@ function AppShell() {
             const session = loadAuthSession();
             const igToken = sessionToken;
             const igProfile = profile;
+            const handle = igProfile?.username ?? null;
+            let key: string | null = null;
+            let savedNext: SavedAccount[] | null = null;
             if (
               prompt.email &&
               session?.refreshToken &&
@@ -1786,33 +1788,45 @@ function AppShell() {
             ) {
               // Password-created account: the credential itself, plus
               // whatever Instagram connection is live right now.
-              const existing = loadSavedAccounts().find(
-                (entry) =>
-                  entry.email.toLowerCase() === prompt.email!.toLowerCase(),
-              );
-              setSavedAccounts(upsertSavedAccount({
+              key = prompt.email;
+              savedNext = upsertSavedAccount({
                 email: prompt.email,
                 refreshToken: session.refreshToken,
-                instagramToken: igToken ?? existing?.instagramToken ?? null,
-                instagramUsername:
-                  igProfile?.username ?? existing?.instagramUsername ?? null,
-                instagramPictureUrl:
-                  igProfile?.profilePictureUrl ??
-                  existing?.instagramPictureUrl ??
-                  null,
+                instagramToken: igToken ?? null,
+                instagramUsername: handle,
+                instagramPictureUrl: igProfile?.profilePictureUrl ?? null,
                 savedAt: Date.now(),
-              }));
-            } else if (igProfile && igToken) {
+              });
+            } else if (handle && igToken) {
               // Instagram-only account (this app's usual flow): the handle
               // is the identity — nothing password-related exists to store.
-              setSavedAccounts(upsertSavedAccount({
-                email: `ig:${igProfile.username.toLowerCase()}`,
+              key = `ig:${handle.toLowerCase()}`;
+              savedNext = upsertSavedAccount({
+                email: key,
                 refreshToken: '',
                 instagramToken: igToken,
-                instagramUsername: igProfile.username,
-                instagramPictureUrl: igProfile.profilePictureUrl,
+                instagramUsername: handle,
+                instagramPictureUrl: igProfile?.profilePictureUrl ?? null,
                 savedAt: Date.now(),
-              }));
+              });
+            }
+            if (savedNext && key) {
+              // One row per Instagram handle: if this connection was ever
+              // saved twice (once by email, once by handle), collapse it to
+              // a single row so switching accounts really changes accounts.
+              const keyNow = key.toLowerCase();
+              const lowerHandle = handle?.toLowerCase() ?? null;
+              const deduped = lowerHandle
+                ? savedNext.filter(
+                    (entry) =>
+                      entry.email.toLowerCase() === keyNow ||
+                      entry.instagramUsername?.toLowerCase() !== lowerHandle,
+                  )
+                : savedNext;
+              if (deduped.length !== savedNext.length) {
+                persistSavedAccounts(deduped);
+              }
+              setSavedAccounts(deduped);
             }
             setSaveAccountPrompt(null);
             // Login-time prompt: continue into the app. Connect-time

@@ -25,9 +25,8 @@ export function SaveAccountPrompt({
         <View style={styles.card}>
           <Text style={styles.title}>Save this account?</Text>
           <Text style={styles.body}>
-            Sign in to {email} next time with one tap — no password needed, and
-            your Instagram connection comes back with it. Saved only on this
-            device.
+            Sign in to {email} next time with one tap, and your Instagram
+            connection comes back with it. Saved only on this device.
           </Text>
           <GradientButton label="Save" onPress={onSave} />
           <Pressable
@@ -80,7 +79,7 @@ export function SavedAccountsSheet({
         <View style={styles.sheet}>
           <View style={styles.handle} />
           <Text style={styles.title}>Saved accounts</Text>
-          <Text style={styles.subtitle}>Tap to switch — no password needed.</Text>
+          <Text style={styles.subtitle}>Tap to switch accounts.</Text>
 
           {accounts.length === 0 ? (
             <Text style={styles.empty}>

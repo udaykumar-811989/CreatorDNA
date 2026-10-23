@@ -206,7 +206,7 @@ export function AuthScreen({
                     <Text style={styles.savedEmail} numberOfLines={1}>
                       {account.instagramUsername && !account.email.startsWith('ig:')
                         ? account.email
-                        : 'Tap to sign in — no password needed'}
+                        : 'Tap to sign in'}
                     </Text>
                   </View>
                   <Text style={styles.savedGo}>{authLoading ? '…' : '→'}</Text>
