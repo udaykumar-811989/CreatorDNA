@@ -223,67 +223,6 @@ const removeSavedAccount = (email: string): SavedAccount[] => {
   return next;
 };
 
-// The "Save this account?" prompt is asked once per email until the user
-// chooses — Save adds the account, Not now dismisses the prompt for good on
-// this device (a later ✕ Forget re-offers it). v2 of the key wipes any
-// dismissal left by older builds, which had no visible way to undo it.
-const saveDismissedStorageKey = 'creatordna.accounts.dismissed.v2';
-
-const isAccountSaveDismissed = (email: string): boolean => {
-  try {
-    if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
-      return false;
-    }
-    const raw = localStorage.getItem(saveDismissedStorageKey);
-    if (!raw) {
-      return false;
-    }
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.includes(email);
-  } catch {
-    return false;
-  }
-};
-
-const markAccountSaveDismissed = (email: string): void => {
-  try {
-    if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
-      return;
-    }
-    const raw = localStorage.getItem(saveDismissedStorageKey);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    const list = Array.isArray(parsed)
-      ? parsed.filter((entry): entry is string => typeof entry === 'string')
-      : [];
-    if (!list.includes(email)) {
-      localStorage.setItem(
-        saveDismissedStorageKey,
-        JSON.stringify([...list, email].slice(-20)),
-      );
-    }
-  } catch {
-    // Best-effort.
-  }
-};
-
-const clearAccountSaveDismissed = (email: string): void => {
-  try {
-    if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
-      return;
-    }
-    const raw = localStorage.getItem(saveDismissedStorageKey);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    const list = Array.isArray(parsed)
-      ? parsed.filter((entry): entry is string => typeof entry === 'string')
-      : [];
-    localStorage.setItem(
-      saveDismissedStorageKey,
-      JSON.stringify(list.filter((entry) => entry !== email)),
-    );
-  } catch {
-    // Best-effort.
-  }
-};
 
 // The floating AI button is hidden only on the entry flow (where it would
 // fight the mock's layout) and inside the chat itself.
@@ -553,11 +492,16 @@ function AppShell() {
       } catch {
         setSessionWarning(true);
       }
-      // Instagram is connected now — this is the moment to ask "Save this
-      // account?" (email + this connection) for one-tap logins next time.
+      // Instagram is connected now — if this account still isn't saved on
+      // the device, offer "Save this account?" (email + this connection).
       const saveEmail =
         loadAuthSession()?.email?.trim().toLowerCase() ?? null;
-      if (saveEmail && !isAccountSaveDismissed(saveEmail)) {
+      if (
+        saveEmail &&
+        !loadSavedAccounts().some(
+          (entry) => entry.email.toLowerCase() === saveEmail,
+        )
+      ) {
         setSaveAccountPrompt(saveEmail);
       }
     } catch {
@@ -695,9 +639,8 @@ function AppShell() {
   );
 
   const forgetSavedAccount = useCallback((email: string) => {
+    // Removing the entry re-offers the Save prompt at the next sign-in.
     setSavedAccounts(removeSavedAccount(email));
-    // An explicit forget re-offers the save prompt at the next sign-in.
-    clearAccountSaveDismissed(email);
   }, []);
 
   // Keep the remembered account's Instagram details fresh for the swap list
@@ -1567,9 +1510,19 @@ function AppShell() {
             setProfile(null);
             setDashboard(null);
             setDashboardError(null);
-            // No prompt here — Save / Not now is asked when Instagram
-            // finishes connecting (the moment there's something worth
-            // saving for one-tap logins).
+            // Instagram-style "Save login info?": the moment a password
+            // login completes on a device, offer saving it — unless this
+            // account is already saved here (an unsaved account is also
+            // offered again after its Instagram connects).
+            const normalized = email.trim().toLowerCase();
+            if (
+              !loadSavedAccounts().some(
+                (entry) => entry.email.toLowerCase() === normalized,
+              )
+            ) {
+              setSaveAccountPrompt(normalized);
+              return;
+            }
             setScreen('home');
           }}
           authLoading={authLoading}
@@ -1753,15 +1706,13 @@ function AppShell() {
         />
       ) : null}
 
-      {/* Opt-in save prompt, shown the moment Instagram finishes connecting. */}
+      {/* Instagram-style "Save login info?" — asked at password login and
+          after an Instagram connect whenever the account isn't saved here. */}
       {saveAccountPrompt ? (
         <SaveAccountPrompt
           email={saveAccountPrompt}
           onSave={() => {
             const email = saveAccountPrompt;
-            // One decision per account: don't re-ask at the next connect
-            // (Forget in the account switcher clears this marker).
-            markAccountSaveDismissed(email);
             const session = loadAuthSession();
             if (
               session?.refreshToken
@@ -1781,13 +1732,20 @@ function AppShell() {
               }));
             }
             setSaveAccountPrompt(null);
+            // Login-time prompt: continue into the app. Connect-time
+            // prompt leaves you on the connected screen's Continue.
+            if (screen === 'auth') {
+              setScreen('home');
+            }
           }}
           onNotNow={() => {
-            // Declining means "not saved" — also drop any entry an older
-            // auto-saving build created for this email.
-            markAccountSaveDismissed(saveAccountPrompt);
+            // Declining = don't save; an unsaved account is asked again at
+            // the next login or Instagram connect.
             setSavedAccounts(removeSavedAccount(saveAccountPrompt));
             setSaveAccountPrompt(null);
+            if (screen === 'auth') {
+              setScreen('home');
+            }
           }}
         />
       ) : null}
