@@ -169,7 +169,7 @@ const loadSavedAccounts = (): SavedAccount[] => {
     if (!Array.isArray(parsed)) {
       return [];
     }
-    return parsed.flatMap((entry): SavedAccount[] => {
+    return mergeSavedAccounts(parsed.flatMap((entry): SavedAccount[] => {
       if (typeof entry !== 'object' || entry === null) {
         return [];
       }
@@ -185,10 +185,43 @@ const loadSavedAccounts = (): SavedAccount[] => {
         instagramPictureUrl: typeof account.instagramPictureUrl === 'string' ? account.instagramPictureUrl : null,
         savedAt: typeof account.savedAt === 'number' ? account.savedAt : 0,
       }];
-    });
+    }));
   } catch {
     return [];
   }
+};
+
+// One row per Instagram handle: the same account saved twice (an older
+// email-keyed entry plus an ig-keyed one) merges into a single row, so the
+// switch list can never show two rows that both load the same account. The
+// credential-carrying entry wins; the newest Instagram details apply on top.
+const mergeSavedAccounts = (accounts: SavedAccount[]): SavedAccount[] => {
+  const byHandle = new Map<string, SavedAccount>();
+  const rest: SavedAccount[] = [];
+  for (const entry of accounts) {
+    const handle = entry.instagramUsername?.trim().toLowerCase() ?? null;
+    if (!handle) {
+      rest.push(entry);
+      continue;
+    }
+    const existing = byHandle.get(handle);
+    if (!existing) {
+      byHandle.set(handle, { ...entry, instagramUsername: handle });
+      continue;
+    }
+    const base =
+      existing.refreshToken && !entry.refreshToken ? existing : entry;
+    const details = entry.savedAt >= existing.savedAt ? entry : existing;
+    byHandle.set(handle, {
+      ...base,
+      instagramToken: details.instagramToken ?? base.instagramToken,
+      instagramPictureUrl:
+        details.instagramPictureUrl ?? base.instagramPictureUrl,
+      instagramUsername: handle,
+      savedAt: Math.max(existing.savedAt, entry.savedAt),
+    });
+  }
+  return [...byHandle.values(), ...rest];
 };
 
 const persistSavedAccounts = (accounts: SavedAccount[]): void => {
@@ -646,16 +679,28 @@ function AppShell() {
           return;
         }
         // Silent sign-in with the stored refresh token — no password typed.
-        const session = await refreshCreatorAiSession(
-          supabaseUrl,
-          supabaseAnonKey,
-          account.refreshToken,
-        );
-        // Supabase rotates refresh tokens on use; store the new one.
-        const refreshToken = session.refreshToken ?? account.refreshToken;
-        saveAuthSession({ token: session.accessToken, email: account.email, refreshToken });
-        setSupabaseAccessToken(session.accessToken);
-        setSavedAccounts(upsertSavedAccount({ ...account, refreshToken, savedAt: Date.now() }));
+        // A dead app credential must never abort the swap silently: this
+        // saved login still restores the Instagram connection itself, so
+        // fall back to that instead of leaving the previous account on
+        // screen (Instagram's saved-profile behaviour).
+        let session: Awaited<ReturnType<typeof refreshCreatorAiSession>> | null =
+          null;
+        try {
+          session = await refreshCreatorAiSession(
+            supabaseUrl,
+            supabaseAnonKey,
+            account.refreshToken,
+          );
+        } catch {
+          session = null;
+        }
+        if (session) {
+          // Supabase rotates refresh tokens on use; store the new one.
+          const refreshToken = session.refreshToken ?? account.refreshToken;
+          saveAuthSession({ token: session.accessToken, email: account.email, refreshToken });
+          setSupabaseAccessToken(session.accessToken);
+          setSavedAccounts(upsertSavedAccount({ ...account, refreshToken, savedAt: Date.now() }));
+        }
         // Swap into this account: drop the previous account's live state and
         // restore this account's own Instagram connection if it has one.
         setProfile(null);
