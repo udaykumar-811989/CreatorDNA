@@ -318,28 +318,46 @@ function AppShell() {
   }, []);
 
   // ---------- Instagram dashboard ----------
-  const loadDashboard = useCallback(async (token: string) => {
-    setDashboardLoading(true);
-    setDashboardError(null);
-    try {
-      if (!instagramFunctionUrl || !supabaseAnonKey) {
-        throw new DashboardRequestError('try_again');
+  // Monotonic id so a slow dashboard response can never overwrite a newer
+  // one — e.g. an account swap whose earlier load for the previous account
+  // resolves late and would silently bring the old account back.
+  const dashboardRequestId = useRef(0);
+
+  const loadDashboard = useCallback(
+    async (token: string): Promise<boolean> => {
+      const requestId = ++dashboardRequestId.current;
+      setDashboardLoading(true);
+      setDashboardError(null);
+      try {
+        if (!instagramFunctionUrl || !supabaseAnonKey) {
+          throw new DashboardRequestError('try_again');
+        }
+        const data = await fetchInstagramDashboard(
+          instagramFunctionUrl,
+          supabaseAnonKey,
+          token,
+        );
+        if (requestId !== dashboardRequestId.current) {
+          return false;
+        }
+        setDashboard(data);
+        setProfile(data.profile);
+        return true;
+      } catch (error) {
+        if (requestId === dashboardRequestId.current) {
+          setDashboardError(
+            error instanceof DashboardRequestError ? error.code : 'try_again',
+          );
+        }
+        return false;
+      } finally {
+        if (requestId === dashboardRequestId.current) {
+          setDashboardLoading(false);
+        }
       }
-      const data = await fetchInstagramDashboard(
-        instagramFunctionUrl,
-        supabaseAnonKey,
-        token,
-      );
-      setDashboard(data);
-      setProfile(data.profile);
-    } catch (error) {
-      setDashboardError(
-        error instanceof DashboardRequestError ? error.code : 'try_again',
-      );
-    } finally {
-      setDashboardLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   const getPendingOAuthState = (): string | null => {
     if (pendingOAuthState.current) {
@@ -613,7 +631,7 @@ function AppShell() {
             } else {
               setScreen('home');
             }
-            void loadDashboard(account.instagramToken);
+            await loadDashboard(account.instagramToken);
           } else {
             // Never leave the previous account's Instagram session behind.
             void clearInstagramSession();
@@ -661,7 +679,7 @@ function AppShell() {
           } else {
             setScreen('home');
           }
-          void loadDashboard(account.instagramToken);
+          await loadDashboard(account.instagramToken);
         } else {
           // Never leave the previous account's Instagram session behind.
           void clearInstagramSession();
@@ -920,6 +938,9 @@ function AppShell() {
   }, [profile, sessionToken]);
 
   const logout = useCallback(() => {
+    // Invalidate any dashboard request still in flight — its late response
+    // must never resurrect the logged-out account's data.
+    dashboardRequestId.current += 1;
     // Refresh (never create) the saved entry for this account so a saved
     // user's Instagram connection stays current across logouts. Saving is
     // opt-in via the sign-in prompt — logout alone doesn't add accounts.
