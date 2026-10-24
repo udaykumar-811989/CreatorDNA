@@ -812,7 +812,7 @@ function AppShell() {
           ? new URL('/instagram-connected', window.location.origin).toString()
           : Constants.executionEnvironment === 'storeClient'
             ? Linking.createURL('instagram/callback')
-            : 'veyyra://instagram/callback';
+            : 'creatordna://instagram/callback';
       const response = await fetch(`${instagramFunctionUrl}/start`, {
         method: 'POST',
         headers: {

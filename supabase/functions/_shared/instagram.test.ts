@@ -49,13 +49,13 @@ test('profile parser accepts professional Creator and Business accounts only', (
   assert.deepEqual(
     normalizeInstagramProfile({
       user_id: '17840000000000000',
-      username: 'veyyra_creator',
+      username: 'creatordna_creator',
       account_type: 'Media_Creator',
       profile_picture_url: 'https://cdn.example.test/profile.jpg',
     }),
     {
       instagramUserId: '17840000000000000',
-      username: 'veyyra_creator',
+      username: 'creatordna_creator',
       accountType: 'Media_Creator',
       profilePictureUrl: 'https://cdn.example.test/profile.jpg',
     },
@@ -64,7 +64,7 @@ test('profile parser accepts professional Creator and Business accounts only', (
   assert.equal(
     normalizeInstagramProfile({
       user_id: '17840000000000001',
-      username: 'veyyra_creator_2',
+      username: 'creatordna_creator_2',
       account_type: 'Creator',
     }).accountType,
     'Media_Creator',
@@ -73,7 +73,7 @@ test('profile parser accepts professional Creator and Business accounts only', (
   assert.equal(
     normalizeInstagramProfile({
       user_id: '17840000000000002',
-      username: 'veyyra_creator_3',
+      username: 'creatordna_creator_3',
       account_type: 'MEDIA CREATOR',
     }).accountType,
     'Media_Creator',
@@ -199,7 +199,7 @@ test('dashboard reads only returned profile, media and insight data', async () =
       return Response.json({
         data: [{
           user_id: '17840000000000000',
-          username: 'veyyra_creator',
+          username: 'creatordna_creator',
           account_type: 'Media_Creator',
           profile_picture_url: 'https://cdn.example.test/profile.jpg',
           followers_count: 321,
@@ -258,7 +258,7 @@ test('dashboard reads only returned profile, media and insight data', async () =
     });
     assert.equal(dashboard.daily, null);
     assert.equal(dashboard.profile.mediaCount, 48);
-    assert.equal(dashboard.profile.username, 'veyyra_creator');
+    assert.equal(dashboard.profile.username, 'creatordna_creator');
     assert.equal(dashboard.media[0]?.id, 'media-1');
     assert.equal(dashboard.media[0]?.likes, 16);
     // The /me call must request the fields it consumes — Meta returns only

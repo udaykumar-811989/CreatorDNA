@@ -84,9 +84,9 @@ function getConfig() {
   }
   const appWebOrigin = appWebUrl.origin;
   const nativeRedirectUri = required('APP_NATIVE_REDIRECT_URI');
-  if (nativeRedirectUri !== 'veyyra://instagram/callback') {
+  if (nativeRedirectUri !== 'creatordna://instagram/callback') {
     throw new Error(
-      'APP_NATIVE_REDIRECT_URI must be veyyra://instagram/callback.',
+      'APP_NATIVE_REDIRECT_URI must be creatordna://instagram/callback.',
     );
   }
 

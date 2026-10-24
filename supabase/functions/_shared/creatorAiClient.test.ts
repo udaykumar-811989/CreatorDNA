@@ -58,17 +58,18 @@ test('sign-in identifies rate limiting', async (context) => {
   );
 });
 
-test('sign-in returns the access token on success', async (context) => {
+test('sign-in returns the session tokens on success', async (context) => {
   const restore = mockSignInResponse(200, { access_token: 'a'.repeat(32) });
   context.after(restore);
 
-  const token = await signInForCreatorAi(
+  const session = await signInForCreatorAi(
     'https://example.supabase.co',
     'anon',
     'creator@example.com',
     'password',
   );
-  assert.equal(token, 'a'.repeat(32));
+  assert.equal(session.accessToken, 'a'.repeat(32));
+  assert.equal(session.refreshToken, null);
 });
 
 test('anonymous sign-in starts a guest session', async (context) => {

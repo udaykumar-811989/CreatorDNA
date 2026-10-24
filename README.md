@@ -1,6 +1,6 @@
-# Veyyra
+# CreatorDNA
 
-Veyyra's Expo app uses Supabase Edge Functions and Supabase Postgres for
+CreatorDNA's Expo app uses Supabase Edge Functions and Supabase Postgres for
 Instagram Login. Instagram authorization-code exchange and profile lookup run
 server-side. The long-lived access token is encrypted with AES-256-GCM before
 being stored. The app exchanges a five-minute, single-use receipt for a
@@ -11,7 +11,7 @@ sent to the app.
 
 For web development on `http://localhost:8081`, the Supabase Edge Function
 redirects the browser back to
-`http://localhost:8081/instagram-connected`. This is Veyyra's frontend return
+`http://localhost:8081/instagram-connected`. This is CreatorDNA's frontend return
 route; it is not the Meta OAuth `redirect_uri`. Meta must redirect to the
 Supabase callback below so the backend can validate state, exchange the
 authorization code, persist the encrypted token, and fetch the profile. The
@@ -53,8 +53,8 @@ distinguish Reels from other videos.
    - `INSTAGRAM_REDIRECT_URI`: the exact callback URL shown below
    - `TOKEN_ENCRYPTION_KEY`: base64 encoding of a fresh, random 32-byte key
    - `APP_WEB_ORIGIN`: the exact origin serving the web app, e.g.
-     `https://your-veyyra-domain.example`
-   - `APP_NATIVE_REDIRECT_URI`: `veyyra://instagram/callback`
+     `https://your-creatordna-domain.example`
+   - `APP_NATIVE_REDIRECT_URI`: `creatordna://instagram/callback`
    - `ALLOW_EXPO_GO_REDIRECTS`: `true` only while testing with Expo Go; remove
      or set to `false` for production
 
@@ -115,13 +115,13 @@ npm run web
 
 For Expo Go, enable `ALLOW_EXPO_GO_REDIRECTS` only during development. It
 accepts Expo Go callback URLs on private LAN IPs and official Expo hosts; a
-native build uses the fixed `veyyra://instagram/callback` URI. Expo Go on a
+native build uses the fixed `creatordna://instagram/callback` URI. Expo Go on a
 phone also needs a Supabase API URL and web origin reachable from that device.
 
 The connection tables have RLS enabled and no anon/authenticated table access.
-Only the Edge Function's service role can call the database RPCs. Since Veyyra
+Only the Edge Function's service role can call the database RPCs. Since CreatorDNA
 does not yet have user sign-in, saved connections are keyed by Instagram
-professional-account ID; add Veyyra user ownership before implementing
+professional-account ID; add CreatorDNA user ownership before implementing
 persistent connection-management screens.
 
 The flow requests `instagram_business_basic` and
