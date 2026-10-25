@@ -33,6 +33,8 @@ export type Screen =
   | 'recommendations'
   | 'analysisForm'
   | 'analysesList'
+  | 'privacy'
+  | 'help'
   | 'chat';
 
 export const LIGHT_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
@@ -57,3 +59,28 @@ export const NAV_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
   'performance',
   'settings',
 ]);
+
+/**
+ * Screens with their own web route, so a store listing or a support reply can
+ * link straight to `https://…/privacy` or `https://…/help`. The app shell keeps
+ * the address bar in sync with these (see App.tsx).
+ */
+export const SCREEN_PATHS: Readonly<Partial<Record<Screen, string>>> = {
+  privacy: '/privacy',
+  help: '/help',
+};
+
+export function screenForPath(pathname: string | null | undefined): Screen | null {
+  if (!pathname) {
+    return null;
+  }
+  const path = pathname.replace(/\/+$/, '') || '/';
+  const match = (Object.keys(SCREEN_PATHS) as Screen[]).find(
+    (screen) => SCREEN_PATHS[screen] === path,
+  );
+  return match ?? null;
+}
+
+export function pathForScreen(screen: Screen): string | null {
+  return SCREEN_PATHS[screen] ?? null;
+}

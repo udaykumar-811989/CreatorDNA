@@ -2,7 +2,7 @@ import Constants from 'expo-constants';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { LinkOutIcon, RefreshIcon, TrashIcon } from '../components/icons';
+import { DocIcon, HelpIcon, LinkOutIcon, RefreshIcon, TrashIcon } from '../components/icons';
 import { ListRow, ScreenHeader } from '../components/ui';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
 import { useTheme, useThemeColors } from '../themeContext';
@@ -117,6 +117,8 @@ export function SettingsScreen({
   onReconnect,
   onClearChat,
   onEraseData,
+  onOpenPrivacy,
+  onOpenHelp,
 }: {
   profile: InstagramProfile | null;
   dashboard: InstagramDashboard | null;
@@ -125,6 +127,8 @@ export function SettingsScreen({
   onReconnect: () => void;
   onClearChat: () => void;
   onEraseData: () => void;
+  onOpenPrivacy: () => void;
+  onOpenHelp: () => void;
 }) {
   const [dialog, setDialog] = useState<'clearChat' | 'eraseData' | 'reconnect' | null>(null);
   const { mode, setMode } = useTheme();
@@ -283,6 +287,26 @@ export function SettingsScreen({
           Everything here is stored on this device only. Erasing removes your analyses, ideas,
           saved ideas and chat — your Instagram connection stays intact.
         </Text>
+
+        {/* Help & legal */}
+        <Text style={styles.sectionLabel}>Help & legal</Text>
+        <View style={styles.card}>
+          <ListRow
+            tone={tone}
+            icon={<HelpIcon size={19} color={iconColor} />}
+            label="Help centre"
+            value="FAQ, guides & assistant"
+            onPress={onOpenHelp}
+          />
+          <View style={styles.rowDivider} />
+          <ListRow
+            tone={tone}
+            icon={<DocIcon size={19} color={iconColor} />}
+            label="Privacy Policy"
+            value="How your data is handled"
+            onPress={onOpenPrivacy}
+          />
+        </View>
 
         {/* About */}
         <Text style={styles.sectionLabel}>About</Text>

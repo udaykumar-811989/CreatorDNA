@@ -239,3 +239,38 @@ and returns a cached result after completion. Failed jobs return a safe error
 code and can be retried with the same idempotency key. If provider
 configuration is missing, the endpoint returns `AI analysis isn't configured
 yet.` No sample recommendations or synthetic metrics are generated.
+
+## Privacy Policy and Help Centre
+
+Settings → Help & legal links to two screens that also have their own public
+web routes, so a store listing or a support reply can link to them directly:
+
+- `https://<your-app-origin>/privacy` — the Privacy Policy
+  (`src/lib/privacyContent.ts`).
+- `https://<your-app-origin>/help` — the Help Centre
+  (`src/lib/helpContent.ts`).
+
+Both routes are part of the SPA, so no extra hosting config is needed: Vercel
+already rewrites every path to `index.html`. The app shell keeps the address
+bar in sync and the browser back button returns to the screen that opened the
+link.
+
+The Help Centre contains the FAQ, setup guides, troubleshooting steps, and a
+contact block, plus an in-app assistant. The assistant reuses the `creator-ai`
+`chat` route in `mode: "support"`: the client sends the published help
+articles as `context.helpCenter`, the backend answers from a support-specific
+system prompt instead of the creator-coach prompt, and returns
+`{ reply, escalate }`. When the assistant cannot settle the question it sets
+`escalate: true`, and the app offers an **Email support** button that opens a
+`mailto:` with the whole conversation in the body.
+
+Deploy the updated function after pulling these changes:
+
+```powershell
+npm run supabase:creator-ai:deploy
+```
+
+Replace the placeholder support address `support@creatordna.app` in
+`src/lib/helpContent.ts` (used by both screens) with your real inbox before
+shipping.
+

@@ -391,6 +391,35 @@ export async function sendCreatorAiChat(
   return result.reply.trim();
 }
 
+export type CreatorSupportReply = { reply: string; escalate: boolean };
+
+/**
+ * Help Centre assistant. Shares the chat route with the creator coach but runs
+ * it in `support` mode: the backend answers from the help-centre knowledge base
+ * we send along and flags `escalate` when the question needs a human, which the
+ * Help screen turns into an email to support.
+ */
+export async function sendCreatorSupportChat(
+  functionUrl: string,
+  anonKey: string,
+  accessToken: string,
+  messages: CreatorAiChatMessage[],
+  message: string,
+  helpCenter: Record<string, unknown>,
+): Promise<CreatorSupportReply> {
+  const payload: Record<string, unknown> = {
+    mode: 'support',
+    messages: messages.slice(-8),
+    message,
+    context: { helpCenter },
+  };
+  const result = await postCreatorAi(functionUrl, anonKey, accessToken, 'chat', payload, 175_000);
+  if (typeof result.reply !== 'string' || !result.reply.trim()) {
+    throw new Error('CreatorDNA returned an empty reply. Please try again.');
+  }
+  return { reply: result.reply.trim(), escalate: result.escalate === true };
+}
+
 export async function generateCreatorIdeas(
   functionUrl: string,
   anonKey: string,

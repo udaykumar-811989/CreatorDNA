@@ -291,3 +291,22 @@ export function GearIcon({ size = 22, color = '#000', strokeWidth = 1.8 }: IconP
     </Svg>
   );
 }
+
+export function HelpIcon({ size = 20, color = '#000', strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Circle cx={12} cy={12} r={8.6} {...stroke(color, strokeWidth)} />
+      <Path d="M9.7 9.5a2.4 2.4 0 0 1 4.6.9c0 1.6-2.3 1.9-2.3 3.4" {...stroke(color, strokeWidth)} />
+      <Path d="M12 17.1h.01" {...stroke(color, strokeWidth)} />
+    </Svg>
+  );
+}
+
+export function MailIcon({ size = 20, color = '#000', strokeWidth = 1.8 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M3.6 6.8h16.8v10.4H3.6z" {...stroke(color, strokeWidth)} />
+      <Path d="m3.9 7.3 8.1 5.6 8.1-5.6" {...stroke(color, strokeWidth)} />
+    </Svg>
+  );
+}

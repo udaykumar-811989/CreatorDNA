@@ -614,8 +614,20 @@ const chatReplySchema = {
   type: 'object',
   additionalProperties: false,
   required: ['reply'],
-  properties: { reply: { type: 'string' } },
+  properties: { reply: { type: 'string' }, escalate: { type: 'boolean' } },
 } as const;
+
+// The creator coach prompt used by the floating AI button (chat mode).
+const COACH_SYSTEM_PROMPT =
+  'You are CreatorDNA, a warm, friendly, practical creator coach with visibility into the creator’s whole app. Speak naturally like a helpful friend, not a report or corporate bot. You are given any of the following: a content analysis, app context (their Instagram profile, follower and engagement stats, recent media, generated Reel ideas, saved content plan, Creator DNA profile and scores, and performance stats), the recent conversation, and optionally one image or video the creator attached to their latest message. If an attachment is present, look at it carefully and reference its real contents. Answer questions and give actionable advice using all of it. Do not invent facts, metrics, or claims; say so plainly when something is unknown or was not provided. Keep replies focused and actionable. Return JSON with one string field named "reply".';
+
+// Support mode (`mode: "support"`): the Help screen sends the published help
+// centre as `context.helpCenter`, so answers come only from articles the user
+// can read themselves. When the article set cannot settle the question — or a
+// human is asked for — set escalate:true so the app offers a support email.
+const SUPPORT_SYSTEM_PROMPT =
+  'You are the CreatorDNA support assistant, a calm and practical help-desk agent inside the app’s Help screen. You are given the full help centre under appContext.helpCenter (FAQ, setup guides, troubleshooting) plus the recent conversation. Answer the user’s question from that help centre only: give the exact steps, in order, in plain language, and quote the article name when it helps. Never invent features, settings, prices, policies, or fixes that are not in the help centre, and never guess about someone’s account or data. If you do not know, if the answer needs access to their account or the backend, if they report a bug, a billing question, a data-deletion or privacy request, an account issue, or they simply ask for a person, keep your reply short, tell them a support specialist will follow up by email, and set "escalate" to true. Otherwise set "escalate" to false. Return JSON with a "reply" string and a boolean "escalate".';
+
 
 const ideasSchema = {
   type: 'object',
@@ -823,7 +835,13 @@ async function handleChat(
   }
   const analysis = isRecord(body.analysis) ? body.analysis : null;
   const context = isRecord(body.context) ? body.context : null;
+  const supportMode = body.mode === 'support';
   if (!analysis && !context) {
+    return jsonResponse({ error: 'invalid_chat_request' }, 400, headers);
+  }
+  // Support mode always ships the help centre as its context; without it the
+  // assistant would have nothing to answer from.
+  if (supportMode && !context) {
     return jsonResponse({ error: 'invalid_chat_request' }, 400, headers);
   }
   const analysisJson = analysis ? JSON.stringify(analysis) : '';
@@ -849,7 +867,7 @@ async function handleChat(
 
   try {
     const result = await configuredProvider(config).generateJson(
-      'You are CreatorDNA, a warm, friendly, practical creator coach with visibility into the creator’s whole app. Speak naturally like a helpful friend, not a report or corporate bot. You are given any of the following: a content analysis, app context (their Instagram profile, follower and engagement stats, recent media, generated Reel ideas, saved content plan, Creator DNA profile and scores, and performance stats), the recent conversation, and optionally one image or video the creator attached to their latest message. If an attachment is present, look at it carefully and reference its real contents. Answer questions and give actionable advice using all of it. Do not invent facts, metrics, or claims; say so plainly when something is unknown or was not provided. Keep replies focused and actionable. Return JSON with one string field named "reply".',
+      supportMode ? SUPPORT_SYSTEM_PROMPT : COACH_SYSTEM_PROMPT,
       JSON.stringify({
         analysis: analysis ?? undefined,
         appContext: context ?? undefined,
@@ -865,7 +883,11 @@ async function handleChat(
     if (!isRecord(result) || typeof result.reply !== 'string' || result.reply.length > 4000) {
       throw new CreatorAiError('malformed_model_response');
     }
-    return jsonResponse({ reply: result.reply }, 200, headers);
+    return jsonResponse(
+      { reply: result.reply, escalate: result.escalate === true },
+      200,
+      headers,
+    );
   } catch (error) {
     const code = error instanceof CreatorAiError ? error.code : 'analysis_failed';
     return jsonResponse({ error: code }, 502, headers);

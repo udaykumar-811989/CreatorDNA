@@ -14,6 +14,8 @@ import {
   LIGHT_SCREENS,
   NAV_SCREENS,
   Screen,
+  pathForScreen,
+  screenForPath,
 } from './src/lib/types';
 import {
   creatorAiFunctionUrl,
@@ -67,6 +69,8 @@ import { IdeasScreen } from './src/screens/IdeasScreen';
 import { OnboardingScreen } from './src/screens/OnboardingScreen';
 import { PerformanceScreen } from './src/screens/PerformanceScreen';
 import { PlanScreen } from './src/screens/PlanScreen';
+import { PrivacyScreen } from './src/screens/PrivacyScreen';
+import { HelpScreen } from './src/screens/HelpScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
 import { RecommendationsScreen } from './src/screens/RecommendationsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
@@ -258,13 +262,16 @@ const removeSavedAccount = (email: string): SavedAccount[] => {
 
 
 // The floating AI button is hidden only on the entry flow (where it would
-// fight the mock's layout) and inside the chat itself.
+// fight the mock's layout), inside the chat itself, and on the Help screen
+// (its own helper chat owns the bottom of the screen).
 const NO_FAB: ReadonlySet<Screen> = new Set<Screen>([
   'onboarding',
   'auth',
   'connect',
   'connected',
   'chat',
+  'help',
+  'privacy',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -281,7 +288,18 @@ export default function App() {
 
 function AppShell() {
   // ---------- Navigation & entry flow ----------
-  const [screen, setScreen] = useState<Screen>('onboarding');
+  // A linked /privacy or /help URL opens straight on that screen — that is
+  // what makes the routes shareable from a store listing or a support reply.
+  const [screen, setScreen] = useState<Screen>(() =>
+    Platform.OS === 'web' && typeof window !== 'undefined'
+      ? screenForPath(window.location.pathname) ?? 'onboarding'
+      : 'onboarding',
+  );
+  // Screen to return to when the browser back button leaves a linked route.
+  const legalReturn = useRef<Screen>('settings');
+  // Current screen for the web history listeners, which register once.
+  const screenRef = useRef<Screen>(screen);
+  screenRef.current = screen;
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
   const [profile, setProfile] = useState<InstagramProfile | null>(null);
@@ -582,26 +600,76 @@ function AppShell() {
       return;
     }
     sessionRestoreStarted.current = true;
+    // A linked /privacy or /help entry still restores the session (tokens,
+    // dashboard) — it just never steals the screen the URL asked for.
+    const legalEntry =
+      Platform.OS === 'web' && typeof window !== 'undefined'
+        ? screenForPath(window.location.pathname)
+        : null;
     void loadInstagramSession()
       .then((token) => {
         if (token) {
           setSessionToken(token);
-          setScreen('home');
+          setScreen(legalEntry ?? 'home');
           void loadDashboard(token);
           return;
         }
         // Email/password session only (no Instagram connected): restoring it
         // keeps the creator on their dashboard across refreshes too.
-        if (loadAuthSession()) {
-          setScreen('home');
+        if (loadAuthSession() || legalEntry) {
+          setScreen(legalEntry ?? 'home');
         }
       })
       .catch(() => {
         setConnectionError('session_restore_failed');
         setConnectionState('failed');
-        setScreen('connect');
+        setScreen(legalEntry ?? 'connect');
       });
   }, [incomingUrl, loadDashboard]);
+
+  // Keep the address bar in step with the linked screens: entering one pushes
+  // its path, leaving one restores the app root, and the browser back button
+  // walks back through both.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return;
+    }
+    const target = pathForScreen(screen);
+    const current = window.location.pathname;
+    if (target) {
+      if (target !== current) {
+        window.history.pushState({ screen }, '', target);
+      }
+      return;
+    }
+    if (screenForPath(current)) {
+      window.history.replaceState({}, '', '/');
+    }
+  }, [screen]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return;
+    }
+    const onPopState = (): void => {
+      const target = screenForPath(window.location.pathname);
+      if (target) {
+        // Forward/refresh lands on a linked route again.
+        if (target !== screenRef.current) {
+          legalReturn.current = screenRef.current;
+          setScreen(target);
+        }
+        return;
+      }
+      // Back out of /privacy or /help only — an unrelated back never steals
+      // the screen the creator is already on.
+      if (pathForScreen(screenRef.current)) {
+        setScreen(legalReturn.current);
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   // Restore the persisted email session token alongside the Instagram
   // connection (state only — the screen restore above decides navigation).
@@ -1596,6 +1664,10 @@ function AppShell() {
       case 'settings':
         setScreen('profile');
         return;
+      case 'privacy':
+      case 'help':
+        setScreen(legalReturn.current);
+        return;
       default:
         return;
     }
@@ -1787,6 +1859,26 @@ function AppShell() {
           onReconnect={handleConnectEntry}
           onClearChat={clearChat}
           onEraseData={eraseLocalData}
+          onOpenPrivacy={() => {
+            legalReturn.current = 'settings';
+            setScreen('privacy');
+          }}
+          onOpenHelp={() => {
+            legalReturn.current = 'settings';
+            setScreen('help');
+          }}
+        />
+      ) : screen === 'privacy' ? (
+        <PrivacyScreen onBack={() => setScreen(legalReturn.current)} />
+      ) : screen === 'help' ? (
+        <HelpScreen
+          onBack={() => setScreen(legalReturn.current)}
+          onOpenPrivacy={() => {
+            // Came from Help: back should return there, not to Settings.
+            legalReturn.current = 'help';
+            setScreen('privacy');
+          }}
+          getCreatorToken={getCreatorToken}
         />
       ) : screen === 'chat' ? (
         <ChatScreen
