@@ -17,25 +17,33 @@ export type AnalysisSubmission = {
   } | null;
 };
 
-export type Screen =
-  | 'onboarding'
-  | 'auth'
-  | 'connect'
-  | 'connected'
-  | 'home'
-  | 'dna'
-  | 'ideas'
-  | 'plan'
-  | 'profile'
-  | 'settings'
-  | 'performance'
-  | 'analysis'
-  | 'recommendations'
-  | 'analysisForm'
-  | 'analysesList'
-  | 'privacy'
-  | 'help'
-  | 'chat';
+const SCREEN_NAMES = [
+  'onboarding',
+  'auth',
+  'connect',
+  'connected',
+  'home',
+  'dna',
+  'ideas',
+  'plan',
+  'profile',
+  'settings',
+  'performance',
+  'analysis',
+  'recommendations',
+  'analysisForm',
+  'analysesList',
+  'privacy',
+  'help',
+  'chat',
+] as const;
+
+export type Screen = (typeof SCREEN_NAMES)[number];
+
+/** True when a history entry / deep link names a screen this app actually has. */
+export function isScreen(value: unknown): value is Screen {
+  return typeof value === 'string' && (SCREEN_NAMES as readonly string[]).includes(value);
+}
 
 export const LIGHT_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
   'connect',

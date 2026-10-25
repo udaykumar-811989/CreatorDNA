@@ -3,7 +3,7 @@ import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { PanResponder, Platform, SafeAreaView, StyleSheet } from 'react-native';
+import { BackHandler, PanResponder, Platform, SafeAreaView, StyleSheet } from 'react-native';
 
 import { BottomNav, NavTab } from './src/components/BottomNav';
 import { FloatingAiButton } from './src/components/FloatingAiButton';
@@ -14,6 +14,7 @@ import {
   LIGHT_SCREENS,
   NAV_SCREENS,
   Screen,
+  isScreen,
   pathForScreen,
   screenForPath,
 } from './src/lib/types';
@@ -274,6 +275,10 @@ const NO_FAB: ReadonlySet<Screen> = new Set<Screen>([
   'privacy',
 ]);
 
+// The five bottom-bar screens, in order: a left/right swipe across the app
+// cycles through them, and Back from any of them lands on Home.
+const TAB_SCREENS: readonly string[] = ['home', 'ideas', 'dna', 'plan', 'profile'];
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -297,9 +302,27 @@ function AppShell() {
   );
   // Screen to return to when the browser back button leaves a linked route.
   const legalReturn = useRef<Screen>('settings');
-  // Current screen for the web history listeners, which register once.
+  // Current screen for the listeners that register once (browser history,
+  // Android hardware back) and therefore can't close over fresh state.
   const screenRef = useRef<Screen>(screen);
   screenRef.current = screen;
+  const goBackRef = useRef<(() => boolean) | null>(null);
+
+  // Replace the current history entry instead of adding one. Used by the
+  // one-time transitions on load (session restore) so Back never walks back
+  // through a screen the creator never chose.
+  const settleOnScreen = (next: Screen): void => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.history.replaceState(
+        { screen: next },
+        '',
+        // A screen with no route of its own keeps the URL as it is — never
+        // drop a query string the Instagram return still needs to read.
+        pathForScreen(next) ?? window.location.href,
+      );
+    }
+    setScreen(next);
+  };
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
   const [profile, setProfile] = useState<InstagramProfile | null>(null);
@@ -601,7 +624,8 @@ function AppShell() {
     }
     sessionRestoreStarted.current = true;
     // A linked /privacy or /help entry still restores the session (tokens,
-    // dashboard) — it just never steals the screen the URL asked for.
+    // dashboard) — it just never steals the screen the URL asked for, and it
+    // never pushes a history entry (the initial screen already is that one).
     const legalEntry =
       Platform.OS === 'web' && typeof window !== 'undefined'
         ? screenForPath(window.location.pathname)
@@ -610,62 +634,89 @@ function AppShell() {
       .then((token) => {
         if (token) {
           setSessionToken(token);
-          setScreen(legalEntry ?? 'home');
+          if (!legalEntry) {
+            settleOnScreen('home');
+          }
           void loadDashboard(token);
           return;
         }
         // Email/password session only (no Instagram connected): restoring it
         // keeps the creator on their dashboard across refreshes too.
-        if (loadAuthSession() || legalEntry) {
-          setScreen(legalEntry ?? 'home');
+        if (loadAuthSession() && !legalEntry) {
+          settleOnScreen('home');
         }
       })
       .catch(() => {
         setConnectionError('session_restore_failed');
         setConnectionState('failed');
-        setScreen(legalEntry ?? 'connect');
+        if (!legalEntry) {
+          settleOnScreen('connect');
+        }
       });
   }, [incomingUrl, loadDashboard]);
 
-  // Keep the address bar in step with the linked screens: entering one pushes
-  // its path, leaving one restores the app root, and the browser back button
-  // walks back through both.
+  // ---------- Browser history ----------
+  // Every screen change becomes a history entry, so the browser back button
+  // (and the mobile edge-swipe) walks backwards through the app exactly like
+  // the in-app swipe does — not only on /privacy and /help.
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') {
       return;
     }
-    const target = pathForScreen(screen);
-    const current = window.location.pathname;
-    if (target) {
-      if (target !== current) {
+    const recorded = (window.history.state as { screen?: unknown } | null)?.screen;
+    if (recorded === screen) {
+      // Already this entry — a popstate we just applied, or a setScreen that
+      // landed where we already were. Never push a twin; just keep the path
+      // honest (the Instagram return rewrites it to /instagram-connected).
+      const target = pathForScreen(screen) ?? '/';
+      if (window.location.pathname !== target) {
+        window.history.replaceState({ screen }, '', target);
+      }
+      return;
+    }
+    const target = pathForScreen(screen) ?? '/';
+    if (typeof recorded !== 'string') {
+      // First entry in this tab: tag it in place instead of adding one. Keep
+      // the whole URL (query included) — the Instagram return lands with its
+      // one-time receipt in the query string and still has to be readable.
+      if (target === '/') {
+        window.history.replaceState({ screen }, '', window.location.href);
+      } else {
+        // Deep link straight into /privacy or /help: seed an app entry
+        // underneath, so Back enters the app instead of leaving the site.
+        window.history.replaceState({ screen: legalReturn.current }, '', '/');
         window.history.pushState({ screen }, '', target);
       }
       return;
     }
-    if (screenForPath(current)) {
-      window.history.replaceState({}, '', '/');
-    }
+    window.history.pushState({ screen }, '', target);
   }, [screen]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') {
       return;
     }
-    const onPopState = (): void => {
-      const target = screenForPath(window.location.pathname);
-      if (target) {
-        // Forward/refresh lands on a linked route again.
-        if (target !== screenRef.current) {
-          legalReturn.current = screenRef.current;
-          setScreen(target);
+    const onPopState = (event: PopStateEvent): void => {
+      const recorded = (event.state as { screen?: unknown } | null)?.screen;
+      const target =
+        (isScreen(recorded) ? recorded : null) ?? screenForPath(window.location.pathname);
+      if (!target) {
+        // An entry from before the app (typed URL, external link, cleared
+        // state): only a linked route needs its "opened from" rule.
+        if (pathForScreen(screenRef.current)) {
+          setScreen(legalReturn.current);
         }
         return;
       }
-      // Back out of /privacy or /help only — an unrelated back never steals
-      // the screen the creator is already on.
-      if (pathForScreen(screenRef.current)) {
-        setScreen(legalReturn.current);
+      if (target === screenRef.current) {
+        return;
       }
+      if (pathForScreen(target)) {
+        // Landed on a linked route from history — remember where from, so its
+        // in-app back chevron matches this Back button.
+        legalReturn.current = screenRef.current;
+      }
+      setScreen(target);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -1619,60 +1670,94 @@ function AppShell() {
     }),
   );
 
+  // One rule for "where does Back go" — shared by the right-swipe gesture,
+  // the Android hardware button, and the browser history entries pushed above,
+  // so every kind of back behaves the same on every screen.
+  const goBack = (): boolean => {
+    const current = screenRef.current;
+    if (TAB_SCREENS.includes(current)) {
+      // Back on a bottom tab lands on Home first; from Home the system does
+      // its own default (leave the app). It never nukes the app mid-flow.
+      if (current === 'home') {
+        return false;
+      }
+      setScreen('home');
+      return true;
+    }
+    switch (current) {
+      case 'onboarding':
+        // The welcome flow steps back instead of leaving the app.
+        if (onboardingStep > 0) {
+          setOnboardingStep((step) => Math.max(0, step - 1));
+          return true;
+        }
+        return false;
+      case 'auth':
+        setScreen('onboarding');
+        return true;
+      case 'connect':
+        setScreen(sessionToken ? 'home' : 'onboarding');
+        return true;
+      case 'connected':
+        setScreen('connect');
+        return true;
+      case 'chat':
+        setScreen(chatReturn === 'chat' ? 'home' : chatReturn);
+        return true;
+      case 'analysis':
+        setScreen(analysisReturn);
+        return true;
+      case 'recommendations':
+        setScreen('analysis');
+        return true;
+      case 'analysisForm':
+        setScreen(formReturn);
+        return true;
+      case 'analysesList':
+        setScreen('profile');
+        return true;
+      case 'performance':
+        setScreen('dna');
+        return true;
+      case 'settings':
+        setScreen('profile');
+        return true;
+      case 'privacy':
+      case 'help':
+        setScreen(legalReturn.current);
+        return true;
+      default:
+        return false;
+    }
+  };
+  goBackRef.current = goBack;
+
   const handleSlide = (direction: 'left' | 'right') => {
-    const tabScreens: string[] = ['home', 'ideas', 'dna', 'plan', 'profile'];
-    const tabIndex = tabScreens.indexOf(screen);
+    const tabIndex = TAB_SCREENS.indexOf(screen);
     if (tabIndex >= 0) {
       const next =
-        tabScreens[direction === 'left' ? tabIndex + 1 : tabIndex - 1];
+        TAB_SCREENS[direction === 'left' ? tabIndex + 1 : tabIndex - 1];
       if (next) {
         setScreen(next as Screen);
       }
       return;
     }
-    if (direction !== 'right') {
-      return;
-    }
-    switch (screen) {
-      case 'auth':
-        setScreen('onboarding');
-        return;
-      case 'connect':
-        setScreen(sessionToken ? 'home' : 'onboarding');
-        return;
-      case 'connected':
-        setScreen('connect');
-        return;
-      case 'chat':
-        setScreen(chatReturn);
-        return;
-      case 'analysis':
-        setScreen(analysisReturn);
-        return;
-      case 'recommendations':
-        setScreen('analysis');
-        return;
-      case 'analysisForm':
-        setScreen(formReturn);
-        return;
-      case 'analysesList':
-        setScreen('profile');
-        return;
-      case 'performance':
-        setScreen('dna');
-        return;
-      case 'settings':
-        setScreen('profile');
-        return;
-      case 'privacy':
-      case 'help':
-        setScreen(legalReturn.current);
-        return;
-      default:
-        return;
+    if (direction === 'right') {
+      goBack();
     }
   };
   slideHandlerRef.current = handleSlide;
+
+  // Android hardware back — same rule as the swipe, so native matches web.
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      return;
+    }
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () =>
+      goBackRef.current?.() ?? false,
+    );
+    return () => subscription.remove();
+  }, []);
 
   return (
     <SafeAreaView
