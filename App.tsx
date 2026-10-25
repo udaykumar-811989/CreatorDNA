@@ -1945,11 +1945,9 @@ function AppShell() {
           dashboard={dashboard}
           recordCount={analyses.length}
           sessionWarning={sessionWarning}
-          onReconnect={handleConnectEntry}
           onOpenAnalyses={() => setScreen('analysesList')}
           onViewDna={() => setScreen('dna')}
           onOpenSettings={() => setScreen('settings')}
-          onSwitchAccount={() => setAccountSwitcherOpen(true)}
           onLogout={logout}
         />
       ) : screen === 'settings' ? (

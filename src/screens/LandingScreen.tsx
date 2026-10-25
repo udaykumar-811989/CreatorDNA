@@ -504,6 +504,14 @@ export function LandingScreen({
       >
         {/* ---------------------------------------------------------- hero */}
         <View onLayout={track('top')} style={s.hero}>
+          {/* Soft blue wash: palest under the nav, fading back to white so the
+              features section below still starts on a clean edge. */}
+          <LinearGradient
+            colors={['#E9F0FB', '#F6FAFF', '#FFFFFF']}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
           <Wrap>
             <View style={[s.heroRow, !twoCol && { flexDirection: 'column' }]}>
               <View style={twoCol ? { flex: 1, paddingRight: 24 } : undefined}>
@@ -741,7 +749,12 @@ const s = StyleSheet.create({
   },
 
   // ---- nav
-  nav: { backgroundColor: C.cream, paddingBottom: 6 },
+  nav: {
+    backgroundColor: C.cream,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: C.line,
+  },
   navRow: { flexDirection: 'row', alignItems: 'center', minHeight: 66 },
   navLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingRight: 6 },
@@ -897,6 +910,8 @@ const s = StyleSheet.create({
     borderRadius: 16,
     padding: 13,
     width: 216,
+    borderWidth: 1,
+    borderColor: C.line,
     ...CARD_SHADOW,
   },
   pcHead: { flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 8 },
@@ -925,7 +940,16 @@ const s = StyleSheet.create({
   // ---- features
   features: { paddingTop: 64, paddingBottom: 64, borderTopWidth: 1, borderTopColor: C.line },
   featGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 36 },
-  feat: { alignItems: 'center' },
+  feat: {
+    alignItems: 'center',
+    backgroundColor: C.white,
+    borderWidth: 1,
+    borderColor: C.line,
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 24,
+    ...CARD_SHADOW,
+  },
   featIco: {
     width: 60,
     height: 60,
@@ -1005,6 +1029,8 @@ const s = StyleSheet.create({
     borderRadius: 17,
     padding: 16,
     maxWidth: 380,
+    borderWidth: 1,
+    borderColor: C.line,
     ...CARD_SHADOW,
   },
   ccHead: { flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 11 },
@@ -1038,6 +1064,8 @@ const s = StyleSheet.create({
     zIndex: 3,
     backgroundColor: C.white,
     borderRadius: 4,
+    borderWidth: 1,
+    borderColor: C.line,
     padding: 9,
     transform: [{ rotate: '3deg' }],
     shadowColor: 'rgba(26,86,174,0.16)',
@@ -1048,12 +1076,17 @@ const s = StyleSheet.create({
   },
   sLabel: {
     fontFamily: BODY,
-    fontSize: 11.5,
+    fontSize: 11,
     letterSpacing: 1.2,
     textTransform: 'uppercase',
     color: C.blue,
     fontWeight: '800',
-    marginBottom: 10,
+    marginBottom: 16,
+    alignSelf: 'flex-start',
+    backgroundColor: C.pale,
+    borderRadius: 100,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
   },
   h2: { fontFamily: DISPLAY, color: C.blue, marginBottom: 16, letterSpacing: -0.4 },
   sP: {
