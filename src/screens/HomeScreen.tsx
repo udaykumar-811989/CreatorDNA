@@ -75,7 +75,7 @@ export function HomeScreen({
         // Same lockup as the onboarding page: DNA mark beside the wordmark.
         brandRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 2 },
         brand: { color: c.onDark, fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
-        brandAccent: { color: isDark ? '#BC8CFF' : c.primary },
+        brandAccent: { color: c.primary },
         greet: { ...type.h3, color: c.onDark, fontSize: 22, letterSpacing: -0.4 },
         greetSub: { ...type.small, color: c.onDarkSub, marginTop: 5, fontSize: 13.5 },
 
@@ -109,7 +109,7 @@ export function HomeScreen({
           width: 30,
           height: 30,
           borderRadius: 15,
-          backgroundColor: isDark ? 'rgba(255, 214, 107, 0.14)' : c.amberSoft,
+          backgroundColor: c.amberSoft,
           alignItems: 'center',
           justifyContent: 'center',
         },
@@ -226,7 +226,7 @@ export function HomeScreen({
         <Card tone={tone} style={styles.insightCard}>
           <View style={styles.insightHead}>
             <View style={styles.insightIcon}>
-              <SparkIcon size={16} color={isDark ? '#FFD66B' : c.amber} />
+              <SparkIcon size={16} color={c.amber} />
             </View>
             <Text style={styles.insightTitle}>Quick Insights</Text>
           </View>

@@ -45,7 +45,7 @@ export function GradientButton({
       style={({ pressed }) => [s.gradientButton, pressed && !inactive && s.pressed, style]}
     >
       <LinearGradient
-        colors={inactive ? ['#A8A2F0', '#A29BEC'] : colors.gradient}
+        colors={inactive ? ['#8FAEE0', '#7FA3DC'] : colors.gradient}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
         style={s.gradientFill}
@@ -74,7 +74,7 @@ export function OutlineButton({
       onPress={onPress}
       style={({ pressed }) => [
         s.outlineButton,
-        { borderColor: isDark ? 'rgba(255,255,255,0.35)' : colors.lightBorder },
+        { borderColor: colors.lightBorder },
         pressed && s.pressed,
         style,
       ]}
@@ -106,7 +106,7 @@ export function PillTabs({
     <View
       style={[
         s.pillTrack,
-        { backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : colors.lightCard2 },
+        { backgroundColor: colors.lightCard2 },
         style,
       ]}
     >
@@ -124,7 +124,7 @@ export function PillTabs({
               style={[
                 s.pillLabel,
                 { color: isDark ? colors.onDarkSub : colors.textSub },
-                active && { color: isDark ? colors.onDark : colors.primary },
+                active && { color: isDark ? '#FFFFFF' : colors.primary },
               ]}
             >
               {option}
@@ -216,7 +216,7 @@ export function ScreenHeader({
             style={({ pressed }) => [
               s.headerBack,
               {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : colors.lightCard2,
+                backgroundColor: colors.lightCard2,
               },
               pressed && s.pressed,
             ]}
@@ -324,7 +324,7 @@ export function EmptyState({
         <View
           style={[
             s.emptyGlyphWrap,
-            { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : colors.primarySoft },
+            { backgroundColor: colors.primarySoft },
           ]}
         >
           <Text style={[s.emptyGlyph, { color: isDark ? colors.onDarkSub : colors.primary }]}>
@@ -487,7 +487,7 @@ const s = StyleSheet.create({
   },
   pillItemActive: {
     backgroundColor: colors.white,
-    shadowColor: '#5B4BD6',
+    shadowColor: '#1A56AE',
     shadowOpacity: 0.16,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },

@@ -234,13 +234,13 @@ function makeSheetStyles(c: ReturnType<typeof useThemeColors>) {
     identity: { flex: 1 },
     handleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     currentBadge: {
-      backgroundColor: 'rgba(124, 108, 246, 0.16)',
+      backgroundColor: 'rgba(26, 86, 174, 0.16)',
       borderRadius: 6,
       paddingHorizontal: 6,
       paddingVertical: 2,
     },
     currentBadgeText: {
-      color: '#7C6CF6',
+      color: c.primary,
       fontSize: 10,
       fontWeight: '700',
       letterSpacing: 0.4,

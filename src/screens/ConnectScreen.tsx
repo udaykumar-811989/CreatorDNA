@@ -286,7 +286,7 @@ const styles = StyleSheet.create({
   },
   spark: {
     position: 'absolute',
-    color: '#9A83E8',
+    color: '#8FB2E3',
     fontSize: 25,
     fontWeight: '300',
   },
@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 3,
-    backgroundColor: '#C5B7F3',
+    backgroundColor: '#AFC8EE',
   },
   dotLeft: { left: '27%', bottom: 35 },
   dotRight: { right: '27%', bottom: 39 },

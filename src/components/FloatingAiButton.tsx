@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
     borderRadius: FAB_WIDTH / 2,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#6C5CE7',
+    shadowColor: '#1A56AE',
     shadowOpacity: 0.45,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },

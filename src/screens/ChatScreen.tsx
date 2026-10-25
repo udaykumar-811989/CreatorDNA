@@ -64,7 +64,7 @@ function BubbleAttachment({
   const { mode } = useTheme();
   const c = useThemeColors();
   const isDark = mode === 'dark';
-  const chipIcon = mine ? '#FFFFFF' : isDark ? '#C4A8FF' : c.primary;
+  const chipIcon = mine ? '#FFFFFF' : c.primary;
 
   const s = useMemo(
     () =>
@@ -79,7 +79,7 @@ function BubbleAttachment({
           flexDirection: 'row',
           alignItems: 'center',
           gap: 7,
-          backgroundColor: isDark ? 'rgba(196,168,255,0.12)' : c.primarySoft,
+          backgroundColor: c.primarySoft,
           borderRadius: 10,
           paddingHorizontal: 11,
           paddingVertical: 8,
@@ -88,7 +88,7 @@ function BubbleAttachment({
         attachmentChipMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
         attachmentChipText: {
           ...type.small,
-          color: isDark ? '#C4A8FF' : c.primary,
+          color: c.primary,
           fontWeight: '700',
           fontSize: 12.5,
           maxWidth: 170,
@@ -153,8 +153,8 @@ export function ChatScreen({
   const c = useThemeColors();
   const isDark = mode === 'dark';
   // Light purple accent only reads on dark surfaces; use brand purple on white.
-  const accent = isDark ? '#C4A8FF' : c.primary;
-  const dangerText = isDark ? '#FF9B9B' : c.red;
+  const accent = c.primary;
+  const dangerText = c.red;
 
   const styles = useMemo(
     () =>
@@ -192,7 +192,7 @@ export function ChatScreen({
           width: 64,
           height: 64,
           borderRadius: 32,
-          backgroundColor: isDark ? 'rgba(196,168,255,0.12)' : c.primarySoft,
+          backgroundColor: c.primarySoft,
           alignItems: 'center',
           justifyContent: 'center',
           marginBottom: 16,
@@ -246,7 +246,7 @@ export function ChatScreen({
           flexDirection: 'row',
           alignItems: 'center',
           gap: 7,
-          backgroundColor: isDark ? 'rgba(196,168,255,0.12)' : c.primarySoft,
+          backgroundColor: c.primarySoft,
           borderRadius: 10,
           paddingHorizontal: 11,
           paddingVertical: 8,
@@ -255,7 +255,7 @@ export function ChatScreen({
         attachmentChipMine: { backgroundColor: 'rgba(255,255,255,0.18)' },
         attachmentChipText: {
           ...type.small,
-          color: isDark ? '#C4A8FF' : c.primary,
+          color: c.primary,
           fontWeight: '700',
           fontSize: 12.5,
           maxWidth: 170,

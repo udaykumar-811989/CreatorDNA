@@ -1,35 +1,40 @@
-// CreatorDNA design tokens — matches the 10-screen mock.
-// Dark screens: onboarding, auth, connected, home, profile, chat.
-// Light screens: connect, dna, ideas, plan, performance, analysis flows.
+// CreatorDNA design tokens.
+// The whole app wears the landing page's palette: white surfaces, pale-blue
+// tints and the #1A56AE brand blue (see src/screens/LandingScreen.tsx).
+// Key names still say "dark*" because the original mock was a dark theme —
+// those keys are now simply the everyday surface/text tokens.
+// `isDark` / mode branches still exist in screens; both modes read this same
+// palette, so they are cosmetic no-ops after the literal sweep.
 
 export const colors = {
-  // Dark palette
-  darkBg: '#080B1B',
-  darkBg2: '#11112A',
-  darkBg3: '#100E24',
-  onboardingBg: ['#070A1A', '#11132D', '#17102F'] as const,
-  darkCard: '#161836',
-  darkCard2: '#1C1E42',
-  darkBorder: 'rgba(255,255,255,0.08)',
-  onDark: '#FFFFFF',
-  onDarkSub: '#A9A6C9',
-  onDarkDim: '#7B78A0',
+  // Surfaces (page + cards). Page is a whisper off-white so white cards and
+  // borders still read against it without every card needing a border.
+  darkBg: '#FAFCFF',
+  darkBg2: '#FFFFFF',
+  darkBg3: '#F2F7FE',
+  onboardingBg: ['#FFFFFF', '#FAFCFF', '#EBF0FB'] as const,
+  darkCard: '#FFFFFF',
+  darkCard2: '#F7FAFF',
+  darkBorder: 'rgba(26,86,174,0.13)',
+  onDark: '#0D2E6B',
+  onDarkSub: '#5068A0',
+  onDarkDim: '#8296C0',
 
   // Light palette
   white: '#FFFFFF',
-  lightCard: '#F6F5FC',
-  lightCard2: '#F1EFFB',
-  lightBorder: '#E9E7F5',
-  text: '#16142B',
-  textSub: '#6C6885',
-  textDim: '#9693AE',
+  lightCard: '#F5F9FF',
+  lightCard2: '#EFF4FD',
+  lightBorder: 'rgba(26,86,174,0.13)',
+  text: '#0D2E6B',
+  textSub: '#5068A0',
+  textDim: '#8296C0',
 
   // Brand
-  primary: '#6C5CE7',
-  primarySoft: '#EFEAFF',
-  primaryDeep: '#5847D6',
-  gradient: ['#7765F4', '#7660E9', '#6859E6'] as const,
-  ringGradient: ['#8B7CFF', '#5B8CFF'] as const,
+  primary: '#1A56AE',
+  primarySoft: '#EBF0FB',
+  primaryDeep: '#163F85',
+  gradient: ['#1A56AE', '#2466C0', '#2F7BD6'] as const,
+  ringGradient: ['#1A56AE', '#4C92E8'] as const,
 
   // Status
   green: '#12B76A',
@@ -38,52 +43,31 @@ export const colors = {
   amberSoft: '#FEF5E6',
   red: '#EF4444',
   redSoft: '#FEF1F1',
-  blue: '#3B82F6',
-  blueSoft: '#EBF2FE',
-  graySoft: '#EFEEF6',
-  gray: '#8A87A3',
+  blue: '#2E7BD6',
+  blueSoft: '#EBF0FB',
+  graySoft: '#F1F5FC',
+  gray: '#7A8CA6',
 
   // Mock accents
   igGradient: ['#7438E8', '#C135BD', '#F56040', '#FFBD45'] as const,
 
-  // Themed surfaces for the dark-design screens (onboarding, auth, home,
-  // profile, settings, chat). Light mode overrides these below so those
-  // screens can render a full light variant from the same keys.
-  pageBg: '#070A1A',
-  entryBg: ['#070A1A', '#11132D', '#17102F'] as [string, string, string],
-  surface1: 'rgba(255,255,255,0.06)',
-  surface2: 'rgba(255,255,255,0.07)',
-  surface3: 'rgba(255,255,255,0.10)',
-  outlineSoft: 'rgba(255,255,255,0.35)',
-  footerBg: 'rgba(8,11,27,0.72)',
-  insightCard: '#1B1B3A',
+  // Themed surfaces (onboarding, auth, home, profile, settings, chat).
+  pageBg: '#FAFCFF',
+  entryBg: ['#FFFFFF', '#FAFCFF', '#EBF0FB'] as [string, string, string],
+  surface1: 'rgba(26,86,174,0.05)',
+  surface2: 'rgba(26,86,174,0.07)',
+  surface3: 'rgba(26,86,174,0.11)',
+  outlineSoft: 'rgba(26,86,174,0.32)',
+  footerBg: 'rgba(255,255,255,0.94)',
+  insightCard: '#EBF0FB',
 };
 
 export type ThemeMode = 'light' | 'dark';
 
-// Light-mode palette — same keys as `colors`, so a themed screen swaps the
-// whole object at once. Brand and status colors are shared across modes.
-// Default mode is 'dark', which reproduces the original mock exactly.
-export const lightColors: typeof colors = {
-  ...colors,
-  darkBg: '#F4F3FB',
-  darkBg2: '#FFFFFF',
-  darkBg3: '#EDEBF8',
-  darkCard: '#FFFFFF',
-  darkCard2: '#F3F1FC',
-  darkBorder: '#E6E3F4',
-  onDark: '#16142B',
-  onDarkSub: '#5E5A7C',
-  onDarkDim: '#9693AE',
-  pageBg: '#FFFFFF',
-  entryBg: ['#FFFFFF', '#FBFAFF', '#F4F1FF'] as [string, string, string],
-  surface1: '#F1EFFB',
-  surface2: '#FFFFFF',
-  surface3: '#E9E5FD',
-  outlineSoft: 'rgba(22,20,43,0.28)',
-  footerBg: 'rgba(255,255,255,0.96)',
-  insightCard: '#FFF8E8',
-};
+// One palette for both modes: the app is the landing look everywhere, so the
+// appearance toggle in Settings no longer changes colors. Same keys, kept so
+// screens that swap the object keep working.
+export const lightColors: typeof colors = { ...colors };
 
 export const spacing = {
   xs: 6,

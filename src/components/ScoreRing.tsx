@@ -40,7 +40,7 @@ export function ScoreRing({
           cx={size / 2}
           cy={size / 2}
           r={r}
-          stroke={isDark ? 'rgba(255,255,255,0.10)' : '#E9E6F8'}
+          stroke={'#E4EAF6'}
           strokeWidth={stroke}
           fill="none"
         />

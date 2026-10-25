@@ -55,8 +55,8 @@ export function OnboardingScreen({
           left: -155,
           bottom: 36,
           borderRadius: 150,
-          backgroundColor: '#A51CA4',
-          opacity: isDark ? 0.48 : 0.16,
+          backgroundColor: '#1A56AE',
+          opacity: isDark ? 0.13 : 0.16,
           transform: [{ rotate: '-18deg' }],
         },
         backWave: {
@@ -99,7 +99,7 @@ export function OnboardingScreen({
           letterSpacing: -0.7,
           marginTop: 13,
         },
-        brandAccent: { color: isDark ? '#BC8CFF' : c.primary },
+        brandAccent: { color: c.primary },
         tagline: {
           color: c.onDark,
           fontSize: 17,
@@ -136,12 +136,12 @@ export function OnboardingScreen({
           width: 5,
           height: 5,
           borderRadius: 3,
-          backgroundColor: isDark ? 'rgba(222, 219, 245, 0.35)' : 'rgba(22, 20, 43, 0.22)',
+          backgroundColor: 'rgba(26,86,174,0.25)',
         },
         dotActive: {
           width: 7,
           height: 7,
-          backgroundColor: isDark ? '#F4EFFF' : c.primary,
+          backgroundColor: c.primary,
         },
         backLink: {
           color: c.onDarkSub,

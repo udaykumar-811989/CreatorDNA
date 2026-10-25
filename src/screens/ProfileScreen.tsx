@@ -37,7 +37,7 @@ export function ProfileScreen({
   const c = useThemeColors();
   const isDark = mode === 'dark';
   const tone = isDark ? ('dark' as const) : ('light' as const);
-  const iconColor = isDark ? '#9E8CFF' : c.primary;
+  const iconColor = c.primary;
 
   const username = dashboard?.profile.username ?? profile?.username ?? null;
   const accountType = dashboard?.profile.accountType ?? profile?.accountType ?? null;
@@ -62,7 +62,7 @@ export function ProfileScreen({
         dnaCard: {
           borderRadius: radius.md + 4,
           overflow: 'hidden',
-          shadowColor: '#6C5CE7',
+          shadowColor: '#1A56AE',
           shadowOpacity: 0.35,
           shadowRadius: 16,
           shadowOffset: { width: 0, height: 7 },
@@ -145,7 +145,7 @@ export function ProfileScreen({
             <DnaMark size={40} />
             <View style={{ flex: 1 }}>
               <Text style={styles.dnaTitle}>
-                Creator<Text style={{ color: '#D9C6FF' }}>DNA</Text>
+                Creator<Text style={{ color: '#9FC2F0' }}>DNA</Text>
               </Text>
               <Text style={styles.dnaSub}>Your personalized growth plan</Text>
             </View>
@@ -201,7 +201,7 @@ export function ProfileScreen({
           <View style={styles.rowDivider} />
           <ListRow
             tone={tone}
-            icon={<LogoutIcon size={19} color={isDark ? '#FF8B8B' : c.red} />}
+            icon={<LogoutIcon size={19} color={c.red} />}
             label="Logout"
             onPress={onLogout}
             danger

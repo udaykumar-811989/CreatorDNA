@@ -88,7 +88,7 @@ export function AuthScreen({
         },
         error: {
           ...type.small,
-          color: isDark ? '#FF9B9B' : c.red,
+          color: c.red,
           backgroundColor: c.redSoft,
           borderRadius: radius.sm,
           padding: 11,

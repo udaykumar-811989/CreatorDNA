@@ -19,7 +19,7 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
   const c = useThemeColors();
   const isDark = mode === 'dark';
   const tone = isDark ? ('dark' as const) : ('light' as const);
-  const iconColor = isDark ? '#9E8CFF' : c.primary;
+  const iconColor = c.primary;
 
   const styles = useMemo(
     () =>

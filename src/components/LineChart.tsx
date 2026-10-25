@@ -61,7 +61,7 @@ export function LineChart({
   const last = coordinates[coordinates.length - 1];
 
   const labelColor = isDark ? colors.onDarkDim : colors.textDim;
-  const gridColor = isDark ? 'rgba(255,255,255,0.07)' : '#ECEAF7';
+  const gridColor = '#E4EAF6';
 
   return (
     <View onLayout={onLayout} style={{ height }}>

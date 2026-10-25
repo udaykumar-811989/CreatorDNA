@@ -11,7 +11,6 @@ import type { IdeaRequest } from './src/components/modals';
 import {
   AnalysisSubmission,
   ConnectionState,
-  LIGHT_SCREENS,
   NAV_SCREENS,
   Screen,
   isScreen,
@@ -78,7 +77,7 @@ import { RecommendationsScreen } from './src/screens/RecommendationsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { VideoAnalysisScreen } from './src/screens/VideoAnalysisScreen';
 import { colors, NAV_HEIGHT } from './src/theme';
-import { ThemeProvider, useTheme } from './src/themeContext';
+import { ThemeProvider } from './src/themeContext';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -1618,10 +1617,8 @@ function AppShell() {
     };
   }, []);
 
-  const { mode } = useTheme();
-  // Effective brightness of the current screen: light mode makes every
-  // screen light; in dark mode only the mock's light screens are light.
-  const isLight = mode === 'light' || LIGHT_SCREENS.has(screen);
+  // One light palette everywhere now (src/theme.ts), so the window chrome is
+  // always dark-on-light and every screen sits on the same near-white page.
   const showNav = NAV_SCREENS.has(screen);
   const navActive: NavTab =
     screen === 'performance'
@@ -1636,9 +1633,6 @@ function AppShell() {
               screen === 'profile'
             ? screen
             : 'home';
-  const navDark =
-    mode === 'dark' &&
-    (screen === 'home' || screen === 'profile' || screen === 'settings');
   const showFab = !NO_FAB.has(screen);
   // The public landing's CTA enters the app directly when there is already a
   // session (Instagram or password), and otherwise starts the welcome flow.
@@ -1770,12 +1764,12 @@ function AppShell() {
         styles.safeArea,
         {
           backgroundColor:
-            screen === 'landing' ? LANDING_BG : isLight ? colors.white : colors.darkBg,
+            screen === 'landing' ? LANDING_BG : colors.darkBg,
         },
       ]}
       {...panResponder.panHandlers}
     >
-      <StatusBar style={isLight ? 'dark' : 'light'} />
+      <StatusBar style="dark" />
       {screen === 'landing' ? (
         <LandingScreen
           signedIn={signedInEntry}
@@ -2022,7 +2016,6 @@ function AppShell() {
           active={navActive}
           onNavigate={navigateTab}
           onProfileLongPress={() => setAccountSwitcherOpen(true)}
-          tone={navDark ? 'dark' : 'light'}
         />
       ) : null}
       {showFab ? (

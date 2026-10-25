@@ -127,8 +127,8 @@ export function HelpScreen({
   const c = useThemeColors();
   const isDark = mode === 'dark';
   const tone = isDark ? ('dark' as const) : ('light' as const);
-  const accent = isDark ? '#C4A8FF' : c.primary;
-  const dangerText = isDark ? '#FF9B9B' : c.red;
+  const accent = c.primary;
+  const dangerText = c.red;
 
   const styles = useMemo(
     () =>
@@ -162,7 +162,7 @@ export function HelpScreen({
           borderRadius: 18,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: isDark ? 'rgba(196,168,255,0.12)' : c.primarySoft,
+          backgroundColor: c.primarySoft,
         },
         heroTitle: { ...type.h4, color: c.onDark, fontSize: 16, flex: 1 },
         heroText: { ...type.small, color: c.onDarkSub, fontSize: 13, lineHeight: 19 },
@@ -224,7 +224,7 @@ export function HelpScreen({
           width: 64,
           height: 64,
           borderRadius: 32,
-          backgroundColor: isDark ? 'rgba(196,168,255,0.12)' : c.primarySoft,
+          backgroundColor: c.primarySoft,
           alignItems: 'center',
           justifyContent: 'center',
           marginBottom: 16,

@@ -34,7 +34,7 @@ function ConfirmDialog({
       StyleSheet.create({
         backdrop: {
           flex: 1,
-          backgroundColor: isDark ? 'rgba(5,7,18,0.66)' : 'rgba(22,20,43,0.42)',
+          backgroundColor: 'rgba(13,46,107,0.45)',
           alignItems: 'center',
           justifyContent: 'center',
           padding: 24,
@@ -137,7 +137,7 @@ export function SettingsScreen({
   const tone = isDark ? ('dark' as const) : ('light' as const);
   const username = dashboard?.profile.username ?? profile?.username ?? null;
   const version = Constants.expoConfig?.version;
-  const iconColor = isDark ? '#9E8CFF' : c.primary;
+  const iconColor = c.primary;
 
   const styles = useMemo(
     () =>
@@ -277,7 +277,7 @@ export function SettingsScreen({
           <View style={styles.rowDivider} />
           <ListRow
             tone={tone}
-            icon={<TrashIcon size={19} color={isDark ? '#FF8B8B' : c.red} />}
+            icon={<TrashIcon size={19} color={c.red} />}
             label="Erase data on this device"
             onPress={() => setDialog('eraseData')}
             danger

@@ -21,15 +21,12 @@ export function BottomNav({
   active,
   onNavigate,
   onProfileLongPress,
-  tone = 'light',
 }: {
   active: NavTab;
   onNavigate: (tab: NavTab) => void;
   /** Long-press on the Profile tab opens the saved-accounts switcher. */
   onProfileLongPress?: () => void;
-  tone?: 'light' | 'dark';
 }) {
-  const isDark = tone === 'dark';
   // react-native-web doesn't reliably fire onLongPress on Pressable, so the
   // Profile long-press is tracked manually: hold → open the switcher after
   // 550ms, and swallow the release so the tab doesn't also navigate.
@@ -119,18 +116,14 @@ export function BottomNav({
       style={[
         styles.nav,
         {
-          backgroundColor: isDark ? '#0D0F24' : colors.white,
-          borderTopColor: isDark ? colors.darkBorder : colors.lightBorder,
+          backgroundColor: colors.white,
+          borderTopColor: colors.lightBorder,
         },
       ]}
     >
       {tabs.map(({ key, label, Icon }) => {
         const isActive = key === active;
-        const color = isActive
-          ? '#7C6CF6'
-          : isDark
-            ? colors.onDarkDim
-            : colors.textDim;
+        const color = isActive ? colors.primary : colors.textDim;
         return (
           <Pressable
             key={key}
