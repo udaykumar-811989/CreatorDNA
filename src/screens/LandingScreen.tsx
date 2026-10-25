@@ -16,13 +16,13 @@ import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { DnaIcon, IdeasIcon, PersonIcon, PlanIcon, PlayIcon } from '../components/icons';
 import { ScoreRing } from '../components/ScoreRing';
 
-// The public front door: a marketing page in the app's own cream + blue
+// The public front door: a marketing page in the app's own white + blue
 // language (hand-lettered accents, chunky display type, polaroid collage).
 // It only ever renders on web — native keeps the welcome flow.
-export const LANDING_BG = '#FEFAEB';
+export const LANDING_BG = '#FFFFFF';
 
 const C = {
-  cream: '#FEFAEB',
+  cream: '#FFFFFF',
   blue: '#1A56AE',
   blue2: '#163F85',
   pale: '#EBF0FB',
@@ -47,27 +47,41 @@ const CARD_SHADOW = {
 
 // ---------------------------------------------------------------- primitives
 
-function BrandMark({ size = 40, color = C.blue }: { size?: number; color?: string }) {
+// The app's own mark (src/components/DnaMark), same shape and same three
+// strokes — passed `color` it becomes a single-colour version for use on a
+// blue chip, otherwise it *is* the app logo.
+const MARK_LIGHT = '#bc77ff';
+const MARK_MID = '#8959ed';
+const MARK_RUNG = '#a86af5';
+
+function BrandMark({ size = 40, color }: { size?: number; color?: string }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 48 48">
+    <Svg
+      width={size}
+      height={size}
+      viewBox="0 0 48 48"
+      accessible
+      accessibilityRole={color ? undefined : 'image'}
+      accessibilityLabel={color ? undefined : 'CreatorDNA logo'}
+    >
       <Path
         d="M12 5c0 9 24 10 24 19S12 34 12 43"
         fill="none"
-        stroke={color}
+        stroke={color ?? MARK_LIGHT}
         strokeLinecap="round"
         strokeWidth={3.4}
       />
       <Path
         d="M36 5c0 9-24 10-24 19s24 10 24 19"
         fill="none"
-        stroke={color}
+        stroke={color ?? MARK_MID}
         strokeLinecap="round"
         strokeWidth={3.4}
       />
       <Path
         d="M16 11h16M13 20h22M13 29h22M16 38h16"
         fill="none"
-        stroke={color}
+        stroke={color ?? MARK_RUNG}
         strokeLinecap="round"
         strokeWidth={2.5}
       />
@@ -479,7 +493,6 @@ export function LandingScreen({
               </View>
             ) : null}
           </View>
-          <Pill label={signedIn ? 'Open app' : 'Get started'} onPress={onEnterApp} small />
         </Wrap>
       </View>
 
