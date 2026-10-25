@@ -18,6 +18,7 @@ export type AnalysisSubmission = {
 };
 
 const SCREEN_NAMES = [
+  'landing',
   'onboarding',
   'auth',
   'connect',
@@ -46,6 +47,7 @@ export function isScreen(value: unknown): value is Screen {
 }
 
 export const LIGHT_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
+  'landing',
   'connect',
   'connected',
   'dna',
@@ -74,6 +76,9 @@ export const NAV_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
  * the address bar in sync with these (see App.tsx).
  */
 export const SCREEN_PATHS: Readonly<Partial<Record<Screen, string>>> = {
+  // The public front door: "/" is the marketing home, never a signed-in
+  // screen, so a store listing can point at the site root.
+  landing: '/',
   privacy: '/privacy',
   help: '/help',
 };

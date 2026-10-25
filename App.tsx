@@ -72,6 +72,7 @@ import { PerformanceScreen } from './src/screens/PerformanceScreen';
 import { PlanScreen } from './src/screens/PlanScreen';
 import { PrivacyScreen } from './src/screens/PrivacyScreen';
 import { HelpScreen } from './src/screens/HelpScreen';
+import { LANDING_BG, LandingScreen } from './src/screens/LandingScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
 import { RecommendationsScreen } from './src/screens/RecommendationsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
@@ -266,6 +267,7 @@ const removeSavedAccount = (email: string): SavedAccount[] => {
 // fight the mock's layout), inside the chat itself, and on the Help screen
 // (its own helper chat owns the bottom of the screen).
 const NO_FAB: ReadonlySet<Screen> = new Set<Screen>([
+  'landing',
   'onboarding',
   'auth',
   'connect',
@@ -1638,6 +1640,9 @@ function AppShell() {
     mode === 'dark' &&
     (screen === 'home' || screen === 'profile' || screen === 'settings');
   const showFab = !NO_FAB.has(screen);
+  // The public landing's CTA enters the app directly when there is already a
+  // session (Instagram or password), and otherwise starts the welcome flow.
+  const signedInEntry = sessionToken !== null || loadAuthSession() !== null;
 
   // Mobile "slide navigation": a horizontal swipe across the page moves
   // between the bottom-nav screens (previous/next tab), and on detail
@@ -1761,11 +1766,30 @@ function AppShell() {
 
   return (
     <SafeAreaView
-      style={[styles.safeArea, { backgroundColor: isLight ? colors.white : colors.darkBg }]}
+      style={[
+        styles.safeArea,
+        {
+          backgroundColor:
+            screen === 'landing' ? LANDING_BG : isLight ? colors.white : colors.darkBg,
+        },
+      ]}
       {...panResponder.panHandlers}
     >
       <StatusBar style={isLight ? 'dark' : 'light'} />
-      {screen === 'onboarding' ? (
+      {screen === 'landing' ? (
+        <LandingScreen
+          signedIn={signedInEntry}
+          onEnterApp={() => setScreen(signedInEntry ? 'home' : 'onboarding')}
+          onOpenPrivacy={() => {
+            legalReturn.current = 'landing';
+            setScreen('privacy');
+          }}
+          onOpenHelp={() => {
+            legalReturn.current = 'landing';
+            setScreen('help');
+          }}
+        />
+      ) : screen === 'onboarding' ? (
         <OnboardingScreen
           step={onboardingStep}
           onAdvance={() => setOnboardingStep((current) => current + 1)}
