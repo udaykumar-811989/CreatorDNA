@@ -2,7 +2,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { DnaMark } from '../components/DnaMark';
-import { GradientButton, OutlineButton } from '../components/ui';
+import { GradientButton } from '../components/ui';
 import { useTheme, useThemeColors } from '../themeContext';
 
 const slides = [
@@ -27,13 +27,11 @@ export function OnboardingScreen({
   step,
   onAdvance,
   onGetStarted,
-  onSignIn,
   onBack,
 }: {
   step: number;
   onAdvance: () => void;
   onGetStarted: () => void;
-  onSignIn: () => void;
   onBack: () => void;
 }) {
   const { mode } = useTheme();
@@ -223,11 +221,6 @@ export function OnboardingScreen({
               <Text style={styles.backLink}>Back</Text>
             </Pressable>
           ) : null}
-          <OutlineButton
-            label="I already have an account"
-            onPress={onSignIn}
-            tone={isDark ? 'dark' : 'light'}
-          />
         </View>
       </ScrollView>
     </View>

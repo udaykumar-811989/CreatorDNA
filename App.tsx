@@ -1773,7 +1773,6 @@ function AppShell() {
             setOnboardingStep(0);
             setScreen('connect');
           }}
-          onSignIn={() => setScreen('auth')}
           onBack={() =>
             setOnboardingStep((current) => Math.max(0, current - 1))
           }
