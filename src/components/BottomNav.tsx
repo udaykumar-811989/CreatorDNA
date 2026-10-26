@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ComponentType } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, NAV_HEIGHT } from '../theme';
+import { useThemeColors, useStyles } from '../themeContext';
 import { DnaIcon, HomeIcon, IdeasIcon, PersonIcon, PlanIcon } from './icons';
 
 export type NavTab = 'home' | 'content' | 'dna' | 'plan' | 'profile';
@@ -27,6 +28,8 @@ export function BottomNav({
   /** Long-press on the Profile tab opens the saved-accounts switcher. */
   onProfileLongPress?: () => void;
 }) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   // react-native-web doesn't reliably fire onLongPress on Pressable, so the
   // Profile long-press is tracked manually: hold → open the switcher after
   // 550ms, and swallow the release so the tab doesn't also navigate.
@@ -68,7 +71,17 @@ export function BottomNav({
     clearLongPressTimer();
   };
   useEffect(() => {
-    if (typeof window === 'undefined') {
+    // RN defines a global `window`, but it has no DOM event methods — the
+    // old `typeof window === 'undefined'` check passed on Android and the
+    // first `window.addEventListener` threw, killing the app on launch.
+    // Touch capture is a web-only concern (react-native-web press slop);
+    // native Pressable already reports press-in/out correctly.
+    if (
+      Platform.OS !== 'web' ||
+      typeof window === 'undefined' ||
+      typeof window.addEventListener !== 'function' ||
+      typeof window.removeEventListener !== 'function'
+    ) {
       return;
     }
     const onStart = (event: TouchEvent) => {
@@ -153,24 +166,30 @@ export function BottomNav({
   );
 }
 
-const styles = StyleSheet.create({
-  nav: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: NAV_HEIGHT,
-    flexDirection: 'row',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 9,
-    paddingBottom: 12,
-    paddingHorizontal: 6,
-  },
-  item: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 3,
-  },
-  label: { fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
-});
+// Built per palette through useStyles: a module-scope StyleSheet bakes in the
+// palette that existed at import time, so the Appearance toggle never reaches
+// it. The nav surface colours are read from useThemeColors() inside the
+// component; the sheet stays a factory so any colour token added to it later
+// follows the theme as well.
+const makeStyles = (c: typeof colors) =>
+  StyleSheet.create({
+    nav: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      height: NAV_HEIGHT,
+      flexDirection: 'row',
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingTop: 9,
+      paddingBottom: 12,
+      paddingHorizontal: 6,
+    },
+    item: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 3,
+    },
+    label: { fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
+  });

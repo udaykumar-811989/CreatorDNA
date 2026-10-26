@@ -1,6 +1,16 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { DnaMark } from '../components/DnaMark';
 import { BackIcon } from '../components/icons';
 import { Avatar, GradientButton } from '../components/ui';
@@ -35,6 +45,22 @@ export function AuthScreen({
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Height of the open keyboard. Android resizes the window (adjustResize) but
+  // never scrolls the focused field clear of the keyboard, so the form pads its
+  // bottom by this much instead. iOS is lifted by the KeyboardAvoidingView.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const onShow = Keyboard.addListener('keyboardDidShow', (event) =>
+      setKeyboardHeight(event.endCoordinates.height),
+    );
+    const onHide = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
+
   const { mode } = useTheme();
   const c = useThemeColors();
   const isDark = mode === 'dark';
@@ -44,6 +70,7 @@ export function AuthScreen({
     () =>
       StyleSheet.create({
         screen: { flex: 1, backgroundColor: c.pageBg },
+        keyboardPad: { flex: 1 },
         content: {
           flexGrow: 1,
           paddingHorizontal: 24,
@@ -156,137 +183,150 @@ export function AuthScreen({
   return (
     <View style={styles.screen}>
       <LinearGradient colors={c.entryBg} style={StyleSheet.absoluteFill} />
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+      {/* On iOS the keyboard pads the view up; on Android the window already
+          resizes, so the ScrollView itself carries the extra bottom room. */}
+      <KeyboardAvoidingView
+        style={styles.keyboardPad}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-          onPress={onBack}
-          hitSlop={12}
-          style={({ pressed }) => [styles.backButton, pressed && { opacity: 0.6 }]}
+        <ScrollView
+          contentContainerStyle={[
+            styles.content,
+            {
+              paddingBottom:
+                34 + (Platform.OS === 'android' ? keyboardHeight : 0),
+            },
+          ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          <BackIcon size={20} color={c.onDark} />
-        </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            onPress={onBack}
+            hitSlop={12}
+            style={({ pressed }) => [styles.backButton, pressed && { opacity: 0.6 }]}
+          >
+            <BackIcon size={20} color={c.onDark} />
+          </Pressable>
 
-        <View style={styles.header}>
-          <DnaMark size={56} />
-          <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.subtitle}>
-            Sign in to continue your CreatorDNA progress.
-          </Text>
-        </View>
-
-        {savedAccounts.length > 0 ? (
-          <View style={styles.savedWrap}>
-            <Text style={styles.savedTitle}>Continue as</Text>
-            {savedAccounts.map((account) => (
-              <View key={account.email} style={styles.savedRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={authLoading}
-                  onPress={() => onLoginSaved(account.email)}
-                  style={({ pressed }) => [
-                    styles.savedAccount,
-                    authLoading && { opacity: 0.6 },
-                    pressed && { opacity: 0.7 },
-                  ]}
-                >
-                  <Avatar
-                    uri={account.instagramPictureUrl}
-                    name={account.instagramUsername ?? account.email}
-                    size={38}
-                  />
-                  <View style={styles.savedIdentity}>
-                    <Text style={styles.savedHandle} numberOfLines={1}>
-                      {account.instagramUsername ? `@${account.instagramUsername}` : account.email}
-                    </Text>
-                    <Text style={styles.savedEmail} numberOfLines={1}>
-                      {account.instagramUsername && !account.email.startsWith('ig:')
-                        ? account.email
-                        : 'Tap to sign in'}
-                    </Text>
-                  </View>
-                  <Text style={styles.savedGo}>{authLoading ? '…' : '→'}</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Forget ${account.email}`}
-                  onPress={() => onForgetSavedAccount(account.email)}
-                  hitSlop={10}
-                  style={({ pressed }) => [styles.savedForget, pressed && { opacity: 0.5 }]}
-                >
-                  <Text style={styles.savedForgetGlyph}>✕</Text>
-                </Pressable>
-              </View>
-            ))}
-            <Text style={styles.savedHint}>
-              Saved on this device — tap to swap accounts without typing a password.
+          <View style={styles.header}>
+            <DnaMark size={56} />
+            <Text style={styles.title}>Welcome back</Text>
+            <Text style={styles.subtitle}>
+              Sign in to continue your CreatorDNA progress.
             </Text>
           </View>
-        ) : null}
 
-        <View style={styles.form}>
-          <View style={styles.field}>
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              placeholder="you@example.com"
-              placeholderTextColor={c.onDarkDim}
-              style={styles.input}
-            />
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              placeholder="••••••••"
-              placeholderTextColor={c.onDarkDim}
-              style={styles.input}
-            />
-          </View>
-
-          <GradientButton
-            label={authLoading ? 'Signing in…' : 'Sign in'}
-            loading={authLoading}
-            disabled={!canSignIn}
-            onPress={() => {
-              void Promise.resolve(onSignIn(email, password)).finally(() => setPassword(''));
-            }}
-          />
-
-          {authError ? (
-            <Text accessibilityRole="alert" style={styles.error}>
-              {authError}
-            </Text>
+          {savedAccounts.length > 0 ? (
+            <View style={styles.savedWrap}>
+              <Text style={styles.savedTitle}>Continue as</Text>
+              {savedAccounts.map((account) => (
+                <View key={account.email} style={styles.savedRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={authLoading}
+                    onPress={() => onLoginSaved(account.email)}
+                    style={({ pressed }) => [
+                      styles.savedAccount,
+                      authLoading && { opacity: 0.6 },
+                      pressed && { opacity: 0.7 },
+                    ]}
+                  >
+                    <Avatar
+                      uri={account.instagramPictureUrl}
+                      name={account.instagramUsername ?? account.email}
+                      size={38}
+                    />
+                    <View style={styles.savedIdentity}>
+                      <Text style={styles.savedHandle} numberOfLines={1}>
+                        {account.instagramUsername ? `@${account.instagramUsername}` : account.email}
+                      </Text>
+                      <Text style={styles.savedEmail} numberOfLines={1}>
+                        {account.instagramUsername && !account.email.startsWith('ig:')
+                          ? account.email
+                          : 'Tap to sign in'}
+                      </Text>
+                    </View>
+                    <Text style={styles.savedGo}>{authLoading ? '…' : '→'}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Forget ${account.email}`}
+                    onPress={() => onForgetSavedAccount(account.email)}
+                    hitSlop={10}
+                    style={({ pressed }) => [styles.savedForget, pressed && { opacity: 0.5 }]}
+                  >
+                    <Text style={styles.savedForgetGlyph}>✕</Text>
+                  </Pressable>
+                </View>
+              ))}
+              <Text style={styles.savedHint}>
+                Saved on this device — tap to swap accounts without typing a password.
+              </Text>
+            </View>
           ) : null}
 
-          <Pressable
-            accessibilityRole="button"
-            onPress={onConnectInstagram}
-            style={({ pressed }) => [styles.outline, pressed && { opacity: 0.7 }]}
-          >
-            <Text style={styles.outlineLabel}>Connect Instagram</Text>
-          </Pressable>
+          <View style={styles.form}>
+            <View style={styles.field}>
+              <Text style={styles.label}>Email</Text>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                placeholder="you@example.com"
+                placeholderTextColor={c.onDarkDim}
+                style={styles.input}
+              />
+            </View>
 
-          <Pressable
-            accessibilityRole="button"
-            onPress={onContinueWithoutInstagram}
-            style={({ pressed }) => pressed && { opacity: 0.6 }}
-          >
-            <Text style={styles.link}>Continue without Instagram</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
+            <View style={styles.field}>
+              <Text style={styles.label}>Password</Text>
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                placeholder="••••••••"
+                placeholderTextColor={c.onDarkDim}
+                style={styles.input}
+              />
+            </View>
+
+            <GradientButton
+              label={authLoading ? 'Signing in…' : 'Sign in'}
+              loading={authLoading}
+              disabled={!canSignIn}
+              onPress={() => {
+                void Promise.resolve(onSignIn(email, password)).finally(() => setPassword(''));
+              }}
+            />
+
+            {authError ? (
+              <Text accessibilityRole="alert" style={styles.error}>
+                {authError}
+              </Text>
+            ) : null}
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={onConnectInstagram}
+              style={({ pressed }) => [styles.outline, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.outlineLabel}>Connect Instagram</Text>
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={onContinueWithoutInstagram}
+              style={({ pressed }) => pressed && { opacity: 0.6 }}
+            >
+              <Text style={styles.link}>Continue without Instagram</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }

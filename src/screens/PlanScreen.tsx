@@ -11,6 +11,7 @@ import {
 } from '../components/ui';
 import { buildPlan, isIdeaSaved, sortIdeas } from '../lib/derived';
 import type { CreatorAiIdea } from '../services/creatorAi';
+import { useStyles, useThemeColors } from '../themeContext';
 import { colors, FAB_CLEARANCE, radius, type } from '../theme';
 
 const WEEK_STRIP_TABS = ['My Week', 'Upcoming'];
@@ -32,6 +33,8 @@ export function PlanScreen({
   onGenerate: (mode: 'replace' | 'append' | 'trending', request: IdeaRequest) => void;
   onToggleSave: (idea: CreatorAiIdea) => void;
 }) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   const [view, setView] = useState(WEEK_STRIP_TABS[0]);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [scriptIdea, setScriptIdea] = useState<CreatorAiIdea | null>(null);
@@ -118,7 +121,11 @@ export function PlanScreen({
                       {day.idea.title}
                     </Text>
                     <Text style={styles.dayCardMeta} numberOfLines={1}>
-                      {day.idea.format}
+                      {/* Same meta line as before, with the target length folded
+                          in only when the idea has one. */}
+                      {day.idea.target_length
+                        ? `${day.idea.format} • ${day.idea.target_length}`
+                        : day.idea.format}
                     </Text>
                     <View style={styles.dayCardFoot}>
                       <Badge {...priorityBadgeProps(day.idea.priority)} />
@@ -153,14 +160,14 @@ export function PlanScreen({
                   style={({ pressed }) => [styles.dayCard, pressed && { opacity: 0.85 }]}
                 >
                   <View style={styles.dayCardHead}>
-                    <Text style={styles.dayCardDay}>Queue</Text>
+                    <Text style={styles.dayCardDay}>Coming up</Text>
                     <Badge {...priorityBadgeProps(idea.priority)} />
                   </View>
                   <Text style={styles.dayCardTitle} numberOfLines={2}>
                     {idea.title}
                   </Text>
                   <Text style={styles.dayCardMeta} numberOfLines={1}>
-                    {idea.format}
+                    {idea.target_length ? `${idea.format} • ${idea.target_length}` : idea.format}
                   </Text>
                 </Pressable>
               ))
@@ -205,8 +212,8 @@ export function PlanScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.white },
+const makeStyles = (c: typeof colors) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: c.white },
   content: {
     paddingHorizontal: 18,
     paddingTop: 10,
@@ -215,22 +222,22 @@ const styles = StyleSheet.create({
   },
 
   headerRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  title: { ...type.h2, color: colors.text, fontSize: 25 },
-  subtitle: { ...type.small, color: colors.textSub, marginTop: 5, fontSize: 13.5 },
+  title: { ...type.h2, color: c.text, fontSize: 25 },
+  subtitle: { ...type.small, color: c.textSub, marginTop: 5, fontSize: 13.5 },
 
   weekStrip: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    backgroundColor: colors.lightCard,
+    backgroundColor: c.lightCard,
     borderRadius: radius.md + 2,
     borderWidth: 1,
-    borderColor: colors.lightBorder,
+    borderColor: c.lightBorder,
     paddingVertical: 12,
     paddingHorizontal: 8,
   },
   weekDay: { alignItems: 'center', gap: 6, flex: 1 },
-  weekLabel: { fontSize: 10.5, fontWeight: '800', color: colors.textDim, textTransform: 'uppercase' },
-  weekLabelActive: { color: colors.primary },
+  weekLabel: { fontSize: 10.5, fontWeight: '800', color: c.textDim, textTransform: 'uppercase' },
+  weekLabelActive: { color: c.primary },
   weekCircle: {
     width: 32,
     height: 32,
@@ -239,16 +246,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'transparent',
   },
-  weekCircleActive: { backgroundColor: colors.primary },
-  weekNumber: { fontSize: 14, fontWeight: '700', color: colors.text },
+  weekCircleActive: { backgroundColor: c.primary },
+  weekNumber: { fontSize: 14, fontWeight: '700', color: c.text },
   weekNumberActive: { color: '#FFFFFF' },
   weekDayActive: {},
 
   cards: { gap: 11 },
   dayCard: {
-    backgroundColor: colors.white,
+    backgroundColor: c.white,
     borderWidth: 1,
-    borderColor: colors.lightBorder,
+    borderColor: c.lightBorder,
     borderRadius: radius.md + 2,
     padding: 15,
     gap: 6,
@@ -258,27 +265,27 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 1,
   },
-  dayCardToday: { borderColor: colors.primary, borderWidth: 1.5 },
+  dayCardToday: { borderColor: c.primary, borderWidth: 1.5 },
   dayCardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  dayCardDay: { ...type.tiny, color: colors.textSub, textTransform: 'uppercase' },
-  dayCardTitle: { ...type.bodyBold, color: colors.text, fontSize: 16, lineHeight: 21 },
-  dayCardMeta: { ...type.small, color: colors.textSub, fontSize: 12.5 },
+  dayCardDay: { ...type.tiny, color: c.textSub, textTransform: 'uppercase' },
+  dayCardTitle: { ...type.bodyBold, color: c.text, fontSize: 16, lineHeight: 21 },
+  dayCardMeta: { ...type.small, color: c.textSub, fontSize: 12.5 },
   dayCardFoot: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginTop: 4,
   },
-  viewScript: { fontSize: 12.5, fontWeight: '800', color: colors.primary },
-  dayCardEmpty: { backgroundColor: colors.lightCard, borderStyle: 'dashed', gap: 4 },
-  dayCardEmptyText: { ...type.small, color: colors.textDim, fontSize: 13 },
+  viewScript: { fontSize: 12.5, fontWeight: '800', color: c.primary },
+  dayCardEmpty: { backgroundColor: c.lightCard, borderStyle: 'dashed', gap: 4 },
+  dayCardEmptyText: { ...type.small, color: c.textDim, fontSize: 13 },
 
   generateCard: {
-    backgroundColor: colors.primary,
+    backgroundColor: c.primary,
     borderRadius: radius.md + 4,
     padding: 20,
     alignItems: 'flex-start',
-    shadowColor: colors.primary,
+    shadowColor: c.primary,
     shadowOpacity: 0.3,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },

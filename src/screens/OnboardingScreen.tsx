@@ -55,7 +55,9 @@ export function OnboardingScreen({
           left: -155,
           bottom: 36,
           borderRadius: 150,
-          backgroundColor: '#1A56AE',
+          // Brand blue from the palette, not a frozen hex: the glow is a
+          // surface tint, so it has to lift with the page in dark mode.
+          backgroundColor: c.primary,
           opacity: isDark ? 0.13 : 0.16,
           transform: [{ rotate: '-18deg' }],
         },
@@ -136,7 +138,9 @@ export function OnboardingScreen({
           width: 5,
           height: 5,
           borderRadius: 3,
-          backgroundColor: 'rgba(26,86,174,0.25)',
+          // Unlit dot reads as a track: the light-mode blue tint would sit
+          // almost invisible on the navy page once dark mode is on.
+          backgroundColor: c.track,
         },
         dotActive: {
           width: 7,

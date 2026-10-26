@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Path, Stop } from 'react-native-svg';
 import { colors } from '../theme';
+import { useThemeColors, useStyles } from '../themeContext';
 
 export function ScoreRing({
   value,
@@ -20,6 +21,8 @@ export function ScoreRing({
   tone?: 'light' | 'dark';
 }) {
   const isDark = tone === 'dark';
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   const r = (size - stroke) / 2;
   const circumference = 2 * Math.PI * r;
   const ratio = value === null ? 0 : Math.max(0, Math.min(1, value / max));
@@ -40,7 +43,9 @@ export function ScoreRing({
           cx={size / 2}
           cy={size / 2}
           r={r}
-          stroke={'#E4EAF6'}
+          // The track sits on a card, so it follows the palette — the old
+          // hairline vanished once the card went navy.
+          stroke={colors.track}
           strokeWidth={stroke}
           fill="none"
         />
@@ -88,7 +93,9 @@ export function ScoreRing({
   );
 }
 
-const styles = StyleSheet.create({
+// Layout-only sheet, but built through useStyles so it lives with the rest of
+// the themed styles (and picks up palette values if one is ever added).
+const makeStyles = (c: typeof colors) => StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
   value: { fontWeight: '800', letterSpacing: -1 },
   max: { fontWeight: '700', marginTop: -2 },

@@ -198,9 +198,169 @@ export function quickInsight(
 
 // ---------- DNA derivations ----------
 
+// Trends are only claimed when there is enough evidence to back them: a
+// series is split into an older half and a newer half, and anything shorter
+// than this stays "no trend" instead of guessing from a couple of posts.
+const TREND_MIN_SAMPLES = 4;
+// Deltas below this are rounding noise, not a direction, so they read steady.
+const TREND_MIN_DELTA = 0.3;
+
+type TrendDirection = 'improving' | 'steady' | 'slipping';
+
+type CategoryStat = {
+  key: ScoreKey;
+  label: string;
+  value: number;
+  count: number;
+  delta: number | null;
+  direction: TrendDirection | null;
+};
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function average(values: number[]): number {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function analysesWord(count: number): string {
+  return count === 1 ? 'analysis' : 'analyses';
+}
+
+// Lowercase for sentence flow without mangling acronyms — "CTA" stays CTA.
+function categoryName(label: string): string {
+  return label === label.toUpperCase() ? label : label.toLowerCase();
+}
+
+// Oldest first, so the trend math never depends on how the caller ordered
+// the records. Unparseable dates compare as equal to keep the order stable.
+function chronological(records: AnalysisRecord[]): AnalysisRecord[] {
+  return [...records].sort((a, b) => {
+    const left = Date.parse(a.createdAt);
+    const right = Date.parse(b.createdAt);
+    if (!Number.isFinite(left) || !Number.isFinite(right)) {
+      return 0;
+    }
+    return left - right;
+  });
+}
+
+// Newer-half average minus older-half average, rounded to 1 decimal, or null
+// when there aren't TREND_MIN_SAMPLES points to split into two halves. An odd
+// middle sample sits out of both halves so the comparison stays symmetric.
+function halfSplitDelta(values: number[]): number | null {
+  if (values.length < TREND_MIN_SAMPLES) {
+    return null;
+  }
+  const half = Math.floor(values.length / 2);
+  const older = values.slice(0, half);
+  const newer = values.slice(values.length - half);
+  return round1(average(newer) - average(older));
+}
+
+function directionOf(delta: number): TrendDirection {
+  if (delta >= TREND_MIN_DELTA) {
+    return 'improving';
+  }
+  if (delta <= -TREND_MIN_DELTA) {
+    return 'slipping';
+  }
+  return 'steady';
+}
+
+function trendText(direction: TrendDirection, delta: number): string {
+  if (direction === 'improving') {
+    return `improving (+${delta.toFixed(1)})`;
+  }
+  if (direction === 'slipping') {
+    return `slipping (${delta.toFixed(1)})`;
+  }
+  return 'steady';
+}
+
+// The single source for strengths, weaknesses, recommendations, and the
+// Overview rows: per-category average, how many analyses feed it, and the
+// half-over-half trend when the sample is large enough to have one.
+function categoryStats(records: AnalysisRecord[]): CategoryStat[] {
+  const ordered = chronological(records);
+  const stats: CategoryStat[] = [];
+  for (const { key, label } of SCORE_LABELS) {
+    const values = ordered
+      .map((record) => numberOrNull(record.analysis.scores?.[key]))
+      .filter((value): value is number => value !== null);
+    if (values.length === 0) {
+      continue;
+    }
+    const delta = halfSplitDelta(values);
+    stats.push({
+      key,
+      label,
+      value: round1(average(values)),
+      count: values.length,
+      delta,
+      direction: delta === null ? null : directionOf(delta),
+    });
+  }
+  return stats;
+}
+
+function scoreDetail(stat: CategoryStat): string {
+  const detail = `Averages ${stat.value}/10 across ${stat.count} ${analysesWord(stat.count)}`;
+  if (stat.delta === null || stat.direction === null) {
+    return detail;
+  }
+  return `${detail} · ${trendText(stat.direction, stat.delta)}`;
+}
+
+// Overall DNA direction, from every record that has any score at all. Null
+// unless there are enough records to split into two comparable halves.
+function overallTrend(
+  records: AnalysisRecord[],
+): { direction: TrendDirection; delta: number } | null {
+  const values = chronological(records)
+    .map((record) => scoreOf(record))
+    .filter((value): value is number => value !== null);
+  const delta = halfSplitDelta(values);
+  return delta === null ? null : { direction: directionOf(delta), delta };
+}
+
+// How many distinct analyses mention each free-text line. Counted once per
+// record, deduped case-insensitively, and ranked by how many records repeat it.
+function mentionCounts(
+  records: AnalysisRecord[],
+  pick: (analysis: AnalysisRecord['analysis']) => string[],
+): Array<{ text: string; count: number }> {
+  const counts = new Map<string, { text: string; count: number }>();
+  for (const record of records) {
+    const seenInRecord = new Set<string>();
+    for (const raw of pick(record.analysis)) {
+      const text = raw.trim();
+      const key = text.toLowerCase();
+      if (!key || seenInRecord.has(key)) {
+        continue;
+      }
+      seenInRecord.add(key);
+      const entry = counts.get(key);
+      if (entry) {
+        entry.count += 1;
+      } else {
+        counts.set(key, { text, count: 1 });
+      }
+    }
+  }
+  // Map order is first appearance, so equal counts keep the analyses' order.
+  return [...counts.values()].sort((a, b) => b.count - a.count);
+}
+
+// "Noted in 4 of 12 analyses" — the evidence behind a free-text insight.
+function evidenceDetail(count: number, total: number, verb = 'Noted'): string {
+  return `${verb} in ${count} of ${total} ${analysesWord(total)}`;
+}
+
 export type WorksRow = {
   key: string;
-  icon: 'hash' | 'quote' | 'timer' | 'grid' | 'clock';
+  icon: 'hash' | 'quote' | 'timer' | 'grid' | 'clock' | 'check' | 'warning' | 'chart';
   label: string;
   value: string;
 };
@@ -346,6 +506,40 @@ export function whatWorksRows(
     }
   }
 
+  // Best and worst scoring categories plus the overall direction — the
+  // headline facts the Overview should never hide behind a chart.
+  const stats = categoryStats(records);
+  if (stats.length > 0) {
+    const byValue = [...stats].sort((a, b) => b.value - a.value);
+    const strongest = byValue[0];
+    rows.push({
+      key: 'strongest',
+      icon: 'check',
+      label: 'Strongest',
+      value: `${strongest.label} · ${strongest.value}/10`,
+    });
+    // Only a second row when there really is a spread to compare against.
+    if (byValue.length > 1) {
+      const weakest = byValue[byValue.length - 1];
+      rows.push({
+        key: 'weakest',
+        icon: 'warning',
+        label: 'Weakest',
+        value: `${weakest.label} · ${weakest.value}/10`,
+      });
+    }
+  }
+  const trend = overallTrend(records);
+  if (trend) {
+    const text = trendText(trend.direction, trend.delta);
+    rows.push({
+      key: 'trend',
+      icon: 'chart',
+      label: 'Score Trend',
+      value: text.charAt(0).toUpperCase() + text.slice(1),
+    });
+  }
+
   // Note: audience demographics (age/country) are intentionally absent — the
   // app does not have that data and will not invent it.
   return rows;
@@ -362,48 +556,48 @@ export type InsightItem = { title: string; detail?: string };
 
 export function dnaStrengths(records: AnalysisRecord[]): InsightItem[] {
   const items: InsightItem[] = [];
-  for (const { label, value } of scoreBreakdown(records)) {
-    if (value !== null && value >= 7.5) {
-      items.push({ title: `Strong ${label.toLowerCase()}`, detail: `Averages ${value}/10` });
+  // Score-based entries first: the category itself, its average, how many
+  // analyses that average rests on, and the trend when it is computable.
+  for (const stat of categoryStats(records)) {
+    if (stat.value >= 7.5) {
+      items.push({ title: `Strong ${categoryName(stat.label)}`, detail: scoreDetail(stat) });
     }
   }
-  const seen = new Set<string>();
-  for (const record of records) {
-    for (const strength of record.analysis.strengths) {
-      const key = strength.trim().toLowerCase();
-      if (!key || seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      items.push({ title: strength.trim() });
-      if (items.length >= 6) {
-        return items;
-      }
+  const total = records.length;
+  for (const mention of mentionCounts(records, (analysis) => analysis.strengths)) {
+    if (items.length >= 6) {
+      break;
     }
+    items.push({ title: mention.text, detail: evidenceDetail(mention.count, total) });
   }
-  return items;
+  return items.slice(0, 6);
 }
 
 export function dnaWeaknesses(records: AnalysisRecord[]): InsightItem[] {
   const items: InsightItem[] = [];
-  for (const { label, value } of scoreBreakdown(records)) {
-    if (value !== null && value < 7) {
-      items.push({ title: `Weak ${label.toLowerCase()}`, detail: `Averages ${value}/10` });
+  // Flag anything below 7.0, plus the 7.0–7.5 band when it is actually
+  // slipping — a near-threshold category on the way down used to vanish from
+  // both lists because it cleared neither cutoff.
+  const flagged = categoryStats(records)
+    .filter((stat) => stat.value < 7 || (stat.value < 7.5 && stat.direction === 'slipping'))
+    .sort((a, b) => a.value - b.value);
+  const total = records.length;
+  for (const stat of flagged) {
+    const below = stat.value < 7;
+    const name = categoryName(stat.label);
+    items.push({
+      title: below ? `Weak ${name}` : `Slipping ${name}`,
+      detail: `${below ? 'Below 7.0 · ' : ''}${scoreDetail(stat)}`,
+    });
+    if (items.length >= 6) {
+      return items;
     }
   }
-  const seen = new Set<string>();
-  for (const record of records) {
-    for (const opportunity of record.analysis.improvement_opportunities) {
-      const key = opportunity.trim().toLowerCase();
-      if (!key || seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      items.push({ title: opportunity.trim() });
-      if (items.length >= 6) {
-        return items;
-      }
+  for (const mention of mentionCounts(records, (analysis) => analysis.improvement_opportunities)) {
+    if (items.length >= 6) {
+      break;
     }
+    items.push({ title: mention.text, detail: evidenceDetail(mention.count, total) });
   }
   return items;
 }
@@ -682,32 +876,57 @@ export function praiseForScore(
 }
 
 export function futureTips(records: AnalysisRecord[]): InsightItem[] {
+  const total = records.length;
+
+  // Score-driven tips are always included (never only as a fallback), limited
+  // to the categories that are actually low or slipping, worst first.
+  const scoreTips: InsightItem[] = categoryStats(records)
+    .filter((stat) => stat.value < 7 || (stat.value < 7.5 && stat.direction === 'slipping'))
+    .sort((a, b) => a.value - b.value)
+    .map((stat) => {
+      const name = categoryName(stat.label);
+      const detail = `Your ${name} averages ${stat.value}/10 across ${stat.count} ${analysesWord(
+        stat.count,
+      )}`;
+      return {
+        title: `Strengthen your ${name}`,
+        detail:
+          stat.delta !== null && stat.direction !== null
+            ? `${detail} · ${trendText(stat.direction, stat.delta)}`
+            : detail,
+      };
+    });
+
+  // The user's own repeated improvement notes, most frequently repeated first.
+  const ranked = mentionCounts(records, (analysis) => analysis.improvement_opportunities).map(
+    (mention) => ({
+      title: mention.text,
+      detail: evidenceDetail(mention.count, total, 'Seen'),
+    }),
+  );
+
+  // Reserve a slot for every score tip so the concrete numbers always show up,
+  // then fill what is left with the ranked notes and drop exact duplicates.
+  const scoreTitles = new Set(scoreTips.map((tip) => tip.title.trim().toLowerCase()));
+  const budget = Math.max(0, 5 - scoreTips.length);
+  const picks = [
+    ...ranked.filter((tip) => !scoreTitles.has(tip.title.trim().toLowerCase())).slice(0, budget),
+    ...scoreTips,
+  ];
   const tips: InsightItem[] = [];
   const seen = new Set<string>();
-  for (const record of records) {
-    for (const opportunity of record.analysis.improvement_opportunities) {
-      const key = opportunity.trim().toLowerCase();
-      if (!key || seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      tips.push({ title: opportunity.trim() });
-      if (tips.length >= 5) {
-        return tips;
-      }
+  for (const tip of picks) {
+    const key = tip.title.trim().toLowerCase();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    tips.push(tip);
+    if (tips.length >= 5) {
+      break;
     }
   }
-  if (tips.length === 0) {
-    for (const { label, value } of scoreBreakdown(records)) {
-      if (value !== null && value < 7) {
-        tips.push({
-          title: `Strengthen your ${label.toLowerCase()}`,
-          detail: `Your ${label.toLowerCase()} scores average ${value}/10 across ${records.length} analysis${records.length === 1 ? '' : 'es'}.`,
-        });
-      }
-    }
-  }
-  return tips.slice(0, 5);
+  return tips;
 }
 
 // ---------- Formatting ----------

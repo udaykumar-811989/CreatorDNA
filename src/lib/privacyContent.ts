@@ -37,7 +37,7 @@ export const PRIVACY_SECTIONS: PrivacySection[] = [
         'Sign-in details — your email address and password when you choose to sign in. Supabase Auth stores the credential; we keep your access token in memory for the session, and a refresh token in this device’s browser storage so you stay signed in. Saved ("remembered") accounts live on your device only.',
         'Instagram connection data — after you connect a professional account through Instagram Login we receive your Instagram user ID, username, account type, profile picture, follower count, and the 30-day insights and recent media engagement you see on the dashboard. The long-lived Instagram access token is stored on our server, encrypted.',
         'Content you submit for analysis — titles, transcripts, captions, and any metrics you enter, plus any image, audio, or video file you deliberately attach. Audio recordings are limited to 30 seconds and are transcribed for that analysis.',
-        'Local app data — your analyses, generated and saved ideas, chat history, theme preference, and saved logins are stored on your device (browser localStorage or SecureStore on native), not in a central profile.',
+        'Local app data — your analyses, generated and saved ideas, chat history, theme preference, and saved logins are stored on your device (browser localStorage or AsyncStorage on native), not in a central profile.',
         'Service logs — Supabase Edge Function logs hold timestamps, request routes, and error codes so we can debug failures. They do not contain your Instagram token or your AI provider key.',
         'Support correspondence — anything you send us by email, including a conversation you choose to share from the Help screen.',
       ),

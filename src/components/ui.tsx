@@ -12,6 +12,7 @@ import {
 import { priorityLabel, priorityTone } from '../lib/derived';
 import type { CreatorAiIdea } from '../services/creatorAi';
 import { colors, radius, type } from '../theme';
+import { useThemeColors, useStyles } from '../themeContext';
 import { BackIcon, ChevronRightIcon } from './icons';
 
 export function priorityBadgeProps(
@@ -35,6 +36,8 @@ export function GradientButton({
   loading?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
   const inactive = disabled || loading;
   return (
     <Pressable
@@ -67,6 +70,8 @@ export function OutlineButton({
   tone?: 'dark' | 'light';
   style?: StyleProp<ViewStyle>;
 }) {
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
   const isDark = tone === 'dark';
   return (
     <Pressable
@@ -101,6 +106,8 @@ export function PillTabs({
   variant?: 'light' | 'dark';
   style?: StyleProp<ViewStyle>;
 }) {
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
   const isDark = variant === 'dark';
   return (
     <View
@@ -140,17 +147,22 @@ export function PillTabs({
 
 export type BadgeTone = 'green' | 'amber' | 'red' | 'purple' | 'gray' | 'blue';
 
-const badgeColors: Record<BadgeTone, { bg: string; fg: string }> = {
-  green: { bg: colors.greenSoft, fg: '#0E9155' },
-  amber: { bg: colors.amberSoft, fg: '#C67C05' },
-  red: { bg: colors.redSoft, fg: '#D33B3B' },
-  purple: { bg: colors.primarySoft, fg: colors.primary },
-  gray: { bg: colors.graySoft, fg: colors.gray },
-  blue: { bg: colors.blueSoft, fg: '#2E6FD8' },
-};
+// Badge fills are soft surfaces and their labels are darker text sitting on
+// them, so both come from the active palette: the old fixed dark hues went
+// dark-on-dark the moment the night palette swapped the fills for tints.
+const badgeColors = (c: typeof colors): Record<BadgeTone, { bg: string; fg: string }> => ({
+  green: { bg: c.greenSoft, fg: c.green },
+  amber: { bg: c.amberSoft, fg: c.amber },
+  red: { bg: c.redSoft, fg: c.red },
+  purple: { bg: c.primarySoft, fg: c.primary },
+  gray: { bg: c.graySoft, fg: c.gray },
+  blue: { bg: c.blueSoft, fg: c.blue },
+});
 
 export function Badge({ label, tone = 'purple' }: { label: string; tone?: BadgeTone }) {
-  const palette = badgeColors[tone];
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
+  const palette = badgeColors(colors)[tone];
   return (
     <View style={[s.badge, { backgroundColor: palette.bg }]}>
       <Text style={[s.badgeLabel, { color: palette.fg }]}>{label}</Text>
@@ -169,6 +181,8 @@ export function Card({
   tone?: 'light' | 'dark';
   style?: StyleProp<ViewStyle>;
 }) {
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
   const isDark = tone === 'dark';
   return (
     <View
@@ -203,6 +217,8 @@ export function ScreenHeader({
   tone?: 'light' | 'dark';
   brandHeader?: boolean;
 }) {
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
   const isDark = tone === 'dark';
   return (
     <View style={s.headerWrap}>
@@ -265,6 +281,8 @@ export function Avatar({
   size?: number;
   dark?: boolean;
 }) {
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
   const initial = (name ?? '?').trim().slice(0, 1).toUpperCase();
   if (uri) {
     return (
@@ -317,6 +335,8 @@ export function EmptyState({
   onAction?: () => void;
   tone?: 'light' | 'dark';
 }) {
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
   const isDark = tone === 'dark';
   return (
     <View style={s.empty}>
@@ -358,6 +378,8 @@ export function StatTile({
   delta?: { pct: number; up: boolean } | null;
   tone?: 'light' | 'dark';
 }) {
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
   const isDark = tone === 'dark';
   return (
     <View
@@ -403,6 +425,8 @@ export function ListRow({
   danger?: boolean;
   right?: ReactNode;
 }) {
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
   const isDark = tone === 'dark';
   const content = (
     <View style={s.listRow}>
@@ -440,7 +464,10 @@ export function ListRow({
 
 export const uiStyles = StyleSheet.create({});
 
-const s = StyleSheet.create({
+// The sheet is built from the active palette, so the factory runs through
+// useStyles (one StyleSheet per palette, cached) instead of being frozen at
+// import time — `c` stands in for the palette inside the factory.
+const makeStyles = (c: typeof colors) => StyleSheet.create({
   pressed: { opacity: 0.7 },
 
   gradientButton: {
@@ -486,7 +513,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 8,
   },
   pillItemActive: {
-    backgroundColor: colors.white,
+    backgroundColor: c.white,
     shadowColor: '#1A56AE',
     shadowOpacity: 0.16,
     shadowRadius: 8,
@@ -494,7 +521,7 @@ const s = StyleSheet.create({
     elevation: 2,
   },
   pillItemActiveDark: {
-    backgroundColor: colors.primary,
+    backgroundColor: c.primary,
   },
   pillLabel: { fontSize: 13.5, fontWeight: '600' },
 

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Path, Stop } from 'react-native-svg';
 import { colors, type } from '../theme';
+import { useThemeColors, useStyles } from '../themeContext';
 
 export type ChartPoint = { label: string; value: number };
 
@@ -19,6 +20,9 @@ export function LineChart({
   tone?: 'light' | 'dark';
 }) {
   const [chartWidth, setChartWidth] = useState(0);
+  // Hooks before the empty-data early return below.
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   const isDark = tone === 'dark';
 
   const onLayout = (event: LayoutChangeEvent) => {
@@ -61,7 +65,8 @@ export function LineChart({
   const last = coordinates[coordinates.length - 1];
 
   const labelColor = isDark ? colors.onDarkDim : colors.textDim;
-  const gridColor = '#E4EAF6';
+  // Grid sits on the chart's card, so it tracks the card colour.
+  const gridColor = colors.track;
 
   return (
     <View onLayout={onLayout} style={{ height }}>
@@ -113,7 +118,9 @@ export function LineChart({
   );
 }
 
-const styles = StyleSheet.create({
+// Layout-only sheet, but built through useStyles so it lives with the rest of
+// the themed styles (and picks up palette values if one is ever added).
+const makeStyles = (c: typeof colors) => StyleSheet.create({
   axisTop: { position: 'absolute', left: 8, top: 1 },
   axis: {
     position: 'absolute',

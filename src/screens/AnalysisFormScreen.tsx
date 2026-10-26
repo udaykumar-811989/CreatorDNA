@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -26,6 +28,7 @@ import {
   transcribeCreatorAudio,
 } from '../services/creatorAi';
 import type { InstagramDashboard } from '../services/instagramDashboard';
+import { useStyles, useThemeColors } from '../themeContext';
 import { colors, FAB_CLEARANCE, radius, type } from '../theme';
 
 export function AnalysisFormScreen({
@@ -45,6 +48,8 @@ export function AnalysisFormScreen({
   onSubmit: (submission: AnalysisSubmission) => void;
   onBack: () => void;
 }) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   const [title, setTitle] = useState('');
   const [transcript, setTranscript] = useState('');
   const [caption, setCaption] = useState('');
@@ -57,6 +62,23 @@ export function AnalysisFormScreen({
   const [localError, setLocalError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState<{ name: string; percent: number } | null>(null);
+  // Height of the open keyboard. Android resizes the window (adjustResize) but
+  // never scrolls the focused field clear of the keyboard, so the form pads its
+  // bottom by this much to keep the lower fields and Analyze button reachable.
+  // iOS is lifted by the KeyboardAvoidingView below instead.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const onShow = Keyboard.addListener('keyboardDidShow', (event) =>
+      setKeyboardHeight(event.endCoordinates.height),
+    );
+    const onHide = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
+
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   const busy =
@@ -261,165 +283,178 @@ export function AnalysisFormScreen({
 
   return (
     <View style={styles.screen}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+      {/* On iOS the keyboard pads the view up; on Android the window already
+          resizes, so the ScrollView itself carries the extra bottom room. */}
+      <KeyboardAvoidingView
+        style={styles.keyboardPad}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <ScreenHeader
-          title="Analyze content"
-          subtitle="Score a post and get the exact fixes to try next."
-          onBack={onBack}
-        />
+        <ScrollView
+          contentContainerStyle={[
+            styles.content,
+            {
+              paddingBottom:
+                FAB_CLEARANCE + (Platform.OS === 'android' ? keyboardHeight : 0),
+            },
+          ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <ScreenHeader
+            title="Analyze content"
+            subtitle="Score a post and get the exact fixes to try next."
+            onBack={onBack}
+          />
 
-        {busy ? (
-          <View style={styles.progressCard}>
-            <ActivityIndicator size="small" color={colors.primary} />
-            <Text style={styles.progressText}>
-              {transcribing
-                ? 'Transcribing your voice note…'
-                : 'Analyzing your content… this can take up to a minute.'}
-            </Text>
-          </View>
-        ) : null}
-
-        {mediaItems.length > 0 ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setPickerOpen(true)}
-            style={({ pressed }) => [styles.fromPosts, pressed && { opacity: 0.75 }]}
-          >
-            <View style={styles.fromPostsIcon}>
-              <ImageIcon size={18} color={colors.primary} />
+          {busy ? (
+            <View style={styles.progressCard}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={styles.progressText}>
+                {transcribing
+                  ? 'Transcribing your voice note…'
+                  : 'Analyzing your content… this can take up to a minute.'}
+              </Text>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.fromPostsTitle}>Pick from your posts</Text>
-              <Text style={styles.fromPostsSub}>Pre-fill the caption and engagement from Instagram</Text>
-            </View>
-            <Text style={styles.chevron}>›</Text>
-          </Pressable>
-        ) : null}
+          ) : null}
 
-        <Field label="Title">
-          <TextInput
-            value={title}
-            onChangeText={setTitle}
-            placeholder="e.g. iPhone 15 vs iPhone 14 — worth it?"
-            placeholderTextColor={colors.textDim}
-            style={styles.input}
-          />
-        </Field>
-
-        <Field label="Transcript" hint="What you say on camera">
-          <TextInput
-            value={transcript}
-            onChangeText={setTranscript}
-            placeholder="Paste what you said, or record your voice below…"
-            placeholderTextColor={colors.textDim}
-            style={[styles.input, styles.multiline]}
-            multiline
-            textAlignVertical="top"
-          />
-        </Field>
-
-        <View style={styles.mediaRow}>
-          <MediaButton
-            icon={<MicIcon size={17} color={recording ? colors.red : colors.primary} />}
-            label={recording ? 'Stop (30s max)' : transcribing ? 'Transcribing…' : 'Record voice'}
-            active={recording}
-            onPress={() => void toggleRecording()}
-          />
-          <MediaButton
-            icon={<ImageIcon size={17} color={colors.primary} />}
-            label="Image"
-            onPress={() => void chooseImage()}
-          />
-          <MediaButton
-            icon={<DocIcon size={17} color={colors.primary} />}
-            label="File"
-            onPress={() => void chooseMediaFile()}
-          />
-        </View>
-
-        {uploadingMedia ? (
-          <View style={styles.attachment}>
-            <ActivityIndicator size="small" color={colors.primary} />
-            <Text style={styles.attachmentLabel} numberOfLines={1}>
-              Uploading {uploadingMedia.name}… {uploadingMedia.percent}%
-            </Text>
-          </View>
-        ) : null}
-
-        {selectedMedia ? (
-          <View style={styles.attachment}>
-            <Text style={styles.attachmentLabel} numberOfLines={1}>
-              📎 {selectedMedia.name}
-              {selectedMedia.fileUri ? ' · cloud upload' : ''}
-            </Text>
+          {mediaItems.length > 0 ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Remove attachment"
-              hitSlop={8}
-              onPress={() => setSelectedMedia(null)}
+              onPress={() => setPickerOpen(true)}
+              style={({ pressed }) => [styles.fromPosts, pressed && { opacity: 0.75 }]}
             >
-              <Text style={styles.attachmentRemove}>✕</Text>
+              <View style={styles.fromPostsIcon}>
+                <ImageIcon size={18} color={colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.fromPostsTitle}>Pick from your posts</Text>
+                <Text style={styles.fromPostsSub}>Pre-fill the caption and engagement from Instagram</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
             </Pressable>
-          </View>
-        ) : null}
+          ) : null}
 
-        <Field label="Caption" hint="Optional context from the post">
-          <TextInput
-            value={caption}
-            onChangeText={setCaption}
-            placeholder="The post caption, if any…"
-            placeholderTextColor={colors.textDim}
-            style={[styles.input, styles.multilineSmall]}
-            multiline
-            textAlignVertical="top"
+          <Field label="Title">
+            <TextInput
+              value={title}
+              onChangeText={setTitle}
+              placeholder="e.g. iPhone 15 vs iPhone 14 — worth it?"
+              placeholderTextColor={colors.textDim}
+              style={styles.input}
+            />
+          </Field>
+
+          <Field label="Transcript" hint="What you say on camera">
+            <TextInput
+              value={transcript}
+              onChangeText={setTranscript}
+              placeholder="Paste what you said, or record your voice below…"
+              placeholderTextColor={colors.textDim}
+              style={[styles.input, styles.multiline]}
+              multiline
+              textAlignVertical="top"
+            />
+          </Field>
+
+          <View style={styles.mediaRow}>
+            <MediaButton
+              icon={<MicIcon size={17} color={recording ? colors.red : colors.primary} />}
+              label={recording ? 'Stop (30s max)' : transcribing ? 'Transcribing…' : 'Record voice'}
+              active={recording}
+              onPress={() => void toggleRecording()}
+            />
+            <MediaButton
+              icon={<ImageIcon size={17} color={colors.primary} />}
+              label="Image"
+              onPress={() => void chooseImage()}
+            />
+            <MediaButton
+              icon={<DocIcon size={17} color={colors.primary} />}
+              label="File"
+              onPress={() => void chooseMediaFile()}
+            />
+          </View>
+
+          {uploadingMedia ? (
+            <View style={styles.attachment}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={styles.attachmentLabel} numberOfLines={1}>
+                Uploading {uploadingMedia.name}… {uploadingMedia.percent}%
+              </Text>
+            </View>
+          ) : null}
+
+          {selectedMedia ? (
+            <View style={styles.attachment}>
+              <Text style={styles.attachmentLabel} numberOfLines={1}>
+                📎 {selectedMedia.name}
+                {selectedMedia.fileUri ? ' · cloud upload' : ''}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Remove attachment"
+                hitSlop={8}
+                onPress={() => setSelectedMedia(null)}
+              >
+                <Text style={styles.attachmentRemove}>✕</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <Field label="Caption" hint="Optional context from the post">
+            <TextInput
+              value={caption}
+              onChangeText={setCaption}
+              placeholder="The post caption, if any…"
+              placeholderTextColor={colors.textDim}
+              style={[styles.input, styles.multilineSmall]}
+              multiline
+              textAlignVertical="top"
+            />
+          </Field>
+
+          <Field label="Metrics" hint="Context only — never judged as performance">
+            <View style={styles.metricsRow}>
+              <TextInput
+                value={views}
+                onChangeText={setViews}
+                placeholder="Views"
+                placeholderTextColor={colors.textDim}
+                keyboardType="numeric"
+                style={[styles.input, styles.metricInput]}
+              />
+              <TextInput
+                value={likes}
+                onChangeText={setLikes}
+                placeholder="Likes"
+                placeholderTextColor={colors.textDim}
+                keyboardType="numeric"
+                style={[styles.input, styles.metricInput]}
+              />
+              <TextInput
+                value={comments}
+                onChangeText={setComments}
+                placeholder="Comments"
+                placeholderTextColor={colors.textDim}
+                keyboardType="numeric"
+                style={[styles.input, styles.metricInput]}
+              />
+            </View>
+          </Field>
+
+          {displayError ? (
+            <Text accessibilityRole="alert" style={styles.error}>
+              {displayError}
+            </Text>
+          ) : null}
+
+          <GradientButton
+            label={busy ? 'Analyzing…' : 'Analyze content'}
+            loading={busy}
+            onPress={submit}
           />
-        </Field>
-
-        <Field label="Metrics" hint="Context only — never judged as performance">
-          <View style={styles.metricsRow}>
-            <TextInput
-              value={views}
-              onChangeText={setViews}
-              placeholder="Views"
-              placeholderTextColor={colors.textDim}
-              keyboardType="numeric"
-              style={[styles.input, styles.metricInput]}
-            />
-            <TextInput
-              value={likes}
-              onChangeText={setLikes}
-              placeholder="Likes"
-              placeholderTextColor={colors.textDim}
-              keyboardType="numeric"
-              style={[styles.input, styles.metricInput]}
-            />
-            <TextInput
-              value={comments}
-              onChangeText={setComments}
-              placeholder="Comments"
-              placeholderTextColor={colors.textDim}
-              keyboardType="numeric"
-              style={[styles.input, styles.metricInput]}
-            />
-          </View>
-        </Field>
-
-        {displayError ? (
-          <Text accessibilityRole="alert" style={styles.error}>
-            {displayError}
-          </Text>
-        ) : null}
-
-        <GradientButton
-          label={busy ? 'Analyzing…' : 'Analyze content'}
-          loading={busy}
-          onPress={submit}
-        />
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
         <View style={styles.backdrop}>
@@ -475,6 +510,7 @@ function Field({
   hint?: string;
   children: React.ReactNode;
 }) {
+  const styles = useStyles(makeStyles);
   return (
     <View style={styles.field}>
       <View style={styles.fieldHead}>
@@ -497,6 +533,8 @@ function MediaButton({
   onPress: () => void;
   active?: boolean;
 }) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   return (
     <Pressable
       accessibilityRole="button"
@@ -515,8 +553,9 @@ function MediaButton({
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.white },
+const makeStyles = (c: typeof colors) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: c.white },
+  keyboardPad: { flex: 1 },
   content: {
     paddingHorizontal: 18,
     paddingTop: 8,
@@ -528,19 +567,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 11,
-    backgroundColor: colors.primarySoft,
+    backgroundColor: c.primarySoft,
     borderRadius: radius.md,
     padding: 14,
   },
-  progressText: { ...type.small, color: colors.primaryDeep, flex: 1, lineHeight: 18 },
+  progressText: { ...type.small, color: c.primaryDeep, flex: 1, lineHeight: 18 },
 
   fromPosts: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: colors.lightCard,
+    backgroundColor: c.lightCard,
     borderWidth: 1,
-    borderColor: colors.lightBorder,
+    borderColor: c.lightBorder,
     borderRadius: radius.md,
     padding: 13,
   },
@@ -548,31 +587,31 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 13,
-    backgroundColor: colors.primarySoft,
+    backgroundColor: c.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  fromPostsTitle: { ...type.bodyBold, color: colors.text, fontSize: 14.5 },
-  fromPostsSub: { ...type.small, color: colors.textSub, fontSize: 12, marginTop: 2 },
-  chevron: { fontSize: 24, color: colors.textDim, fontWeight: '600' },
+  fromPostsTitle: { ...type.bodyBold, color: c.text, fontSize: 14.5 },
+  fromPostsSub: { ...type.small, color: c.textSub, fontSize: 12, marginTop: 2 },
+  chevron: { fontSize: 24, color: c.textDim, fontWeight: '600' },
 
   field: { gap: 7 },
   fieldHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
   fieldLabel: {
     ...type.tiny,
-    color: colors.textSub,
+    color: c.textSub,
     textTransform: 'uppercase',
   },
-  fieldHint: { ...type.small, color: colors.textDim, fontSize: 11.5, flexShrink: 1, textAlign: 'right' },
+  fieldHint: { ...type.small, color: c.textDim, fontSize: 11.5, flexShrink: 1, textAlign: 'right' },
   input: {
     borderWidth: 1.5,
-    borderColor: colors.lightBorder,
-    backgroundColor: colors.lightCard,
+    borderColor: c.lightBorder,
+    backgroundColor: c.lightCard,
     borderRadius: radius.sm + 2,
     paddingHorizontal: 14,
     minHeight: 50,
     fontSize: 15,
-    color: colors.text,
+    color: c.text,
   },
   multiline: { minHeight: 128, paddingTop: 13 },
   multilineSmall: { minHeight: 84, paddingTop: 12 },
@@ -586,32 +625,32 @@ const styles = StyleSheet.create({
     gap: 7,
     minHeight: 46,
     borderWidth: 1.5,
-    borderColor: colors.lightBorder,
+    borderColor: c.lightBorder,
     borderRadius: radius.sm + 2,
-    backgroundColor: colors.white,
+    backgroundColor: c.white,
     paddingHorizontal: 8,
   },
-  mediaButtonLabel: { ...type.small, color: colors.primary, fontWeight: '700' },
+  mediaButtonLabel: { ...type.small, color: c.primary, fontWeight: '700' },
 
   attachment: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: colors.lightCard2,
+    backgroundColor: c.lightCard2,
     borderRadius: radius.sm + 2,
     paddingHorizontal: 14,
     minHeight: 46,
   },
-  attachmentLabel: { ...type.small, color: colors.text, flex: 1 },
-  attachmentRemove: { color: colors.textSub, fontSize: 14, fontWeight: '700' },
+  attachmentLabel: { ...type.small, color: c.text, flex: 1 },
+  attachmentRemove: { color: c.textSub, fontSize: 14, fontWeight: '700' },
 
   metricsRow: { flexDirection: 'row', gap: 9 },
   metricInput: { flex: 1, minWidth: 0 },
 
   error: {
     ...type.small,
-    color: colors.red,
-    backgroundColor: colors.redSoft,
+    color: c.red,
+    backgroundColor: c.redSoft,
     borderRadius: radius.sm,
     padding: 12,
     lineHeight: 18,
@@ -623,7 +662,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   pickerSheet: {
-    backgroundColor: colors.white,
+    backgroundColor: c.white,
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
     paddingHorizontal: 18,
@@ -636,8 +675,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 8,
   },
-  pickerTitle: { ...type.h3, color: colors.text },
-  pickerClose: { fontSize: 16, color: colors.textSub, fontWeight: '700' },
+  pickerTitle: { ...type.h3, color: c.text },
+  pickerClose: { fontSize: 16, color: c.textSub, fontWeight: '700' },
   pickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -645,12 +684,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: radius.sm,
   },
-  pickerThumb: { width: 52, height: 52, borderRadius: 10, backgroundColor: colors.lightCard2 },
+  pickerThumb: { width: 52, height: 52, borderRadius: 10, backgroundColor: c.lightCard2 },
   pickerThumbFallback: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.primary,
+    backgroundColor: c.primary,
   },
-  pickerRowTitle: { ...type.small, color: colors.text, fontWeight: '600', fontSize: 13.5 },
-  pickerRowMeta: { ...type.small, color: colors.textSub, fontSize: 12, marginTop: 3 },
+  pickerRowTitle: { ...type.small, color: c.text, fontWeight: '600', fontSize: 13.5 },
+  pickerRowMeta: { ...type.small, color: c.textSub, fontSize: 12, marginTop: 3 },
 });

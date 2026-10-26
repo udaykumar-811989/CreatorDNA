@@ -234,7 +234,9 @@ function makeSheetStyles(c: ReturnType<typeof useThemeColors>) {
     identity: { flex: 1 },
     handleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     currentBadge: {
-      backgroundColor: 'rgba(26, 86, 174, 0.16)',
+      // Pale-blue chip background comes from the palette so it stays a tint
+      // instead of a light-blue wash once the sheet is on a dark page.
+      backgroundColor: c.blueSoft,
       borderRadius: 6,
       paddingHorizontal: 6,
       paddingVertical: 2,

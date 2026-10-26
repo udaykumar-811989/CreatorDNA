@@ -268,7 +268,7 @@ export function HelpScreen({
         typing: { flexDirection: 'row', alignItems: 'center', gap: 9 },
         typingText: { ...type.small, color: c.onDarkSub },
         errorBox: {
-          backgroundColor: 'rgba(239,68,68,0.12)',
+          backgroundColor: c.redSoft,
           borderRadius: radius.sm,
           padding: 12,
         },

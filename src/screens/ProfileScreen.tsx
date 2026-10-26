@@ -74,7 +74,7 @@ export function ProfileScreen({
 
         warning: {
           ...type.small,
-          color: '#C67C05',
+          color: c.amber,
           backgroundColor: c.amberSoft,
           borderRadius: radius.sm,
           padding: 12,

@@ -3,6 +3,7 @@ import { CheckIcon, LinkOutIcon } from '../components/icons';
 import { Avatar, GradientButton, OutlineButton } from '../components/ui';
 import type { InstagramProfile } from '../services/instagramDashboard';
 import { colors, radius, type } from '../theme';
+import { useThemeColors, useStyles } from '../themeContext';
 
 export function ConnectedScreen({
   profile,
@@ -15,11 +16,15 @@ export function ConnectedScreen({
   onBack: () => void;
   onContinue: () => void;
 }) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   return (
     <View style={styles.screen}>
       <View style={styles.body}>
         <View style={styles.badge}>
-          <CheckIcon size={34} color={colors.white} strokeWidth={2.6} />
+          {/* Tick sits on the solid green badge: it must stay white in both
+              modes, so it reads from onStatus rather than the surface token. */}
+          <CheckIcon size={34} color={colors.onStatus} strokeWidth={2.6} />
         </View>
         <Text style={styles.title}>Instagram connected</Text>
         <Text style={styles.subtitle}>
@@ -57,71 +62,75 @@ export function ConnectedScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.white,
-    paddingHorizontal: 24,
-    paddingTop: 40,
-    paddingBottom: 34,
-  },
-  body: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  badge: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    backgroundColor: colors.green,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: colors.green,
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 6,
-  },
-  title: { ...type.h1, color: colors.text, marginTop: 24, fontSize: 27 },
-  subtitle: {
-    ...type.body,
-    color: colors.textSub,
-    textAlign: 'center',
-    marginTop: 12,
-    maxWidth: 330,
-  },
-  profileCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 13,
-    backgroundColor: colors.lightCard,
-    borderWidth: 1,
-    borderColor: colors.lightBorder,
-    borderRadius: radius.md + 2,
-    padding: 16,
-    marginTop: 26,
-    width: '100%',
-    maxWidth: 420,
-  },
-  username: { ...type.bodyBold, color: colors.text, fontSize: 16.5 },
-  accountType: { ...type.small, color: colors.textSub, marginTop: 2 },
-  linkPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: colors.primarySoft,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  linkPillText: { fontSize: 11.5, fontWeight: '800', color: colors.primary },
-  warning: {
-    ...type.small,
-    color: '#C67C05',
-    backgroundColor: colors.amberSoft,
-    borderRadius: radius.sm,
-    padding: 12,
-    marginTop: 18,
-    textAlign: 'center',
-    lineHeight: 18,
-    maxWidth: 420,
-  },
-  actions: { width: '100%', maxWidth: 420, alignSelf: 'center' },
-});
+// Built per palette through useStyles: a module-scope StyleSheet bakes in the
+// palette that existed at import time, so the Appearance toggle never reaches it.
+const makeStyles = (c: typeof colors) =>
+  StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: c.white,
+      paddingHorizontal: 24,
+      paddingTop: 40,
+      paddingBottom: 34,
+    },
+    body: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    badge: {
+      width: 84,
+      height: 84,
+      borderRadius: 42,
+      backgroundColor: c.green,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: c.green,
+      shadowOpacity: 0.35,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 6,
+    },
+    title: { ...type.h1, color: c.text, marginTop: 24, fontSize: 27 },
+    subtitle: {
+      ...type.body,
+      color: c.textSub,
+      textAlign: 'center',
+      marginTop: 12,
+      maxWidth: 330,
+    },
+    profileCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 13,
+      backgroundColor: c.lightCard,
+      borderWidth: 1,
+      borderColor: c.lightBorder,
+      borderRadius: radius.md + 2,
+      padding: 16,
+      marginTop: 26,
+      width: '100%',
+      maxWidth: 420,
+    },
+    username: { ...type.bodyBold, color: c.text, fontSize: 16.5 },
+    accountType: { ...type.small, color: c.textSub, marginTop: 2 },
+    linkPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: c.primarySoft,
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    linkPillText: { fontSize: 11.5, fontWeight: '800', color: c.primary },
+    warning: {
+      ...type.small,
+      // Was #C67C05: a dark-on-light amber that disappears on the night card.
+      color: c.amber,
+      backgroundColor: c.amberSoft,
+      borderRadius: radius.sm,
+      padding: 12,
+      marginTop: 18,
+      textAlign: 'center',
+      lineHeight: 18,
+      maxWidth: 420,
+    },
+    actions: { width: '100%', maxWidth: 420, alignSelf: 'center' },
+  });

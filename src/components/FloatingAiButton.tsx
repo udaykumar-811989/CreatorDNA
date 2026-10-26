@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import { PanResponder, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { storageKeys, usePersistentState } from '../lib/storage';
 import { colors, NAV_HEIGHT } from '../theme';
+import { useThemeColors, useStyles } from '../themeContext';
 import { SparkIcon } from './icons';
 
 // Floating "chat with AI" button — the always-available entry to the
@@ -46,6 +47,8 @@ export function FloatingAiButton({
   onPress: () => void;
   bottomReserve?: number;
 }) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   const { width, height } = useWindowDimensions();
   const [stored, setStored] = usePersistentState<FabPosition | null>(
     storageKeys.fabPosition,
@@ -152,38 +155,41 @@ export function FloatingAiButton({
   );
 }
 
-const styles = StyleSheet.create({
-  fab: {
-    position: 'absolute',
-    alignItems: 'center',
-    gap: 4,
-    zIndex: 20,
-  },
-  fill: {
-    width: FAB_WIDTH,
-    height: FAB_WIDTH,
-    borderRadius: FAB_WIDTH / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#1A56AE',
-    shadowOpacity: 0.45,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
-  },
-  tag: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: colors.primary,
-    backgroundColor: colors.white,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 999,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
-  },
-});
+// Built per palette through useStyles: a module-scope StyleSheet bakes in the
+// palette that existed at import time, so the Appearance toggle never reaches it.
+const makeStyles = (c: typeof colors) =>
+  StyleSheet.create({
+    fab: {
+      position: 'absolute',
+      alignItems: 'center',
+      gap: 4,
+      zIndex: 20,
+    },
+    fill: {
+      width: FAB_WIDTH,
+      height: FAB_WIDTH,
+      borderRadius: FAB_WIDTH / 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#1A56AE',
+      shadowOpacity: 0.45,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 8,
+    },
+    tag: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: c.primary,
+      backgroundColor: c.white,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      borderRadius: 999,
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOpacity: 0.12,
+      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 3,
+    },
+  });

@@ -5,6 +5,7 @@ import { Avatar, GradientButton, OutlineButton } from '../components/ui';
 import type { ConnectionState } from '../lib/types';
 import type { InstagramProfile } from '../services/instagramDashboard';
 import { colors, radius, type } from '../theme';
+import { useThemeColors, useStyles } from '../themeContext';
 
 const permissions = [
   'Access your public profile',
@@ -67,6 +68,8 @@ export function ConnectScreen({
   connectionErrorDetail: string | null;
   profile: InstagramProfile | null;
 }) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   return (
     <View style={styles.screen}>
       <ScrollView
@@ -101,7 +104,8 @@ export function ConnectScreen({
             <View style={styles.connectedHead}>
               <Text style={styles.connectedTitle}>Instagram connected</Text>
               <View style={styles.connectedCheck}>
-                <CheckIcon size={14} color={colors.white} />
+                {/* Glyph on a solid status chip: never follow the card surface. */}
+                <CheckIcon size={14} color={colors.onStatus} />
               </View>
             </View>
             <View style={styles.connectedProfile}>
@@ -193,6 +197,8 @@ export function ConnectScreen({
 }
 
 function InstagramIllustration() {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   return (
     <View style={styles.illustration}>
       <Text style={[styles.spark, styles.sparkLeft]}>✧</Text>
@@ -215,8 +221,10 @@ function InstagramIllustration() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.white },
+// Built per palette through useStyles: a module-scope StyleSheet bakes in the
+// palette that existed at import time, so the Appearance toggle never reaches it.
+const makeStyles = (c: typeof colors) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: c.white },
   content: {
     paddingHorizontal: 22,
     paddingTop: 14,
@@ -226,15 +234,15 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: colors.lightCard2,
+    backgroundColor: c.lightCard2,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 22,
   },
-  title: { ...type.h1, color: colors.text },
+  title: { ...type.h1, color: c.text },
   description: {
     ...type.body,
-    color: colors.textSub,
+    color: c.textSub,
     marginTop: 12,
     fontSize: 15.5,
   },
@@ -303,10 +311,10 @@ const styles = StyleSheet.create({
   dotRight: { right: '27%', bottom: 39 },
 
   permissionCard: {
-    backgroundColor: colors.lightCard,
+    backgroundColor: c.lightCard,
     borderRadius: radius.md + 2,
     borderWidth: 1,
-    borderColor: colors.lightBorder,
+    borderColor: c.lightBorder,
     paddingHorizontal: 16,
     marginBottom: 20,
   },
@@ -320,48 +328,48 @@ const styles = StyleSheet.create({
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: colors.greenSoft,
+    backgroundColor: c.greenSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
   permissionLabel: {
     flex: 1,
     ...type.bodyBold,
-    color: colors.text,
+    color: c.text,
     fontSize: 14.5,
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.lightBorder,
+    backgroundColor: c.lightBorder,
   },
 
   connectedCard: {
-    backgroundColor: colors.greenSoft,
+    backgroundColor: c.greenSoft,
     borderRadius: radius.md + 2,
     borderWidth: 1,
-    borderColor: '#CBEEDD',
+    borderColor: c.greenSoft,
     padding: 16,
     marginBottom: 20,
     gap: 14,
   },
   connectedHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  connectedTitle: { ...type.h4, color: '#0E9155' },
+  connectedTitle: { ...type.h4, color: c.green },
   connectedCheck: {
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: colors.green,
+    backgroundColor: c.green,
     alignItems: 'center',
     justifyContent: 'center',
   },
   connectedProfile: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  connectedUsername: { ...type.bodyBold, color: colors.text, fontSize: 16 },
-  connectedType: { ...type.small, color: '#4F8A71', marginTop: 2 },
+  connectedUsername: { ...type.bodyBold, color: c.text, fontSize: 16 },
+  connectedType: { ...type.small, color: c.gray, marginTop: 2 },
 
   error: {
     ...type.small,
-    color: colors.red,
-    backgroundColor: colors.redSoft,
+    color: c.red,
+    backgroundColor: c.redSoft,
     borderRadius: radius.sm,
     padding: 12,
     marginTop: 14,
@@ -370,7 +378,7 @@ const styles = StyleSheet.create({
   },
   requirement: {
     ...type.small,
-    color: colors.textDim,
+    color: c.textDim,
     textAlign: 'center',
     marginTop: 16,
     lineHeight: 18,
@@ -383,6 +391,6 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   privacyIcon: { fontSize: 14 },
-  privacyGlyph: { fontSize: 14, color: colors.textDim },
-  privacyText: { ...type.small, color: colors.textDim, flexShrink: 1, textAlign: 'center' },
+  privacyGlyph: { fontSize: 14, color: c.textDim },
+  privacyText: { ...type.small, color: c.textDim, flexShrink: 1, textAlign: 'center' },
 });

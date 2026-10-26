@@ -12,6 +12,7 @@ import {
 import { isIdeaSaved, sortIdeas } from '../lib/derived';
 import type { CreatorAiIdea } from '../services/creatorAi';
 import { colors, FAB_CLEARANCE, radius, type } from '../theme';
+import { useThemeColors, useStyles } from '../themeContext';
 
 const TABS = ['Next 7 Days', 'Trending', 'Saved'];
 
@@ -36,6 +37,8 @@ export function IdeasScreen({
   onToggleSave: (idea: CreatorAiIdea) => void;
   onAnalyze: () => void;
 }) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   const [tab, setTab] = useState(TABS[0]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [generateMode, setGenerateMode] = useState<'replace' | 'trending' | null>(null);
@@ -135,7 +138,10 @@ export function IdeasScreen({
                     {idea.title}
                   </Text>
                   <Text style={styles.ideaMeta} numberOfLines={1}>
-                    {idea.format} • AI concept
+                    {/* Length is the one extra the card can spare — it tells the
+                        creator the time commitment before they open the script.
+                        Older ideas have no length, so say that plainly. */}
+                    {idea.format} • {idea.target_length ?? 'Length not set'}
                   </Text>
                   <View style={styles.ideaActions}>
                     <View style={styles.scriptChip}>
@@ -219,6 +225,7 @@ export function IdeasScreen({
 }
 
 function Cardish({ children }: { children: React.ReactNode }) {
+  const styles = useStyles(makeStyles);
   return (
     <View style={styles.cardish}>
       {children}
@@ -235,6 +242,8 @@ function MenuOption({
   hint: string;
   onPress: () => void;
 }) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   return (
     <Pressable
       accessibilityRole="button"
@@ -250,98 +259,101 @@ function MenuOption({
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.white },
-  content: {
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: FAB_CLEARANCE,
-    gap: 14,
-  },
+// Built per palette through useStyles: a module-scope StyleSheet bakes in the
+// palette that existed at import time, so the Appearance toggle never reaches it.
+const makeStyles = (c: typeof colors) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: c.white },
+    content: {
+      paddingHorizontal: 18,
+      paddingTop: 10,
+      paddingBottom: FAB_CLEARANCE,
+      gap: 14,
+    },
 
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  title: { ...type.h2, color: colors.text, fontSize: 25 },
-  subtitle: { ...type.small, color: colors.textSub, marginTop: 5, fontSize: 13.5 },
-  menuButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.lightCard2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+    headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+    title: { ...type.h2, color: c.text, fontSize: 25 },
+    subtitle: { ...type.small, color: c.textSub, marginTop: 5, fontSize: 13.5 },
+    menuButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: c.lightCard2,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  cardish: {
-    backgroundColor: colors.lightCard,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.lightBorder,
-  },
+    cardish: {
+      backgroundColor: c.lightCard,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: c.lightBorder,
+    },
 
-  cards: { gap: 12 },
-  ideaCard: {
-    flexDirection: 'row',
-    gap: 13,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.lightBorder,
-    borderRadius: radius.md + 2,
-    padding: 13,
-    shadowColor: '#1A56AE',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
-  },
-  thumb: {
-    width: 88,
-    height: 88,
-    borderRadius: radius.md,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    overflow: 'hidden',
-  },
-  ideaBody: { flex: 1, minWidth: 0, gap: 6 },
-  ideaTitle: { ...type.bodyBold, color: colors.text, fontSize: 15.5, lineHeight: 20 },
-  ideaMeta: { ...type.small, color: colors.textSub, fontSize: 12.5 },
-  ideaActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 2,
-  },
-  scriptChip: {
-    backgroundColor: colors.primarySoft,
-    borderRadius: 999,
-    paddingHorizontal: 13,
-    paddingVertical: 6,
-  },
-  scriptChipText: { fontSize: 12.5, fontWeight: '800', color: colors.primary },
+    cards: { gap: 12 },
+    ideaCard: {
+      flexDirection: 'row',
+      gap: 13,
+      backgroundColor: c.white,
+      borderWidth: 1,
+      borderColor: c.lightBorder,
+      borderRadius: radius.md + 2,
+      padding: 13,
+      shadowColor: '#1A56AE',
+      shadowOpacity: 0.06,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 1,
+    },
+    thumb: {
+      width: 88,
+      height: 88,
+      borderRadius: radius.md,
+      backgroundColor: c.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      overflow: 'hidden',
+    },
+    ideaBody: { flex: 1, minWidth: 0, gap: 6 },
+    ideaTitle: { ...type.bodyBold, color: c.text, fontSize: 15.5, lineHeight: 20 },
+    ideaMeta: { ...type.small, color: c.textSub, fontSize: 12.5 },
+    ideaActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: 2,
+    },
+    scriptChip: {
+      backgroundColor: c.primarySoft,
+      borderRadius: 999,
+      paddingHorizontal: 13,
+      paddingVertical: 6,
+    },
+    scriptChipText: { fontSize: 12.5, fontWeight: '800', color: c.primary },
 
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(10, 9, 26, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  menuSheet: {
-    backgroundColor: colors.white,
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 28,
-  },
-  menuOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minHeight: 66,
-    paddingHorizontal: 12,
-    borderRadius: radius.md,
-  },
-  menuLabel: { ...type.bodyBold, color: colors.text, fontSize: 15.5 },
-  menuHint: { ...type.small, color: colors.textSub, marginTop: 2, fontSize: 12.5 },
-  menuChevron: { fontSize: 24, color: colors.textDim, fontWeight: '600' },
-});
+    backdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(10, 9, 26, 0.5)',
+      justifyContent: 'flex-end',
+    },
+    menuSheet: {
+      backgroundColor: c.white,
+      borderTopLeftRadius: 26,
+      borderTopRightRadius: 26,
+      paddingHorizontal: 12,
+      paddingTop: 10,
+      paddingBottom: 28,
+    },
+    menuOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      minHeight: 66,
+      paddingHorizontal: 12,
+      borderRadius: radius.md,
+    },
+    menuLabel: { ...type.bodyBold, color: c.text, fontSize: 15.5 },
+    menuHint: { ...type.small, color: c.textSub, marginTop: 2, fontSize: 12.5 },
+    menuChevron: { fontSize: 24, color: c.textDim, fontWeight: '600' },
+  });

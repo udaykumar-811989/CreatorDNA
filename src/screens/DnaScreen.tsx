@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
+  ChartIcon,
+  CheckIcon,
   ClockIcon,
   GridIcon,
   HashIcon,
   QuoteIcon,
   TimerIcon,
+  WarningIcon,
 } from '../components/icons';
 import { ScoreRing } from '../components/ScoreRing';
 import {
@@ -27,6 +30,7 @@ import {
 import type { AnalysisRecord } from '../lib/storage';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
 import { colors, FAB_CLEARANCE, radius, type } from '../theme';
+import { useThemeColors, useStyles } from '../themeContext';
 
 const TABS = ['Overview', 'Strengths', 'Weaknesses'];
 
@@ -36,6 +40,9 @@ const rowIcons = {
   timer: TimerIcon,
   grid: GridIcon,
   clock: ClockIcon,
+  check: CheckIcon,
+  warning: WarningIcon,
+  chart: ChartIcon,
 };
 
 export function DnaScreen({
@@ -54,6 +61,8 @@ export function DnaScreen({
   onConnect: () => void;
 }) {
   const [tab, setTab] = useState('Overview');
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
   const username = dashboard?.profile.username ?? profile?.username ?? null;
   const followers = dashboard?.profile.followersCount ?? null;
   const accountType = dashboard?.profile.accountType ?? profile?.accountType ?? null;
@@ -227,8 +236,10 @@ export function DnaScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.white },
+// Built per palette through useStyles: a module-scope StyleSheet bakes in the
+// palette that existed at import time, so the Appearance toggle never reaches it.
+const makeStyles = (c: typeof colors) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: c.white },
   content: {
     paddingHorizontal: 18,
     paddingTop: 10,
@@ -236,37 +247,37 @@ const styles = StyleSheet.create({
     gap: 14,
   },
 
-  brand: { ...type.h2, color: colors.text, fontSize: 25 },
-  brandSub: { ...type.small, color: colors.textSub, marginTop: 2 },
+  brand: { ...type.h2, color: c.text, fontSize: 25 },
+  brandSub: { ...type.small, color: c.textSub, marginTop: 2 },
   bottomActions: { marginTop: 4, gap: 10 },
 
   profileCard: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   profileInfo: { flex: 1, minWidth: 0 },
-  profileName: { ...type.h4, color: colors.text, fontSize: 18 },
-  profileMeta: { ...type.small, color: colors.textSub, marginTop: 3 },
+  profileName: { ...type.h4, color: c.text, fontSize: 18 },
+  profileMeta: { ...type.small, color: c.textSub, marginTop: 3 },
   scoreWrap: { alignItems: 'center', gap: 6 },
-  scoreLabel: { ...type.tiny, color: colors.textSub, textTransform: 'uppercase' },
+  scoreLabel: { ...type.tiny, color: c.textSub, textTransform: 'uppercase' },
 
-  sectionTitle: { ...type.h4, color: colors.text, marginBottom: 4 },
+  sectionTitle: { ...type.h4, color: c.text, marginBottom: 4 },
   rows: { marginTop: 8 },
   workRow: { flexDirection: 'row', alignItems: 'center', gap: 11, minHeight: 52 },
   workIcon: {
     width: 34,
     height: 34,
     borderRadius: 12,
-    backgroundColor: colors.primarySoft,
+    backgroundColor: c.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  workLabel: { ...type.bodyBold, color: colors.text, fontSize: 14.5, width: 118 },
+  workLabel: { ...type.bodyBold, color: c.text, fontSize: 14.5, width: 118 },
   workValue: {
     ...type.small,
-    color: colors.textSub,
+    color: c.textSub,
     flex: 1,
     textAlign: 'right',
     fontSize: 13.5,
   },
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.lightBorder },
+  divider: { height: StyleSheet.hairlineWidth, backgroundColor: c.lightBorder },
 
   insightRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 11, paddingVertical: 11 },
   bullet: {
@@ -278,6 +289,6 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   bulletGlyph: { fontSize: 14, fontWeight: '800' },
-  insightTitle: { ...type.body, color: colors.text, fontSize: 14.5, fontWeight: '600' },
-  insightDetail: { ...type.small, color: colors.textSub, marginTop: 2, fontSize: 12.5 },
+  insightTitle: { ...type.body, color: c.text, fontSize: 14.5, fontWeight: '600' },
+  insightDetail: { ...type.small, color: c.textSub, marginTop: 2, fontSize: 12.5 },
 });

@@ -1,12 +1,10 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { storageKeys, usePersistentState } from './lib/storage';
-import { colors, lightColors, type ThemeMode } from './theme';
+import { colors, darkColors, lightColors, type ThemeMode } from './theme';
 
-// App-wide light/dark mode. Screens designed dark (onboarding, auth, home,
-// profile, settings, chat) read `useThemeColors()` for a palette with the
-// exact same keys as `colors` — in dark mode it *is* `colors`, so the
-// default appearance is byte-for-byte the original mock. The choice is
-// persisted on the device.
+// App-wide light/dark mode. Screens read `useThemeColors()` for a palette with
+// the exact same keys as `colors` — light mode is the landing look, dark mode
+// is its navy twin. The choice is persisted on the device.
 
 type ThemeValue = {
   mode: ThemeMode;
@@ -15,15 +13,17 @@ type ThemeValue = {
 };
 
 const ThemeContext = createContext<ThemeValue>({
-  mode: 'dark',
+  mode: 'light',
   setMode: () => {},
   c: colors,
 });
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [mode, setMode] = usePersistentState<ThemeMode>(storageKeys.theme, 'dark');
+  // Light by default: that is the branded landing look the app opens with,
+  // and Dark is the opt-in from Settings.
+  const [mode, setMode] = usePersistentState<ThemeMode>(storageKeys.theme, 'light');
   const value = useMemo<ThemeValue>(
-    () => ({ mode, setMode, c: mode === 'dark' ? colors : lightColors }),
+    () => ({ mode, setMode, c: mode === 'dark' ? darkColors : lightColors }),
     [mode, setMode],
   );
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
@@ -39,4 +39,26 @@ export function useThemeMode(): ThemeMode {
 
 export function useThemeColors(): typeof colors {
   return useContext(ThemeContext).c;
+}
+
+// A StyleSheet built at module scope bakes in whatever palette existed at
+// import time, so dark mode never reaches it. Building styles through this
+// hook instead re-runs the factory against the active palette, and the
+// WeakMap keeps it to one StyleSheet per palette — not one per render.
+const styleCache = new WeakMap<object, Map<(palette: typeof colors) => unknown, unknown>>();
+
+export function useStyles<T>(factory: (palette: typeof colors) => T): T {
+  const palette = useThemeColors();
+  let perPalette = styleCache.get(palette);
+  if (!perPalette) {
+    perPalette = new Map();
+    styleCache.set(palette, perPalette);
+  }
+  const cached = perPalette.get(factory);
+  if (cached !== undefined) {
+    return cached as T;
+  }
+  const made = factory(palette);
+  perPalette.set(factory, made);
+  return made;
 }

@@ -3,7 +3,15 @@ import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BackHandler, PanResponder, Platform, SafeAreaView, StyleSheet } from 'react-native';
+import {
+  BackHandler,
+  KeyboardAvoidingView,
+  PanResponder,
+  Platform,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomNav, NavTab } from './src/components/BottomNav';
 import { FloatingAiButton } from './src/components/FloatingAiButton';
@@ -23,7 +31,13 @@ import {
   supabaseAnonKey,
   supabaseUrl,
 } from './src/lib/config';
-import { AnalysisRecord, storageKeys, usePersistentState } from './src/lib/storage';
+import {
+  AnalysisRecord,
+  hydrateStorage,
+  isStorageHydrated,
+  storageKeys,
+  usePersistentState,
+} from './src/lib/storage';
 import {
   buildPlan,
   dnaScore,
@@ -38,7 +52,11 @@ import {
   CreatorAiChatMessage,
   CreatorAiIdea,
   CreatorAiJob,
+  CreatorAiMediaIntent,
+  CreatorAiMediaState,
+  checkCreatorMedia,
   generateCreatorIdeas,
+  generateCreatorMedia,
   getCreatorAiJob,
   refreshCreatorAiSession,
   sendCreatorAiChat,
@@ -46,6 +64,7 @@ import {
   signInForCreatorAi,
   submitCreatorContent,
 } from './src/services/creatorAi';
+import type { ChatMessageRecord, ChatMediaPayload } from './src/components/ChatMedia';
 import {
   clearInstagramSession,
   DashboardRequestError,
@@ -76,8 +95,8 @@ import { ProfileScreen } from './src/screens/ProfileScreen';
 import { RecommendationsScreen } from './src/screens/RecommendationsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { VideoAnalysisScreen } from './src/screens/VideoAnalysisScreen';
-import { colors, NAV_HEIGHT } from './src/theme';
-import { ThemeProvider } from './src/themeContext';
+import { NAV_HEIGHT } from './src/theme';
+import { ThemeProvider, useTheme, useThemeColors } from './src/themeContext';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -284,15 +303,136 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// ---------- Generated chat media ----------
+// Cadence for a running generation: ask for its status every 4s, give the
+// whole job a 5-minute budget (image renders are quick, 15s clips are not),
+// and treat three consecutive dropped polls as a failure so the card can hand
+// Retry back to the creator instead of spinning forever.
+const MEDIA_POLL_INTERVAL_MS = 4_000;
+const MEDIA_TIMEOUT_MS = 5 * 60 * 1000;
+const MEDIA_POLL_FAILURES_ALLOWED = 3;
+
+// An edit request stores only its prompt and flag: the attached photo's bytes
+// are megabytes of base64 and never reach storage. Only the few most recent
+// sources are held in memory, so a Retry during this session re-sends the same
+// edit while the cache stays bounded no matter how long the thread runs.
+const MAX_REMEMBERED_EDIT_SOURCES = 3;
+
+// What the coach asked for, as this screen keeps it: the service's intent plus
+// `edit`, which marks a request that changes the image the creator attached —
+// the send path needs that flag to decide whether a source photo rides along.
+type ChatMediaIntent = CreatorAiMediaIntent & { edit?: boolean };
+
+// The outgoing generation call: the coach's intent plus, for an edit, a data
+// URI of the photo the change is applied to. Spelled out once here rather than
+// at each call site, so the payload shape lives in a single place.
+type MediaGenerationRequest = CreatorAiMediaIntent & { sourceDataUri?: string };
+
+// A failed state carries the server's reason when it sent one; reads are kept
+// structural so a reply from a service without the field simply yields nothing
+// and the card falls back to its generic line.
+function failureDetail(state: CreatorAiMediaState): string | undefined {
+  if (state.status !== 'failed') {
+    return undefined;
+  }
+  const detail = (state as { status: 'failed'; detail?: string }).detail;
+  return typeof detail === 'string' && detail.trim() ? detail.trim() : undefined;
+}
+
+// The chat helper answers with either the bare reply string or an object that
+// carries the reply plus an optional media request. Both shapes are read here
+// so this screen keeps working whichever one the service returns.
+function readMediaIntent(raw: unknown): ChatMediaIntent | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const kind = raw.kind === 'image' ? 'image' : raw.kind === 'video' ? 'video' : null;
+  if (!kind || typeof raw.prompt !== 'string' || !raw.prompt.trim()) {
+    return null;
+  }
+  const duration =
+    typeof raw.duration === 'number' && Number.isFinite(raw.duration) ? raw.duration : undefined;
+  return {
+    kind,
+    prompt: raw.prompt.trim(),
+    ...(duration !== undefined ? { duration } : {}),
+    // Only an explicit `true` counts: the send path treats the flag as "this
+    // request is a change to the image I attached", and a stray truthy value
+    // would attach a photo to a request the coach never asked to edit.
+    ...(raw.edit === true ? { edit: true } : {}),
+  };
+}
+
+function normalizeCreatorChatReply(raw: unknown): {
+  text: string;
+  media: ChatMediaIntent | null;
+} {
+  if (typeof raw === 'string') {
+    return { text: raw.trim(), media: null };
+  }
+  if (!isRecord(raw)) {
+    return { text: '', media: null };
+  }
+  const reply = typeof raw.reply === 'string' ? raw.reply : raw.text;
+  return {
+    text: typeof reply === 'string' ? reply.trim() : '',
+    media: readMediaIntent(raw.media),
+  };
+}
+
 export default function App() {
+  // Persisted data must be in memory before anything mounts: every screen
+  // reads its saved state synchronously from useState initialisers, so mounting
+  // first would paint empty defaults and then make the real analyses, ideas and
+  // theme pop in a beat later (and on Android, killing the app from Recents
+  // used to lose them entirely). Hydration always resolves — 1.5s worst case —
+  // and this frame uses the launch-screen colour, so the hand-off is seamless.
+  const [hydrated, setHydrated] = useState(() => isStorageHydrated());
+  useEffect(() => {
+    if (isStorageHydrated()) {
+      return;
+    }
+    let alive = true;
+    hydrateStorage().finally(() => {
+      if (alive) {
+        setHydrated(true);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!hydrated) {
+    return <View style={{ flex: 1, backgroundColor: '#E6F4FE' }} />;
+  }
+  // Android 15+ draws edge-to-edge, and in that mode ADJUST_RESIZE no longer
+  // shrinks the window when the keyboard opens — the soft-input mode is
+  // effectively ignored, so every bottom-anchored input (chat composer, forms,
+  // sign-in) ended up sitting behind the keyboard. Avoiding at the very root,
+  // where the frame starts at y=0, makes RN's height maths exact, and it also
+  // self-corrects: React Native reports the *visible* frame's bottom, so on a
+  // device where the window does resize this collapses to a no-op instead of
+  // shrinking twice. iOS keeps the per-screen KeyboardAvoidingViews it already
+  // has, so this wrapper is Android-only on purpose.
   return (
-    <ThemeProvider>
-      <AppShell />
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'android' ? 'height' : undefined}
+        >
+          <AppShell />
+        </KeyboardAvoidingView>
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }
 
 function AppShell() {
+  // Active palette + mode: the shell paints the system-bar strip and picks the
+  // status-bar icon colour, both of which must follow the appearance toggle.
+  const { mode } = useTheme();
+  const themeColors = useThemeColors();
   // ---------- Navigation & entry flow ----------
   // A linked /privacy or /help URL opens straight on that screen — that is
   // what makes the routes shareable from a store listing or a support reply.
@@ -361,9 +501,23 @@ function AppShell() {
     storageKeys.savedIdeas,
     [],
   );
-  const [chatMessages, setChatMessages] = usePersistentState<CreatorAiChatMessage[]>(
+  // Chat history, including the per-message media payload (see
+  // ChatMessageRecord). Older entries stored without `media` still validate.
+  const [chatMessages, setChatMessages] = usePersistentState<ChatMessageRecord[]>(
     storageKeys.chat,
     [],
+  );
+  // Every chat write goes through commitChat so this ref always mirrors state
+  // synchronously — a generation job that resolves between renders can still
+  // find and patch its own message with it, without racing React's batching.
+  const chatMessagesRef = useRef(chatMessages);
+  const commitChat = useCallback(
+    (update: (previous: ChatMessageRecord[]) => ChatMessageRecord[]) => {
+      const next = update(chatMessagesRef.current);
+      chatMessagesRef.current = next;
+      setChatMessages(next);
+    },
+    [setChatMessages],
   );
 
   // ---------- Transient AI job state ----------
@@ -1478,6 +1632,277 @@ function AppShell() {
     return context;
   };
 
+  // ---------- Generated chat media ----------
+  // One run per assistant reply that asked for an image or a 15s clip: it
+  // starts the job, polls it, and writes every transition back into the
+  // message itself (which is persisted with the conversation, so a finished
+  // url survives a restart and is never regenerated). A run also registers the
+  // timers it sets, so unmounting the app or clearing the chat stops them all.
+  type MediaRun = {
+    stop: () => void;
+    /** True while this run still owns the given copy of its message. */
+    owns: (message: ChatMessageRecord) => boolean;
+  };
+  const mediaRuns = useRef<Set<MediaRun>>(new Set());
+  // Prompt → data URI of the photo an edit was made against. In-memory only
+  // (see MAX_REMEMBERED_EDIT_SOURCES): big enough to be worth forgetting,
+  // small enough that a Retry still finds the source it started with.
+  const editSources = useRef(new Map<string, string>());
+
+  const stopMediaRuns = useCallback(() => {
+    for (const run of [...mediaRuns.current]) {
+      run.stop();
+    }
+    mediaRuns.current.clear();
+    // The messages these sources belonged to are gone (chat cleared, account
+    // switched), so nothing can retry with them any more.
+    editSources.current.clear();
+  }, []);
+
+  const startMediaRun = useCallback(
+    (
+      message: ChatMessageRecord,
+      intent: ChatMediaIntent,
+      resumeJob?: string,
+      sourceDataUri?: string,
+    ): void => {
+      const kind = message.media?.kind ?? intent.kind;
+      const prompt = message.media?.prompt ?? intent.prompt;
+      // Read from the stored message as well as the intent so a resume or a
+      // retry never erases the flag that says this generation is an edit.
+      const isEdit = intent.edit === true || message.media?.edit === true;
+
+      // An edit only has a source while the attached photo's bytes are still
+      // in memory: remember this one before anything else can return early,
+      // then fall back to whatever an earlier send of the same prompt left.
+      if (sourceDataUri) {
+        const sources = editSources.current;
+        sources.delete(prompt); // re-inserted so the oldest entry ages out first
+        if (sources.size >= MAX_REMEMBERED_EDIT_SOURCES) {
+          const [oldest] = sources.keys();
+          if (oldest !== undefined) {
+            sources.delete(oldest);
+          }
+        }
+        sources.set(prompt, sourceDataUri);
+      }
+      const source = sourceDataUri ?? (isEdit ? editSources.current.get(prompt) : undefined);
+
+      // A double tap (or a resumed effect) must never buy a second job for
+      // the same reply.
+      if ([...mediaRuns.current].some((run) => run.owns(message))) {
+        return;
+      }
+
+      const functionUrl = creatorAiFunctionUrl;
+      const anonKey = supabaseAnonKey;
+      let current = message;
+      let cancelled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      // Locate this run's own message by identity: the history can be trimmed
+      // or cleared underneath it, and a write to a message that has left the
+      // conversation is dropped instead of resurrecting it.
+      const patch = (nextMedia: ChatMediaPayload): boolean => {
+        const list = chatMessagesRef.current;
+        const index = list.indexOf(current);
+        if (index < 0) {
+          return false;
+        }
+        const updated: ChatMessageRecord = { ...list[index]!, media: nextMedia };
+        const next = [...list];
+        next[index] = updated;
+        current = updated;
+        commitChat(() => next);
+        return true;
+      };
+
+      const run: MediaRun = {
+        stop: () => {
+          cancelled = true;
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          mediaRuns.current.delete(run);
+        },
+        owns: (candidate) => candidate === current,
+      };
+
+      // Every transition this run writes carries the edit flag, so the stored
+      // message always holds what a Retry needs to rebuild the same request.
+      const payload = (next: Omit<ChatMediaPayload, 'edit'>): ChatMediaPayload =>
+        isEdit ? { ...next, edit: true } : next;
+
+      const fail = (detail?: string): void => {
+        patch(payload({ kind, prompt, status: 'failed', ...(detail ? { detail } : {}) }));
+        run.stop();
+      };
+
+      // Guarded here, not inside the helpers, so both of them (defined below)
+      // see the narrowed non-null credentials.
+      if (!functionUrl || !anonKey) {
+        fail();
+        return;
+      }
+
+      const checkOnce = async (
+        token: string,
+        job: string,
+        deadline: number,
+        failures: number,
+      ): Promise<void> => {
+        timer = null;
+        if (cancelled) {
+          return;
+        }
+        if (Date.now() >= deadline) {
+          fail();
+          return;
+        }
+        try {
+          const state = await checkCreatorMedia(functionUrl, anonKey, token, job);
+          if (cancelled) {
+            return;
+          }
+          if (state.status === 'ready') {
+            patch(payload({ kind, prompt, status: 'ready', url: state.url }));
+            run.stop();
+            return;
+          }
+          if (state.status === 'failed') {
+            fail(failureDetail(state));
+            return;
+          }
+          schedulePoll(token, job, deadline, 0);
+        } catch {
+          // One dropped poll is not a failed generation — a few in a row is.
+          if (cancelled) {
+            return;
+          }
+          if (failures + 1 >= MEDIA_POLL_FAILURES_ALLOWED) {
+            fail();
+            return;
+          }
+          schedulePoll(token, job, deadline, failures + 1);
+        }
+      };
+
+      const schedulePoll = (token: string, job: string, deadline: number, failures: number): void => {
+        if (cancelled) {
+          return;
+        }
+        timer = setTimeout(() => {
+          void checkOnce(token, job, deadline, failures);
+        }, MEDIA_POLL_INTERVAL_MS);
+      };
+
+      const begin = async (): Promise<void> => {
+        const deadline = Date.now() + MEDIA_TIMEOUT_MS;
+        let token: string;
+        try {
+          token = await getCreatorToken();
+        } catch {
+          fail();
+          return;
+        }
+        if (cancelled) {
+          return;
+        }
+        if (resumeJob) {
+          // Picked up after a relaunch: the job already exists server-side, so
+          // poll it rather than paying for a second generation.
+          schedulePoll(token, resumeJob, deadline, 0);
+          return;
+        }
+        try {
+          const request: MediaGenerationRequest = {
+            kind,
+            prompt,
+            ...(intent.duration !== undefined ? { duration: intent.duration } : {}),
+            ...(isEdit ? { edit: true } : {}),
+            // Without a source (a huge attachment that streamed instead, or a
+            // retry after a restart) the request still goes out — the server
+            // regenerates from the prompt rather than the edit being dropped.
+            ...(source ? { sourceDataUri: source } : {}),
+          };
+          const started = await generateCreatorMedia(functionUrl, anonKey, token, request);
+          if (cancelled) {
+            return;
+          }
+          if (started.status === 'ready') {
+            patch(payload({ kind, prompt, status: 'ready', url: started.url }));
+            run.stop();
+            return;
+          }
+          if (started.status === 'failed') {
+            fail(failureDetail(started));
+            return;
+          }
+          if (!patch(payload({ kind, prompt, status: 'pending', job: started.job }))) {
+            run.stop();
+            return;
+          }
+          schedulePoll(token, started.job, deadline, 0);
+        } catch {
+          fail();
+        }
+      };
+
+      mediaRuns.current.add(run);
+      // Pending lands before the network call so the reply never sits in the
+      // thread without feedback.
+      if (!patch(payload({ kind, prompt, status: 'pending', ...(resumeJob ? { job: resumeJob } : {}) }))) {
+        run.stop();
+        return;
+      }
+      void begin();
+    },
+    [commitChat, getCreatorToken],
+  );
+
+  // Stop every timer when the app goes away, so no poll outlives its owners.
+  useEffect(() => {
+    return () => {
+      stopMediaRuns();
+    };
+  }, [stopMediaRuns]);
+
+  // Pick the thread back up after a relaunch: a job that was already running
+  // resumes polling (no second generation), and one that vanished mid-flight
+  // becomes the failed card, which offers Retry. Messages that are ready or
+  // failed are never polled.
+  useEffect(() => {
+    for (const message of [...chatMessagesRef.current]) {
+      const media = message.media;
+      if (!media || media.status !== 'pending') {
+        continue;
+      }
+      if (media.job) {
+        startMediaRun(message, { kind: media.kind, prompt: media.prompt }, media.job);
+        continue;
+      }
+      commitChat((previous) =>
+        previous.map((entry) =>
+          entry === message ? { ...entry, media: { ...media, status: 'failed' as const } } : entry,
+        ),
+      );
+    }
+  }, [commitChat, startMediaRun]);
+
+  const retryChatMedia = useCallback(
+    (message: ChatMessageRecord) => {
+      const media = message.media;
+      // Anything that is not already running can be asked for again — that is
+      // the failed card's Retry, and it covers a stored `ready` with no url.
+      if (!media || media.status === 'pending') {
+        return;
+      }
+      startMediaRun(message, { kind: media.kind, prompt: media.prompt });
+    },
+    [startMediaRun],
+  );
+
   const sendChatMessage = async (
     text: string,
     attachment?: CreatorAiChatAttachmentInput,
@@ -1488,7 +1913,7 @@ function AppShell() {
     }
     setChatSending(true);
     setChatError(null);
-    const previousMessages = chatMessages;
+    const previousMessages = chatMessagesRef.current;
     const userMessage: CreatorAiChatMessage = {
       role: 'user',
       content: message,
@@ -1504,10 +1929,10 @@ function AppShell() {
         : {}),
     };
     const conversation = [...previousMessages, userMessage].slice(-100);
-    setChatMessages(conversation);
+    commitChat(() => conversation);
     try {
       const token = await getCreatorToken();
-      const reply = await sendCreatorAiChat(
+      const rawReply: unknown = await sendCreatorAiChat(
         creatorAiFunctionUrl,
         supabaseAnonKey,
         token,
@@ -1517,9 +1942,39 @@ function AppShell() {
         buildChatContext(),
         attachment ?? null,
       );
-      setChatMessages(
-        [...conversation, { role: 'assistant' as const, content: reply }].slice(-100),
-      );
+      const { text: reply, media } = normalizeCreatorChatReply(rawReply);
+      if (!reply && !media) {
+        throw new Error('CreatorDNA returned an empty chat reply. Please try again.');
+      }
+      const assistantMessage: ChatMessageRecord = {
+        role: 'assistant',
+        content: reply,
+        // The reply renders first and the media card lands under it, already
+        // pending, so generation starts from the same tick as the answer.
+        ...(media
+          ? {
+              media: {
+                kind: media.kind,
+                prompt: media.prompt,
+                status: 'pending' as const,
+                // Persisted (unlike the photo itself) so a Retry — now or
+                // after a relaunch — knows it is re-running an edit.
+                ...(media.edit ? { edit: true as const } : {}),
+              },
+            }
+          : {}),
+      };
+      commitChat((previous) => [...previous, assistantMessage].slice(-100));
+      if (media) {
+        // The coach says `edit` when it is changing the image that was just
+        // attached, so the source has to come from *this* message's input:
+        // later messages (and storage) only keep the attachment's metadata.
+        const sourceDataUri =
+          media.edit && attachment?.kind === 'image' && attachment.base64
+            ? `data:${attachment.mimeType || 'image/jpeg'};base64,${attachment.base64}`
+            : undefined;
+        startMediaRun(assistantMessage, media, undefined, sourceDataUri);
+      }
     } catch (chatSendError) {
       setChatError(
         chatSendError instanceof Error
@@ -1532,16 +1987,20 @@ function AppShell() {
   };
 
   const clearChat = useCallback(() => {
-    setChatMessages([]);
+    // The conversation is gone, so any generation still running for it has
+    // nothing left to write into — stop its timers with the messages.
+    stopMediaRuns();
+    commitChat(() => []);
     setChatError(null);
-  }, [setChatMessages]);
+  }, [commitChat, stopMediaRuns]);
 
   const eraseLocalData = useCallback(() => {
     setAnalyses([]);
     setIdeas([]);
     setTrendingIdeas([]);
     setSavedIdeas([]);
-    setChatMessages([]);
+    stopMediaRuns();
+    commitChat(() => []);
     setSelectedAnalysisId(null);
     setJob(null);
     setAnalysisError(null);
@@ -1549,7 +2008,7 @@ function AppShell() {
     setChatError(null);
     // Saved accounts are intentionally kept — they're login credentials,
     // not content data, and removing them would break one-tap sign-in.
-  }, [setAnalyses, setChatMessages, setIdeas, setSavedIdeas, setTrendingIdeas]);
+  }, [commitChat, setAnalyses, setIdeas, setSavedIdeas, setTrendingIdeas, stopMediaRuns]);
 
   const navigateTab = useCallback((tab: NavTab) => {
     setScreen(tab === 'content' ? 'ideas' : tab);
@@ -1764,12 +2223,14 @@ function AppShell() {
         styles.safeArea,
         {
           backgroundColor:
-            screen === 'landing' ? LANDING_BG : colors.darkBg,
+            screen === 'landing' ? LANDING_BG : themeColors.darkBg,
         },
       ]}
       {...panResponder.panHandlers}
     >
-      <StatusBar style="dark" />
+      {/* The landing page keeps the branded light look; everywhere else the
+          status-bar glyph colour follows the appearance toggle. */}
+      <StatusBar style={screen === 'landing' || mode !== 'dark' ? 'dark' : 'light'} />
       {screen === 'landing' ? (
         <LandingScreen
           signedIn={signedInEntry}
@@ -1987,7 +2448,8 @@ function AppShell() {
           error={chatError}
           onSend={(text, attachment) => void sendChatMessage(text, attachment)}
           onBack={() => setScreen(chatReturn === 'chat' ? 'home' : chatReturn)}
-          onClear={() => setChatMessages([])}
+          onClear={clearChat}
+          onRetryMedia={retryChatMedia}
           getCreatorToken={getCreatorToken}
         />
       ) : (

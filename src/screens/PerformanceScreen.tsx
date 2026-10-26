@@ -15,6 +15,7 @@ import {
 import type { AnalysisRecord } from '../lib/storage';
 import type { InstagramDashboard } from '../services/instagramDashboard';
 import { colors, FAB_CLEARANCE, radius, type } from '../theme';
+import { useStyles } from '../themeContext';
 
 const METRICS = ['Overview', 'Reach', 'Engagement'];
 // 365 is labelled "1 year"; Instagram only retains 90 days of insights, so
@@ -32,6 +33,7 @@ export function PerformanceScreen({
 }) {
   const [metric, setMetric] = useState(METRICS[0]);
   const [days, setDays] = useState<number>(30);
+  const styles = useStyles(makeStyles);
 
   const totals = periodTotals(dashboard, days);
   // 30 days compares against the server's real previous-30-day window; the
@@ -208,60 +210,63 @@ export function PerformanceScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.white },
-  content: {
-    paddingHorizontal: 18,
-    paddingTop: 8,
-    paddingBottom: FAB_CLEARANCE,
-    gap: 14,
-  },
+// Built per palette through useStyles: a module-scope StyleSheet bakes in the
+// palette that existed at import time, so the Appearance toggle never reaches it.
+const makeStyles = (c: typeof colors) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: c.white },
+    content: {
+      paddingHorizontal: 18,
+      paddingTop: 8,
+      paddingBottom: FAB_CLEARANCE,
+      gap: 14,
+    },
 
-  periodRow: { flexDirection: 'row', gap: 8 },
-  periodPill: {
-    flex: 1,
-    textAlign: 'center',
-    paddingVertical: 9,
-    borderRadius: radius.pill,
-    borderWidth: 1.5,
-    borderColor: colors.lightBorder,
-    color: colors.textSub,
-    fontSize: 13,
-    fontWeight: '700',
-    overflow: 'hidden',
-  },
-  periodPillActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primarySoft,
-    color: colors.primary,
-  },
+    periodRow: { flexDirection: 'row', gap: 8 },
+    periodPill: {
+      flex: 1,
+      textAlign: 'center',
+      paddingVertical: 9,
+      borderRadius: radius.pill,
+      borderWidth: 1.5,
+      borderColor: c.lightBorder,
+      color: c.textSub,
+      fontSize: 13,
+      fontWeight: '700',
+      overflow: 'hidden',
+    },
+    periodPillActive: {
+      borderColor: c.primary,
+      backgroundColor: c.primarySoft,
+      color: c.primary,
+    },
 
-  statsRow: { flexDirection: 'row', gap: 10 },
-  deltaNote: { ...type.small, color: colors.textDim, fontSize: 11.5, marginTop: -6 },
+    statsRow: { flexDirection: 'row', gap: 10 },
+    deltaNote: { ...type.small, color: c.textDim, fontSize: 11.5, marginTop: -6 },
 
-  chartCard: {
-    backgroundColor: colors.lightCard,
-    borderWidth: 1,
-    borderColor: colors.lightBorder,
-    borderRadius: radius.md + 2,
-    padding: 16,
-    gap: 8,
-  },
-  chartTitle: { ...type.h4, color: colors.text, fontSize: 16 },
-  reachValue: { ...type.stat, color: colors.text, fontSize: 26 },
-  reachSub: { ...type.small, color: colors.textSub, fontSize: 12.5, fontWeight: '600' },
-  chartNote: { ...type.small, color: colors.textDim, fontSize: 11.5, textAlign: 'center' },
+    chartCard: {
+      backgroundColor: c.lightCard,
+      borderWidth: 1,
+      borderColor: c.lightBorder,
+      borderRadius: radius.md + 2,
+      padding: 16,
+      gap: 8,
+    },
+    chartTitle: { ...type.h4, color: c.text, fontSize: 16 },
+    reachValue: { ...type.stat, color: c.text, fontSize: 26 },
+    reachSub: { ...type.small, color: c.textSub, fontSize: 12.5, fontWeight: '600' },
+    chartNote: { ...type.small, color: c.textDim, fontSize: 11.5, textAlign: 'center' },
 
-  topicRows: { gap: 12, marginTop: 4 },
-  topicRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  topicLabel: { ...type.small, color: colors.text, fontWeight: '700', width: 108 },
-  topicTrack: {
-    flex: 1,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: colors.lightCard2,
-    overflow: 'hidden',
-  },
-  topicFill: { height: '100%', borderRadius: 5, backgroundColor: colors.primary },
-  topicShare: { ...type.small, color: colors.textSub, fontWeight: '800', width: 36, textAlign: 'right' },
-});
+    topicRows: { gap: 12, marginTop: 4 },
+    topicRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    topicLabel: { ...type.small, color: c.text, fontWeight: '700', width: 108 },
+    topicTrack: {
+      flex: 1,
+      height: 9,
+      borderRadius: 5,
+      backgroundColor: c.lightCard2,
+      overflow: 'hidden',
+    },
+    topicFill: { height: '100%', borderRadius: 5, backgroundColor: c.primary },
+    topicShare: { ...type.small, color: c.textSub, fontWeight: '800', width: 36, textAlign: 'right' },
+  });

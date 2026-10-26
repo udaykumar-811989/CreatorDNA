@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -14,6 +14,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { DnaMark } from '../components/DnaMark';
+import { ChatMedia, type ChatMessageRecord } from '../components/ChatMedia';
 import { BackIcon, ImageIcon, SendIcon, SparkIcon, VideoIcon } from '../components/icons';
 import { creatorAiFunctionUrl, supabaseAnonKey } from '../lib/config';
 import { attachCreatorMedia } from '../services/creatorAi';
@@ -132,14 +133,17 @@ export function ChatScreen({
   onSend,
   onBack,
   onClear,
+  onRetryMedia,
   getCreatorToken,
 }: {
-  messages: CreatorAiChatMessage[];
+  messages: ChatMessageRecord[];
   sending: boolean;
   error: string | null;
   onSend: (text: string, attachment?: CreatorAiChatAttachmentInput) => void;
   onBack: () => void;
   onClear: () => void;
+  /** Re-run generation for a reply whose media job failed. */
+  onRetryMedia: (message: ChatMessageRecord) => void;
   getCreatorToken: () => Promise<string>;
 }) {
   const [draft, setDraft] = useState('');
@@ -266,7 +270,7 @@ export function ChatScreen({
         typingText: { ...type.small, color: c.onDarkSub },
 
         errorBox: {
-          backgroundColor: 'rgba(239,68,68,0.12)',
+          backgroundColor: c.redSoft,
           borderRadius: radius.sm,
           padding: 12,
           marginTop: 4,
@@ -500,40 +504,53 @@ export function ChatScreen({
         ) : (
           messages.map((message, index) => {
             const mine = message.role === 'user';
+            const rowKey = `${index}-${message.content.slice(0, 12)}`;
             return (
-              <View
-                key={`${index}-${message.content.slice(0, 12)}`}
-                style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowAi]}
-              >
-                {mine ? (
-                  <LinearGradient
-                    colors={c.gradient}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={[styles.bubble, styles.bubbleMine]}
-                  >
-                    {message.attachment ? (
-                      <BubbleAttachment attachment={message.attachment} mine />
-                    ) : null}
-                    {message.content ? (
-                      <Text style={[styles.bubbleMineText, message.attachment && { marginTop: 8 }]}>
-                        {message.content}
-                      </Text>
-                    ) : null}
-                  </LinearGradient>
-                ) : (
-                  <View style={[styles.bubble, styles.bubbleAi]}>
-                    {message.attachment ? (
-                      <BubbleAttachment attachment={message.attachment} mine={false} />
-                    ) : null}
-                    {message.content ? (
-                      <Text style={[styles.bubbleAiText, message.attachment && { marginTop: 8 }]}>
-                        {message.content}
-                      </Text>
-                    ) : null}
+              <Fragment key={rowKey}>
+                <View
+                  style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowAi]}
+                >
+                  {mine ? (
+                    <LinearGradient
+                      colors={c.gradient}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={[styles.bubble, styles.bubbleMine]}
+                    >
+                      {message.attachment ? (
+                        <BubbleAttachment attachment={message.attachment} mine />
+                      ) : null}
+                      {message.content ? (
+                        <Text style={[styles.bubbleMineText, message.attachment && { marginTop: 8 }]}>
+                          {message.content}
+                        </Text>
+                      ) : null}
+                    </LinearGradient>
+                  ) : (
+                    <View style={[styles.bubble, styles.bubbleAi]}>
+                      {message.attachment ? (
+                        <BubbleAttachment attachment={message.attachment} mine={false} />
+                      ) : null}
+                      {message.content ? (
+                        <Text style={[styles.bubbleAiText, message.attachment && { marginTop: 8 }]}>
+                          {message.content}
+                        </Text>
+                      ) : null}
+                    </View>
+                  )}
+                </View>
+                {/* Generated media renders as its own card under the reply:
+                    it needs the thread's width to size the 9:16 frame, which
+                    a shrink-wrapping bubble can't give it. */}
+                {message.media && !mine ? (
+                  <View style={[styles.bubbleRow, styles.bubbleRowAi]}>
+                    <ChatMedia
+                      media={message.media}
+                      onRetry={() => onRetryMedia(message)}
+                    />
                   </View>
-                )}
-              </View>
+                ) : null}
+              </Fragment>
             );
           })
         )}

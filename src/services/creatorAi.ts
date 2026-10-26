@@ -44,6 +44,13 @@ export type CreatorAiIdea = {
   format: string;
   cta: string;
   priority?: 'high' | 'medium' | 'low';
+  // Context newer servers add so the script panel can explain itself. Optional
+  // because ideas already stored on the device predate these fields and must
+  // keep validating on the way back in.
+  why_it_works?: string;
+  target_viewer?: string;
+  target_length?: string;
+  beats?: string[];
 };
 
 // Small files travel inline (base64 in the JSON body). Larger files stream
@@ -256,6 +263,10 @@ export async function attachCreatorMedia(
   return { kind, mimeType, name, fileUri };
 }
 
+// How a non-2xx body should be translated into a message. Media calls share
+// the same auth plumbing but have their own contract (see `parseResponse`).
+type CreatorAiResponsePurpose = 'password_auth' | 'anonymous_auth' | 'analysis' | 'media';
+
 async function postCreatorAi(
   functionUrl: string,
   anonKey: string,
@@ -263,6 +274,7 @@ async function postCreatorAi(
   route: string,
   payload: Record<string, unknown>,
   timeoutMs = 90_000,
+  purpose: CreatorAiResponsePurpose = 'analysis',
 ): Promise<Record<string, unknown>> {
   let response: Response;
   try {
@@ -279,7 +291,7 @@ async function postCreatorAi(
   } catch {
     throw new Error(`Could not reach CreatorDNA AI to ${route}. Check your connection and retry.`);
   }
-  return parseResponse(response);
+  return parseResponse(response, purpose);
 }
 
 export async function transcribeCreatorAudio(
@@ -300,6 +312,149 @@ export async function transcribeCreatorAudio(
     throw new Error('Gemini could not find clear speech in that recording. Try again or type the transcript.');
   }
   return result.transcript.trim();
+}
+
+// Free media generation (Pollinations) behind the `media` route: the provider
+// key stays on the server, so the app only ever sees public file URLs or a job
+// id to poll. Both helpers share the sign-in plumbing of every other route.
+export type CreatorAiMediaKind = 'image' | 'video';
+
+/** What the coach asked us to make: a visual prompt plus an optional clip length. */
+export type CreatorAiMediaIntent = {
+  kind: CreatorAiMediaKind;
+  prompt: string;
+  duration?: number;
+  /** True when the coach is changing an image the creator attached. */
+  edit?: boolean;
+};
+
+export type CreatorAiMediaState =
+  | { status: 'ready'; url: string }
+  | { status: 'pending'; job: string }
+  | { status: 'failed'; detail?: string };
+
+/**
+ * A media route failure: a provider error, a request the server rejected, or
+ * the feature not being switched on. Unlike every other route these resolve to
+ * `{ status: 'failed', detail }` instead of throwing, so the chat can show the
+ * server's reason rather than a bare "Couldn't create that".
+ */
+class CreatorAiMediaError extends Error {}
+
+/** The server's `detail`, or a sensible sentence when an older server omits it. */
+function mediaFailureDetail(body: Record<string, unknown>): string {
+  const detail = typeof body.detail === 'string' ? body.detail.trim() : '';
+  if (detail) {
+    // Same ceiling the server promises, so a stray field can never balloon.
+    return detail.slice(0, 200);
+  }
+  return body.error === 'media_failed'
+    ? 'The image and video service could not finish that request.'
+    : 'Image and video generation failed. Please try again.';
+}
+
+/**
+ * Maps the media route's JSON onto the state the UI renders. Anything outside
+ * the contract (including a "pending" answer with no job id) reads as failed,
+ * so a malformed provider reply can never crash the chat screen.
+ */
+function toMediaState(body: Record<string, unknown>, pendingJob: string): CreatorAiMediaState {
+  if (
+    body.status === 'ready' &&
+    typeof body.url === 'string' &&
+    /^https:\/\//i.test(body.url)
+  ) {
+    return { status: 'ready', url: body.url };
+  }
+  if (body.status === 'pending') {
+    const job = typeof body.job === 'string' && body.job.trim() ? body.job.trim() : pendingJob;
+    if (job) {
+      return { status: 'pending', job };
+    }
+  }
+  // A failed answer may still explain itself; keep its reason when it does.
+  return {
+    status: 'failed',
+    ...(typeof body.detail === 'string' && body.detail.trim()
+      ? { detail: body.detail.trim().slice(0, 200) }
+      : {}),
+  };
+}
+
+async function requestCreatorMedia(
+  functionUrl: string,
+  anonKey: string,
+  accessToken: string,
+  payload: Record<string, unknown>,
+  pendingJob = '',
+): Promise<CreatorAiMediaState> {
+  let result: Record<string, unknown>;
+  try {
+    // Deliberately short: the server replies as soon as it has a URL or a job
+    // id — the client polls with `checkCreatorMedia` rather than waiting here.
+    result = await postCreatorAi(
+      functionUrl,
+      anonKey,
+      accessToken,
+      'media',
+      payload,
+      45_000,
+      'media',
+    );
+  } catch (error) {
+    // Provider, request, and configuration failures become a failed state that
+    // carries the server's reason, so the creator learns *why* it failed. A
+    // lost connection or an expired session still surfaces as a real error.
+    if (error instanceof CreatorAiMediaError) {
+      return { status: 'failed', detail: error.message };
+    }
+    throw error;
+  }
+  return toMediaState(result, pendingJob);
+}
+
+/** Starts one generation: images answer `ready`, videos answer `pending`. */
+export async function generateCreatorMedia(
+  functionUrl: string,
+  anonKey: string,
+  accessToken: string,
+  input: CreatorAiMediaIntent & { sourceDataUri?: string },
+): Promise<CreatorAiMediaState> {
+  const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
+  // The creator's attached image travels only when there is one: with it the
+  // server runs its edit route (change that picture), without it the plain
+  // generation route (make a new one).
+  const sourceDataUri = typeof input.sourceDataUri === 'string' ? input.sourceDataUri : '';
+  return await requestCreatorMedia(functionUrl, anonKey, accessToken, {
+    kind: input.kind,
+    prompt,
+    // Clips always travel with a length (15 s when the caller has no opinion);
+    // the server clamps it into the 4-15 s window the provider supports.
+    ...(input.kind === 'video'
+      ? { duration: typeof input.duration === 'number' ? input.duration : 15 }
+      : {}),
+    // The coach's `edit` flag rides along for the record; the server keys the
+    // edit itself off the presence of `sourceDataUri`.
+    ...(typeof input.edit === 'boolean' ? { edit: input.edit } : {}),
+    ...(sourceDataUri ? { sourceDataUri } : {}),
+  });
+}
+
+/** Checks one video render; the job id doubles as the pending handle. */
+export async function checkCreatorMedia(
+  functionUrl: string,
+  anonKey: string,
+  accessToken: string,
+  job: string,
+): Promise<CreatorAiMediaState> {
+  const id = typeof job === 'string' ? job.trim() : '';
+  return await requestCreatorMedia(
+    functionUrl,
+    anonKey,
+    accessToken,
+    { job: id },
+    id,
+  );
 }
 
 export type CreatorAiChatContext = {
@@ -354,6 +509,38 @@ export type CreatorAiChatContext = {
   }> | null;
 };
 
+// The coach can come back with a visual request alongside the reply. The
+// server drops a malformed one, and so do we: a bad field never fails a good
+// reply, it just goes missing.
+function parseChatMediaIntent(value: unknown): CreatorAiMediaIntent | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const kind: CreatorAiMediaKind | null =
+    value.kind === 'image' ? 'image' : value.kind === 'video' ? 'video' : null;
+  const prompt = typeof value.prompt === 'string' ? value.prompt.trim() : '';
+  if (!kind || !prompt || prompt.length > 600) {
+    return null;
+  }
+  // `edit` is only carried across when it is a real boolean; a bad value is
+  // dropped field-by-field so it never costs the creator a good reply.
+  const edit = typeof value.edit === 'boolean' ? value.edit : undefined;
+  if (value.duration === undefined || value.duration === null) {
+    return edit === undefined ? { kind, prompt } : { kind, prompt, edit };
+  }
+  if (
+    typeof value.duration !== 'number' ||
+    !Number.isFinite(value.duration) ||
+    value.duration < 4 ||
+    value.duration > 15
+  ) {
+    return null;
+  }
+  return edit === undefined
+    ? { kind, prompt, duration: value.duration }
+    : { kind, prompt, duration: value.duration, edit };
+}
+
 export async function sendCreatorAiChat(
   functionUrl: string,
   anonKey: string,
@@ -363,7 +550,7 @@ export async function sendCreatorAiChat(
   message: string,
   context?: CreatorAiChatContext | null,
   attachment?: CreatorAiChatAttachmentInput | null,
-): Promise<string> {
+): Promise<string | { reply: string; media?: CreatorAiMediaIntent }> {
   const payload: Record<string, unknown> = {
     messages: messages.slice(-8),
     message,
@@ -388,7 +575,11 @@ export async function sendCreatorAiChat(
   if (typeof result.reply !== 'string' || !result.reply.trim()) {
     throw new Error('CreatorDNA returned an empty chat reply. Please try again.');
   }
-  return result.reply.trim();
+  const reply = result.reply.trim();
+  // A plain reply keeps coming back as the bare string callers already expect;
+  // only a reply that also asks for a visual returns the object form.
+  const media = parseChatMediaIntent(result.media);
+  return media ? { reply, media } : reply;
 }
 
 export type CreatorSupportReply = { reply: string; escalate: boolean };
@@ -420,6 +611,42 @@ export async function sendCreatorSupportChat(
   return { reply: result.reply.trim(), escalate: result.escalate === true };
 }
 
+// The script panel's enrichment fields. Older servers omit them entirely, and
+// ideas saved before the upgrade do too, so each one is copied across only
+// when it is well formed — a malformed value is dropped instead of leaking an
+// `undefined`-typed key into the result the screens render from.
+type IdeaExtras = Partial<
+  Pick<CreatorAiIdea, 'why_it_works' | 'target_viewer' | 'target_length' | 'beats'>
+>;
+
+const IDEA_EXTRA_TEXT_KEYS = ['why_it_works', 'target_viewer', 'target_length'] as const;
+
+function isNonEmptyText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+// Beats are the Reel's spine: three to six real steps, none of them blank.
+function isBeatList(value: unknown): value is string[] {
+  return Array.isArray(value) &&
+    value.length >= 3 &&
+    value.length <= 6 &&
+    value.every(isNonEmptyText);
+}
+
+function sanitizeIdeaExtras(raw: Record<string, unknown>): IdeaExtras {
+  const extras: IdeaExtras = {};
+  for (const key of IDEA_EXTRA_TEXT_KEYS) {
+    const value = raw[key];
+    if (isNonEmptyText(value)) {
+      extras[key] = value.trim();
+    }
+  }
+  if (isBeatList(raw.beats)) {
+    extras.beats = raw.beats.map((beat) => beat.trim());
+  }
+  return extras;
+}
+
 export async function generateCreatorIdeas(
   functionUrl: string,
   anonKey: string,
@@ -444,7 +671,20 @@ export async function generateCreatorIdeas(
   ) {
     throw new Error('CreatorDNA returned an invalid idea list. Please try again.');
   }
-  return result.ideas as CreatorAiIdea[];
+  // Build typed objects rather than casting the payload: the required fields
+  // and priority already passed the checks above, and the extras land only if
+  // they passed theirs — so an old server simply yields ideas without them.
+  return (result.ideas as Record<string, unknown>[]).map((raw) => ({
+    title: raw.title as string,
+    hook: raw.hook as string,
+    concept: raw.concept as string,
+    format: raw.format as string,
+    cta: raw.cta as string,
+    ...(raw.priority !== undefined
+      ? { priority: raw.priority as CreatorAiIdea['priority'] }
+      : {}),
+    ...sanitizeIdeaExtras(raw),
+  }));
 }
 
 export type ContentAnalysis = {
@@ -590,7 +830,7 @@ function isContentAnalysis(value: unknown): value is ContentAnalysis {
 
 async function parseResponse(
   response: Response,
-  purpose: 'password_auth' | 'anonymous_auth' | 'analysis' = 'analysis',
+  purpose: CreatorAiResponsePurpose = 'analysis',
 ): Promise<Record<string, unknown>> {
   let body: unknown;
   try {
@@ -603,6 +843,23 @@ async function parseResponse(
   }
   if (!response.ok) {
     const code = typeof body.error === 'string' ? body.error : '';
+    // Media failures are caught by the media helpers and shown as a failed
+    // state carrying the server's reason, not as an error bubble in the chat.
+    if (purpose === 'media') {
+      if (code === 'media_not_configured') {
+        // The one media failure the server answers without a `detail`, so it
+        // keeps its own sentence right here.
+        throw new CreatorAiMediaError(
+          'Image and video generation is not switched on yet. Add the POLLINATIONS_API_KEY secret to Supabase to enable it.',
+        );
+      }
+      if (response.status === 401 || code === 'unauthorized') {
+        // Auth is not a provider failure: the screen has to send the creator
+        // back to sign-in, so this one keeps raising as a real error.
+        throw new Error('Your session has expired. Sign in again to continue.');
+      }
+      throw new CreatorAiMediaError(mediaFailureDetail(body));
+    }
     if (purpose !== 'analysis') {
       const authCode = typeof body.error_code === 'string'
         ? body.error_code
