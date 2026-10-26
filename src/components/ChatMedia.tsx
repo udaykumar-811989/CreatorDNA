@@ -14,15 +14,11 @@ import {
 } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as MediaLibrary from 'expo-media-library';
-// The root export of `expo-media-library` re-exports `saveToLibraryAsync` only
-// as a shim that throws (it exists to print the migration hint), so the
-// function that actually writes into the gallery lives behind /legacy.
-import { saveToLibraryAsync } from 'expo-media-library/legacy';
-import { File, Paths } from 'expo-file-system';
-// Fallback downloader: the new file API and the legacy one fail for different
-// reasons, so a second engine is worth having when the first one throws.
-import { downloadAsync } from 'expo-file-system/legacy';
+// Saving lives behind a platform split rather than a `Platform.OS` check: the
+// gallery modules are evaluated the moment they are imported, and they throw
+// in a browser, which blanked the whole site. `mediaGallery.web.ts` is what
+// resolves there instead (see the comment in that file).
+import { saveMediaToGallery } from '../lib/mediaGallery';
 import type { CreatorAiChatMessage } from '../services/creatorAi';
 import { useThemeColors } from '../themeContext';
 import { radius, type } from '../theme';
@@ -129,34 +125,6 @@ function ChatMediaViewer({
   );
 }
 
-// Extensions worth keeping when the downloaded file is named locally: the
-// media library infers the asset type from them, and anything else (signed
-// URLs, path-less CDN routes) falls back to the kind being rendered.
-const SAVE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'mp4', 'mov', 'webm'];
-
-function saveFileName(url: string, kind: 'image' | 'video'): string {
-  const path = url.split(/[?#]/)[0] ?? '';
-  const tail = path.split('/').pop() ?? '';
-  const extension = tail.includes('.') ? (tail.split('.').pop() ?? '').toLowerCase() : '';
-  const safe = SAVE_EXTENSIONS.includes(extension) ? extension : kind === 'image' ? 'jpg' : 'mp4';
-  // A fresh name per tap: the download API rejects a destination that already
-  // exists, and two saves of the same asset should not fight over one file.
-  return `creatordna-${Date.now()}.${safe}`;
-}
-
-/**
- * Ask for photo access once per permission flavour. Returns the current state
- * untouched when the OS says it will not prompt again, so the caller can fall
- * through to the Settings wording instead of looping on a dead prompt.
- */
-async function askMediaPermission(writeOnly: boolean) {
-  const current = await MediaLibrary.getPermissionsAsync(writeOnly);
-  if (current.granted || !current.canAskAgain) {
-    return current;
-  }
-  return MediaLibrary.requestPermissionsAsync(writeOnly);
-}
-
 /** First line of an error, capped — enough to identify the failure, never a trace. */
 function errorReason(error: unknown): string | undefined {
   const raw =
@@ -169,10 +137,11 @@ function errorReason(error: unknown): string | undefined {
 }
 
 /**
- * The Download pill under a finished asset: ask for photo access, pull the
- * remote file into the app cache, then hand that local uri to the gallery.
- * Owns its own timers (the "Saved ✓" label reverts on its own) so they are
- * cleared with the card instead of outliving it.
+ * The Download pill under a finished asset. In a browser it downloads the
+ * bytes itself (there is no gallery to hand them to); in the app it asks for
+ * photo access and writes through `saveMediaToGallery`. Owns its own timers
+ * (the "Saved ✓" label reverts on its own) so they are cleared with the card
+ * instead of outliving it.
  */
 function ChatMediaSave({ url, kind }: { url: string; kind: 'image' | 'video' }) {
   const c = useThemeColors();
@@ -226,11 +195,51 @@ function ChatMediaSave({ url, kind }: { url: string; kind: 'image' | 'video' }) 
       restoreTimer.current = null;
     }
 
-    // There is no gallery on the web: open the file so the browser's own
-    // long-press / save path takes over instead of failing silently.
+    // There is no gallery in a browser, so the file itself is what the creator
+    // gets: fetch the bytes and hand them to an <a download> click, which
+    // lands them in the downloads folder without leaving the chat. A CDN that
+    // refuses to be read cross-origin falls through to opening the file in a
+    // new tab instead, where Save image / long-press still works.
     if (Platform.OS === 'web') {
       try {
+        const response = await fetch(url);
+        if (response.ok) {
+          const blob = await response.blob();
+          const type = (response.headers.get('content-type') ?? '').split(';')[0].trim();
+          const extension = type.includes('png')
+            ? 'png'
+            : type.includes('webp')
+              ? 'webp'
+              : type.includes('mp4')
+                ? 'mp4'
+                : type.includes('webm')
+                  ? 'webm'
+                  : kind === 'image'
+                    ? 'jpg'
+                    : 'mp4';
+          const href = URL.createObjectURL(blob);
+          const anchor = document.createElement('a');
+          anchor.href = href;
+          anchor.download = `creatordna-${Date.now()}.${extension}`;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          // Revoking straight away cancels the transfer in some browsers, so
+          // the object outlives the click by a minute and then goes.
+          setTimeout(() => URL.revokeObjectURL(href), 60000);
+          setPhase('saved');
+          restoreTimer.current = setTimeout(() => {
+            restoreTimer.current = null;
+            setPhase('idle');
+          }, 2500);
+          return;
+        }
+      } catch (browserError) {
+        console.warn('[ChatMedia] browser download failed, opening instead', browserError);
+      }
+      try {
         await Linking.openURL(url);
+        setNote({ text: 'Opened in a new tab — use Save image to keep it.', error: false });
       } catch {
         setNote({ text: 'Long-press the image to save it.', error: false });
       }
@@ -239,46 +248,11 @@ function ChatMediaSave({ url, kind }: { url: string; kind: 'image' | 'video' }) 
 
     setPhase('saving');
     try {
-      // Look before asking: once the user has denied, the OS stops showing the
-      // prompt, so re-requesting would only bounce back here as a denial. Full
-      // photo access is asked for first, but Android 13+ can also grant
-      // write-only ("selected photos") access, and that is all saving a brand
-      // new file needs — so it is worth a second attempt before giving up.
-      let permission = await askMediaPermission(false);
-      if (!permission.granted) {
-        permission = await askMediaPermission(true);
-      }
-      if (!permission.granted) {
+      const outcome = await saveMediaToGallery(url, kind);
+      if (outcome.status === 'denied') {
         setNote({ text: 'Allow photo access in Settings to save this.', error: false });
         setPhase('idle');
         return;
-      }
-
-      const destination = new File(Paths.cache, saveFileName(url, kind));
-      let localUri: string;
-      try {
-        localUri = (await File.downloadFileAsync(url, destination)).uri;
-      } catch (primaryError) {
-        console.warn('[ChatMedia] primary download failed, trying legacy', primaryError);
-        const legacy = await downloadAsync(url, destination.uri);
-        if (legacy.status && (legacy.status < 200 || legacy.status >= 300)) {
-          throw new Error(`the download was refused (HTTP ${legacy.status})`);
-        }
-        localUri = legacy.uri;
-      }
-      try {
-        await saveToLibraryAsync(localUri);
-      } finally {
-        // The gallery keeps its own copy now; the cache file was only a
-        // stepping stone, and repeated saves would otherwise pile up in it.
-        try {
-          const local = new File(localUri);
-          if (local.exists) {
-            local.delete();
-          }
-        } catch {
-          // The OS reclaims the cache on its own — never fail a saved file here.
-        }
       }
       setPhase('saved');
       restoreTimer.current = setTimeout(() => {
