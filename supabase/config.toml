@@ -8,3 +8,9 @@ verify_jwt = false
 
 [functions.creator-ai]
 verify_jwt = true
+
+[functions.discover]
+verify_jwt = true
+
+[functions.community]
+verify_jwt = true

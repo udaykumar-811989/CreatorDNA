@@ -335,6 +335,17 @@ export function GridIcon({ size = 20, color: colorProp, strokeWidth = 1.8 }: Ico
   );
 }
 
+export function CompassIcon({ size = 24, color: colorProp, strokeWidth = 1.9 }: IconProps) {
+  const color = useIconColor(colorProp);
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Circle cx="12" cy="12" r="8.8" {...stroke(color, strokeWidth)} />
+      {/* The needle: an offset diamond, so it reads as a compass at 20px. */}
+      <Path d="M15.7 8.3 13.5 13.5 8.3 15.7 10.5 10.5z" {...stroke(color, strokeWidth)} />
+    </Svg>
+  );
+}
+
 export function GearIcon({ size = 22, color: colorProp, strokeWidth = 1.8 }: IconProps) {
   const color = useIconColor(colorProp);
   return (

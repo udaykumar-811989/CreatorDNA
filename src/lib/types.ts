@@ -24,6 +24,7 @@ const SCREEN_NAMES = [
   'connect',
   'connected',
   'home',
+  'discover',
   'dna',
   'ideas',
   'plan',
@@ -53,6 +54,7 @@ export const LIGHT_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
   'landing',
   'connect',
   'connected',
+  'discover',
   'dna',
   'ideas',
   'plan',
@@ -67,6 +69,7 @@ export const LIGHT_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
 
 export const NAV_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
   'home',
+  'discover',
   'ideas',
   'dna',
   'plan',

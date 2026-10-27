@@ -2,6 +2,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { DnaMark } from '../components/DnaMark';
+import { MilestonesCard } from '../components/MilestonesCard';
 import { ChevronRightIcon, GearIcon, LinkOutIcon, LogoutIcon, DocIcon, SparkIcon } from '../components/icons';
 import { Avatar, Badge, ListRow, ScreenHeader } from '../components/ui';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
@@ -13,6 +14,7 @@ export function ProfileScreen({
   dashboard,
   recordCount,
   sessionWarning,
+  getCreatorToken,
   onOpenAnalyses,
   onViewDna,
   onOpenSettings,
@@ -24,6 +26,7 @@ export function ProfileScreen({
   dashboard: InstagramDashboard | null;
   recordCount: number;
   sessionWarning: boolean;
+  getCreatorToken: () => Promise<string>;
   onOpenAnalyses: () => void;
   onViewDna: () => void;
   onOpenSettings: () => void;
@@ -153,6 +156,14 @@ export function ProfileScreen({
             />
           </View>
         </Pressable>
+
+        {/* Permanent badge shelf: earned rungs stay earned, locked ones show
+            exactly how far away they are. */}
+        <MilestonesCard
+          getCreatorToken={getCreatorToken}
+          handle={username}
+          connected={connected}
+        />
 
         {sessionWarning ? (
           <Text accessibilityRole="alert" style={styles.warning}>

@@ -32,6 +32,16 @@ export const storageKeys = {
   sync: 'creatordna.sync.v1',
   fabPosition: 'creatordna.fabPosition.v1',
   theme: 'creatordna.theme.v1',
+  // Which milestones this device has already thrown a celebration for, plus
+  // when follower verification last ran. Both are app-level, not per-account:
+  // a badge is a fact about the connected Instagram account, not about who is
+  // signed in, and re-signing-in must never replay the confetti.
+  celebratedMilestones: 'creatordna.celebrated.v1',
+  milestoneSyncAt: 'creatordna.milestoneSyncAt.v1',
+  // Discover trends are public, device-level data (like the theme): every
+  // account on this install sees the same Reddit/X/HN front page, so this key
+  // is deliberately NOT account-scoped.
+  discoverTrends: 'creatordna.discoverTrends.v1',
   // Device-level preference, like the theme: it belongs to whoever uses this
   // install, not to any one signed-in account.
   notificationPrefs: 'creatordna.notificationPrefs.v1',

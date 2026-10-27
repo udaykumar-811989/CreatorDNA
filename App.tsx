@@ -15,6 +15,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomNav, NavTab } from './src/components/BottomNav';
 import { FloatingAiButton } from './src/components/FloatingAiButton';
+import { AchievementOverlay } from './src/components/AchievementOverlay';
 import type { IdeaRequest } from './src/components/modals';
 import {
   AnalysisSubmission,
@@ -31,6 +32,8 @@ import {
   supabaseAnonKey,
   supabaseUrl,
 } from './src/lib/config';
+import { type AchievementMilestone } from './src/lib/community/model';
+import { syncVerifiedFollowers } from './src/services/milestones';
 import {
   AnalysisRecord,
   adoptContentScope,
@@ -39,9 +42,11 @@ import {
   hydrateStorage,
   isStorageHydrated,
   preloadStorageKeys,
+  readJson,
   scopedStorageKey,
   storageKeys,
   usePersistentState,
+  writeJson,
 } from './src/lib/storage';
 import {
   buildPlan,
@@ -122,6 +127,7 @@ import { ChatScreen } from './src/screens/ChatScreen';
 import { SaveAccountPrompt, SavedAccountsSheet } from './src/components/AccountModals';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { ConnectedScreen } from './src/screens/ConnectedScreen';
+import { DiscoverScreen } from './src/screens/DiscoverScreen';
 import { DnaScreen } from './src/screens/DnaScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { IdeasScreen } from './src/screens/IdeasScreen';
@@ -338,9 +344,23 @@ const NO_FAB: ReadonlySet<Screen> = new Set<Screen>([
   'privacy',
 ]);
 
-// The five bottom-bar screens, in order: a left/right swipe across the app
-// cycles through them, and Back from any of them lands on Home.
-const TAB_SCREENS: readonly string[] = ['home', 'ideas', 'dna', 'plan', 'profile'];
+// How often the app re-reads the verified follower count from Instagram. The
+// number only changes on Instagram's side, so polling more often than this
+// would spend Graph API quota to learn nothing new — while still catching a
+// crossed milestone within the same day.
+const MILESTONE_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+// The bottom-bar screens, in the same order as the bar itself: a left/right
+// swipe across the app cycles through them, and Back from any of them lands
+// on Home.
+const TAB_SCREENS: readonly string[] = [
+  'home',
+  'ideas',
+  'discover',
+  'dna',
+  'plan',
+  'profile',
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -1619,6 +1639,71 @@ function AppShell() {
     return token;
   }, [supabaseAccessToken]);
 
+  // ---------- Verified follower milestones ----------
+  //
+  // The count comes back from Instagram via the `community` edge function, so
+  // what appears here was checked by Instagram, not asserted by the app. A
+  // milestone already thrown a party for is never celebrated again: the set of
+  // celebrated rewards is written once and read back on every launch.
+  const [celebration, setCelebration] = useState<{
+    milestone: AchievementMilestone;
+    followers: number;
+    handle: string | null;
+    measuredAt: string;
+    next: AchievementMilestone | null;
+  } | null>(null);
+  const milestoneSyncInFlight = useRef(false);
+
+  const syncMilestones = useCallback(async () => {
+    // `sessionToken` is the Instagram token, so a signed-in account that never
+    // connected Instagram has nothing to verify.
+    if (!sessionToken || milestoneSyncInFlight.current) return;
+    const last = readJson<number>(storageKeys.milestoneSyncAt, 0);
+    if (Date.now() - last < MILESTONE_SYNC_INTERVAL_MS) return;
+
+    milestoneSyncInFlight.current = true;
+    try {
+      const token = await getCreatorToken();
+      const result = await syncVerifiedFollowers(token, sessionToken);
+      if (!isMounted.current || !result.ok) return;
+      writeJson(storageKeys.milestoneSyncAt, Date.now());
+      if (result.earned.length === 0) return;
+
+      const celebrated = new Set(readJson<number[]>(storageKeys.celebratedMilestones, []));
+      const fresh = result.earned.filter((entry) => !celebrated.has(entry));
+      if (fresh.length === 0) return;
+
+      // Several can unlock at once (a big jump after a break). Celebrate the
+      // biggest one; the rest simply appear as earned badges.
+      const chosen: AchievementMilestone = Math.max(...fresh) as AchievementMilestone;
+      for (const entry of fresh) celebrated.add(entry);
+      writeJson(
+        storageKeys.celebratedMilestones,
+        [...celebrated].sort((a, b) => a - b),
+      );
+      setCelebration({
+        milestone: chosen,
+        followers: result.followers,
+        handle: profile?.username ?? null,
+        measuredAt: result.measuredAt,
+        next: result.next,
+      });
+    } catch {
+      // Verification failing is not the creator's problem to solve here; the
+      // next visit retries. Nothing on screen depends on this call.
+    } finally {
+      milestoneSyncInFlight.current = false;
+    }
+  }, [sessionToken, getCreatorToken, profile]);
+
+  // Runs on entry to any signed-in screen; the throttle above makes the
+  // repeated calls free until the interval has actually elapsed.
+  useEffect(() => {
+    if (sessionToken && NAV_SCREENS.has(screen)) {
+      void syncMilestones();
+    }
+  }, [sessionToken, screen, syncMilestones]);
+
   const runAnalysis = useCallback(
     async (submission: AnalysisSubmission, origin: Screen) => {
       if (!creatorAiFunctionUrl || !supabaseUrl || !supabaseAnonKey) {
@@ -2448,6 +2533,26 @@ function AppShell() {
     goal: 'grow engagement with short reels',
   };
 
+  /**
+   * Hands a Discover trend to the Ideas tab. The trend's headline becomes the
+   * topic, so the AI writes about what is genuinely being discussed right now
+   * rather than a generic prompt — and the result lands in the main ideas list
+   * where the creator will actually see it.
+   */
+  const turnTrendIntoIdea = useCallback(
+    (topic: string) => {
+      const trimmed = topic.trim().slice(0, 200);
+      if (!trimmed) return;
+      setScreen('ideas');
+      void handleGenerate('append', {
+        topic: `${trimmed} — short-form content ideas`,
+        audience: ideaDefaults.audience,
+        goal: ideaDefaults.goal,
+      });
+    },
+    [ideaDefaults, handleGenerate],
+  );
+
   const jobBusy =
     submitting || (job !== null && job.status !== 'completed' && job.status !== 'failed');
 
@@ -2486,6 +2591,7 @@ function AppShell() {
         : screen === 'ideas'
           ? 'content'
           : screen === 'home' ||
+              screen === 'discover' ||
               screen === 'dna' ||
               screen === 'plan' ||
               screen === 'profile'
@@ -2734,6 +2840,8 @@ function AppShell() {
           unreadNotifications={notifState.items.filter((entry) => !entry.isRead).length}
           onOpenNotifications={() => setScreen('notifications')}
         />
+      ) : screen === 'discover' ? (
+        <DiscoverScreen getCreatorToken={getCreatorToken} onTurnToIdea={turnTrendIntoIdea} />
       ) : screen === 'dna' ? (
         <DnaScreen
           profile={profile}
@@ -2837,6 +2945,7 @@ function AppShell() {
           dashboard={dashboard}
           recordCount={analyses.length}
           sessionWarning={sessionWarning}
+          getCreatorToken={getCreatorToken}
           onOpenAnalyses={() => setScreen('analysesList')}
           onViewDna={() => setScreen('dna')}
           onOpenSettings={() => setScreen('settings')}
@@ -3044,6 +3153,19 @@ function AppShell() {
         }}
         onForget={(email) => forgetSavedAccount(email)}
       />
+
+      {/* Rendered last so it sits above every screen, sheet and the bottom
+          bar. It is only ever mounted by an achievement the server recorded. */}
+      {celebration ? (
+        <AchievementOverlay
+          milestone={celebration.milestone}
+          followers={celebration.followers}
+          handle={celebration.handle}
+          measuredAt={celebration.measuredAt}
+          next={celebration.next}
+          onDismiss={() => setCelebration(null)}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }

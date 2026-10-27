@@ -1,0 +1,527 @@
+// Community domain model: types, row parsing, input validation and the reward
+// maths. Everything here is pure so it can be unit tested without a network.
+
+// ----------------------------------------------------------------- types ----
+
+export const POST_KINDS = ['update', 'collab', 'question', 'showcase'] as const;
+export type PostKind = (typeof POST_KINDS)[number];
+
+export const POST_KIND_LABELS: Record<PostKind, string> = {
+  update: 'Update',
+  collab: 'Collab',
+  question: 'Question',
+  showcase: 'Showcase',
+};
+
+export type CreatorProfile = {
+  userId: string;
+  handle: string;
+  displayName: string;
+  bio: string;
+  niche: string;
+  goals: string[];
+  avatarUrl: string | null;
+  website: string | null;
+  location: string | null;
+  isListed: boolean;
+  postCount: number;
+  followerCount: number;
+  followingCount: number;
+  viewCount: number;
+  likeCount: number;
+  commentCount: number;
+  /** Only present on rows read back after a write. */
+  createdAt?: string;
+};
+
+export type CommunityPost = {
+  id: string;
+  userId: string;
+  kind: PostKind;
+  title: string | null;
+  body: string;
+  tags: string[];
+  link: string | null;
+  likeCount: number;
+  commentCount: number;
+  viewCount: number;
+  createdAt: string;
+  /** Filled in by the client once the author profiles have been fetched. */
+  author?: CreatorProfile | null;
+  /** Whether *this* creator has liked it — filled in client-side. */
+  likedByMe?: boolean;
+};
+
+export type PostComment = {
+  id: string;
+  postId: string;
+  userId: string;
+  body: string;
+  createdAt: string;
+  author?: CreatorProfile | null;
+};
+
+export type FollowEdge = {
+  followerId: string;
+  followedId: string;
+  createdAt: string;
+};
+
+export type LeaderboardMetric = 'followers' | 'views' | 'trending' | 'overall';
+
+export const LEADERBOARD_METRICS: LeaderboardMetric[] = [
+  'followers',
+  'views',
+  'trending',
+  'overall',
+];
+
+export const LEADERBOARD_METRIC_LABELS: Record<LeaderboardMetric, string> = {
+  followers: 'Most Followers',
+  views: 'Most Views',
+  trending: 'Trending Creators',
+  overall: 'Overall',
+};
+
+export type LeaderboardRow = {
+  userId: string;
+  handle: string;
+  displayName: string;
+  avatarUrl: string | null;
+  niche: string;
+  location: string | null;
+  followerCount: number;
+  followingCount: number;
+  postCount: number;
+  viewCount: number;
+  likeCount: number;
+  commentCount: number;
+  engagement7d: number;
+  /** -1 when the creator has never had their Instagram follower count verified. */
+  instagramFollowers: number;
+  topMilestone: number;
+  score: number;
+  value: number;
+  rank: number;
+};
+
+/**
+ * The ranking rules, in the exact wording the server uses. The screen prints
+ * these verbatim so a creator can always see *why* someone outranks them.
+ */
+export const LEADERBOARD_RULES: Record<LeaderboardMetric, string> = {
+  followers:
+    'Followers inside CreatorDNA — the number of creators who follow you in the app.',
+  views: 'Distinct creators who opened one of your community posts.',
+  trending: 'Likes and comments your posts received in the last 7 days.',
+  overall: 'Followers ×3 + views ÷10 + posts ×5 + 7-day engagement ×2.',
+};
+
+export type AchievementMilestone = 1000 | 10000 | 50000 | 100000 | 500000 | 1000000;
+
+export const MILESTONES: AchievementMilestone[] = [
+  1000, 10000, 50000, 100000, 500000, 1000000,
+];
+
+export type Achievement = {
+  userId: string;
+  milestone: AchievementMilestone;
+  earnedAt: string;
+  source: string;
+};
+
+/**
+ * The permanent badge each milestone awards.
+ *
+ * Every rung looks different — glyph, name and colour — because a row of six
+ * identical medals tells a creator nothing about what they have actually
+ * unlocked. The glyph set is restricted to characters every platform font
+ * carries, so a badge never renders as a tofu box.
+ */
+export const MILESTONE_BADGES: Record<
+  AchievementMilestone,
+  { glyph: string; title: string; tint: string }
+> = {
+  1000: { glyph: '★', title: 'Rising Creator', tint: '#12B76A' },
+  10000: { glyph: '◆', title: 'Growing Voice', tint: '#2E7BD6' },
+  50000: { glyph: '●', title: 'Established Creator', tint: '#1A56AE' },
+  100000: { glyph: '▲', title: 'Category Leader', tint: '#4C92E8' },
+  500000: { glyph: '■', title: 'Top Creator', tint: '#F59E0B' },
+  1000000: { glyph: '◉', title: 'Million Club', tint: '#EF4444' },
+};
+
+export type FollowerStats = {
+  userId: string;
+  instagramUserId: string | null;
+  followers: number;
+  source: string;
+  measuredAt: string;
+};
+
+// ------------------------------------------------------------- raw rows ----
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function str(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function nullableStr(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function num(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function intList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+function nonNeg(value: unknown): number {
+  const n = num(value, 0);
+  return n >= 0 ? Math.floor(n) : 0;
+}
+
+/** Reads a PostgREST row into a profile, or null when it is unusable. */
+export function profileFromRow(row: unknown): CreatorProfile | null {
+  if (!isRecord(row)) return null;
+  const userId = str(row.user_id);
+  const handle = str(row.handle);
+  if (!userId || !handle) return null;
+  return {
+    userId,
+    handle,
+    displayName: str(row.display_name, handle),
+    bio: str(row.bio),
+    niche: str(row.niche),
+    goals: intList(row.goals),
+    avatarUrl: nullableStr(row.avatar_url),
+    website: nullableStr(row.website),
+    location: nullableStr(row.location),
+    isListed: row.is_listed !== false,
+    postCount: nonNeg(row.post_count),
+    followerCount: nonNeg(row.follower_count),
+    followingCount: nonNeg(row.following_count),
+    viewCount: nonNeg(row.view_count),
+    likeCount: nonNeg(row.like_count),
+    commentCount: nonNeg(row.comment_count),
+    ...(typeof row.created_at === 'string' ? { createdAt: row.created_at } : {}),
+  };
+}
+
+export function postFromRow(row: unknown): CommunityPost | null {
+  if (!isRecord(row)) return null;
+  const id = str(row.id);
+  const userId = str(row.user_id);
+  const body = str(row.body).trim();
+  if (!id || !userId || !body) return null;
+  const kind = POST_KINDS.includes(row.kind as PostKind)
+    ? (row.kind as PostKind)
+    : 'update';
+  return {
+    id,
+    userId,
+    kind,
+    title: nullableStr(row.title),
+    body,
+    tags: intList(row.tags).map((tag) => tag.trim()).filter(Boolean).slice(0, 6),
+    link: nullableStr(row.link),
+    likeCount: nonNeg(row.like_count),
+    commentCount: nonNeg(row.comment_count),
+    viewCount: nonNeg(row.view_count),
+    createdAt: str(row.created_at),
+  };
+}
+
+export function commentFromRow(row: unknown): PostComment | null {
+  if (!isRecord(row)) return null;
+  const id = str(row.id);
+  const postId = str(row.post_id);
+  const userId = str(row.user_id);
+  const body = str(row.body).trim();
+  if (!id || !postId || !userId || !body) return null;
+  return { id, postId, userId, body, createdAt: str(row.created_at) };
+}
+
+export function leaderboardRowFromJson(value: unknown): LeaderboardRow | null {
+  if (!isRecord(value)) return null;
+  const userId = str(value.userId);
+  const handle = str(value.handle);
+  if (!userId || !handle) return null;
+  return {
+    userId,
+    handle,
+    displayName: str(value.displayName, handle),
+    avatarUrl: nullableStr(value.avatarUrl),
+    niche: str(value.niche),
+    location: nullableStr(value.location),
+    followerCount: nonNeg(value.followerCount),
+    followingCount: nonNeg(value.followingCount),
+    postCount: nonNeg(value.postCount),
+    viewCount: nonNeg(value.viewCount),
+    likeCount: nonNeg(value.likeCount),
+    commentCount: nonNeg(value.commentCount),
+    engagement7d: nonNeg(value.engagement7d),
+    // -1 is the server's explicit "not verified" marker, so it must survive.
+    instagramFollowers:
+      typeof value.instagramFollowers === 'number' &&
+      Number.isFinite(value.instagramFollowers)
+        ? Math.round(value.instagramFollowers)
+        : -1,
+    topMilestone: nonNeg(value.topMilestone),
+    score: num(value.score),
+    value: num(value.value),
+    rank: nonNeg(value.rank),
+  };
+}
+
+export function achievementFromRow(row: unknown): Achievement | null {
+  if (!isRecord(row)) return null;
+  const userId = str(row.user_id);
+  const milestone = num(row.milestone);
+  if (!userId || !MILESTONES.includes(milestone as AchievementMilestone)) return null;
+  return {
+    userId,
+    milestone: milestone as AchievementMilestone,
+    earnedAt: str(row.earned_at),
+    source: str(row.source, 'instagram'),
+  };
+}
+
+export function followerStatsFromRow(row: unknown): FollowerStats | null {
+  if (!isRecord(row)) return null;
+  const userId = str(row.user_id);
+  const followers = row.followers;
+  // `followers` is NOT NULL in the schema, so a row without a number is
+  // corrupt. Reporting it as 0 would claim a verified reading of zero — which
+  // is exactly the kind of invented metric this app refuses to show.
+  if (!userId || typeof followers !== 'number' || !Number.isFinite(followers) || followers < 0) {
+    return null;
+  }
+  return {
+    userId,
+    instagramUserId: nullableStr(row.instagram_user_id),
+    followers: Math.round(followers),
+    source: str(row.source, 'instagram'),
+    measuredAt: str(row.measured_at),
+  };
+}
+
+// ----------------------------------------------------------- validation ----
+
+export type ValidationResult = { ok: true; value: string } | { ok: false; error: string };
+
+const HANDLE_RE = /^[a-z0-9_]{3,30}$/;
+
+export function validateHandle(raw: string): ValidationResult {
+  const value = raw.trim().toLowerCase().replace(/\s+/g, '_');
+  if (!HANDLE_RE.test(value)) {
+    return {
+      ok: false,
+      error: 'Handles use 3–30 letters, numbers or underscores.',
+    };
+  }
+  return { ok: true, value };
+}
+
+export function validateDisplayName(raw: string): ValidationResult {
+  const value = raw.trim().replace(/\s+/g, ' ');
+  if (value.length < 1 || value.length > 60) {
+    return { ok: false, error: 'Display name must be 1–60 characters.' };
+  }
+  return { ok: true, value };
+}
+
+export function validateBio(raw: string): ValidationResult {
+  const value = raw.trim();
+  if (value.length > 400) {
+    return { ok: false, error: 'Bio must be 400 characters or fewer.' };
+  }
+  return { ok: true, value };
+}
+
+export function validateNiche(raw: string): ValidationResult {
+  const value = raw.trim();
+  if (value.length > 60) {
+    return { ok: false, error: 'Niche must be 60 characters or fewer.' };
+  }
+  return { ok: true, value };
+}
+
+export function validatePostBody(raw: string): ValidationResult {
+  const value = raw.trim();
+  if (value.length < 1) {
+    return { ok: false, error: 'Write something before posting.' };
+  }
+  if (value.length > 2000) {
+    return { ok: false, error: 'Posts are limited to 2,000 characters.' };
+  }
+  return { ok: true, value };
+}
+
+export function validatePostTitle(raw: string): ValidationResult {
+  const value = raw.trim();
+  if (value.length > 120) {
+    return { ok: false, error: 'Titles are limited to 120 characters.' };
+  }
+  return { ok: true, value };
+}
+
+export function validateComment(raw: string): ValidationResult {
+  const value = raw.trim();
+  if (value.length < 1) {
+    return { ok: false, error: 'Write a comment first.' };
+  }
+  if (value.length > 1000) {
+    return { ok: false, error: 'Comments are limited to 1,000 characters.' };
+  }
+  return { ok: true, value };
+}
+
+/**
+ * Normalises a comma/space separated hashtag string into at most six clean tags.
+ * Strips the leading `#` so tags group correctly regardless of how they were
+ * typed.
+ */
+export function parseTags(raw: string, limit = 6): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const piece of raw.split(/[,\s]+/)) {
+    const tag = piece.trim().replace(/^#+/, '').toLowerCase();
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+// -------------------------------------------------------------- rewards ----
+
+/** The next milestone this follower count has not reached yet, or null. */
+export function nextMilestone(followers: number): AchievementMilestone | null {
+  const safe = Number.isFinite(followers) ? Math.max(0, followers) : 0;
+  return MILESTONES.find((m) => m > safe) ?? null;
+}
+
+/** The highest milestone already earned at this follower count. */
+export function highestEarned(followers: number): AchievementMilestone | null {
+  const safe = Number.isFinite(followers) ? Math.max(0, followers) : 0;
+  let best: AchievementMilestone | null = null;
+  for (const m of MILESTONES) {
+    if (m <= safe) best = m;
+  }
+  return best;
+}
+
+/** Short display label for a milestone: 1000 → "1K", 500000 → "500K". */
+export function milestoneLabel(milestone: number): string {
+  if (milestone >= 1_000_000) return `${milestone / 1_000_000}M`;
+  if (milestone >= 1000) return `${milestone / 1000}K`;
+  return String(milestone);
+}
+
+/**
+ * Progress from the previous milestone to the next one, clamped to 0–1.
+ * Before the first milestone the run starts at zero rather than at a negative.
+ */
+export function milestoneProgress(followers: number, target: AchievementMilestone): number {
+  const safe = Number.isFinite(followers) ? Math.max(0, followers) : 0;
+  const index = MILESTONES.indexOf(target);
+  const floor = index <= 0 ? 0 : MILESTONES[index - 1];
+  if (safe >= target) return 1;
+  if (safe <= floor) return 0;
+  const span = target - floor;
+  if (span <= 0) return 0;
+  return Math.max(0, Math.min(1, (safe - floor) / span));
+}
+
+/**
+ * All milestones this follower count has reached that are not yet recorded —
+ * in ascending order. This is what lets a creator who already had 120K
+ * followers when they joined collect 1K, 10K, 50K and 100K at once, and only
+ * once.
+ */
+export function unearnedMilestones(
+  followers: number,
+  alreadyEarned: readonly number[],
+): AchievementMilestone[] {
+  const have = new Set(alreadyEarned);
+  const safe = Number.isFinite(followers) ? Math.max(0, followers) : 0;
+  return MILESTONES.filter((m) => m <= safe && !have.has(m));
+}
+
+// ----------------------------------------------------------- identity ------
+
+function base64UrlDecode(input: string): string {
+  const b64 = input.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+  const alphabet =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (const char of padded) {
+    if (char === '=') break;
+    const index = alphabet.indexOf(char);
+    if (index < 0) continue;
+    value = (value << 6) | index;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out += String.fromCharCode((value >> bits) & 0xff);
+    }
+  }
+  return out;
+}
+
+/**
+ * Reads the creator's own user id out of their session token.
+ *
+ * The token belongs to the caller and this only decodes its payload — nothing
+ * is signed or trusted beyond what Supabase already issued. It saves a network
+ * round trip whenever the UI needs to know "is this row mine?".
+ */
+export function currentUserIdFromToken(token: string | null | undefined): string | null {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(base64UrlDecode(parts[1]));
+    if (isRecord(payload) && typeof payload.sub === 'string' && payload.sub.length > 0) {
+      return payload.sub;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// ----------------------------------------------------------- error text ----
+
+/**
+ * Turns a PostgREST error body into something a creator can act on. Anything
+ * unrecognised falls back to a generic retry sentence rather than leaking SQL.
+ */
+export function communityErrorMessage(body: unknown): string {
+  if (!isRecord(body)) {
+    return 'Could not reach the CreatorDNA community. Check your connection and retry.';
+  }
+  const message = str(body.message).toLowerCase();
+  if (message.includes('not_authenticated')) return 'Sign in again to continue.';
+  if (message.includes('handle_taken')) return 'That handle is already taken.';
+  if (message.includes('invalid_handle')) return 'Handles use 3–30 letters, numbers or underscores.';
+  if (message.includes('invalid_name')) return 'Display name must be 1–60 characters.';
+  if (message.includes('invalid_target')) return 'That creator cannot be followed.';
+  if (message.includes('profile_not_found')) return 'That creator is no longer in the community.';
+  if (message.includes('post_not_found')) return 'That post is no longer available.';
+  if (message.includes('invalid_comment')) return 'Comments are limited to 1,000 characters.';
+  if (message.includes('not_allowed')) return 'You can only remove your own comments.';
+  if (message.includes('invalid_metric')) return 'That ranking is not available.';
+  if (message.includes('permission denied')) return 'You do not have access to that.';
+  return 'Could not complete that. Please try again.';
+}

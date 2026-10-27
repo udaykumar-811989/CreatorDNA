@@ -2,9 +2,9 @@ import { useEffect, useRef, type ComponentType } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, NAV_HEIGHT } from '../theme';
 import { useThemeColors, useStyles } from '../themeContext';
-import { DnaIcon, HomeIcon, IdeasIcon, PersonIcon, PlanIcon } from './icons';
+import { CompassIcon, DnaIcon, HomeIcon, IdeasIcon, PersonIcon, PlanIcon } from './icons';
 
-export type NavTab = 'home' | 'content' | 'dna' | 'plan' | 'profile';
+export type NavTab = 'home' | 'content' | 'discover' | 'dna' | 'plan' | 'profile';
 
 const tabs: Array<{
   key: NavTab;
@@ -13,6 +13,7 @@ const tabs: Array<{
 }> = [
   { key: 'home', label: 'Home', Icon: HomeIcon },
   { key: 'content', label: 'Content', Icon: IdeasIcon },
+  { key: 'discover', label: 'Discover', Icon: CompassIcon },
   { key: 'dna', label: 'DNA', Icon: DnaIcon },
   { key: 'plan', label: 'Plan', Icon: PlanIcon },
   { key: 'profile', label: 'Profile', Icon: PersonIcon },
@@ -191,5 +192,5 @@ const makeStyles = (c: typeof colors) =>
       justifyContent: 'center',
       gap: 3,
     },
-    label: { fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
+    label: { fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2, textAlign: 'center' },
   });
