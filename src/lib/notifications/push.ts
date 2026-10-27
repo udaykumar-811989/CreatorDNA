@@ -17,9 +17,10 @@ export type PushPermission = 'granted' | 'denied' | 'default' | 'unsupported';
 
 export const PUSH_PROMPT = {
   title: 'Know when something matters',
+  // First sentence is the product's own wording, verbatim.
   body:
-    'Get notified when your content starts outperforming your usual results, or when your next post is due. ' +
-    'In-app notifications are already on. Allowing browser notifications adds an alert when CreatorDNA is in the background.',
+    'Get notified when your content starts outperforming your usual results or when your next post is due. ' +
+    'In-app notifications are already on — browser notifications only add an alert while CreatorDNA is in the background.',
   enable: 'Enable Notifications',
   dismiss: 'Not Now',
 } as const;
