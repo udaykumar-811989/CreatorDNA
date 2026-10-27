@@ -464,6 +464,52 @@ export function ListRow({
   );
 }
 
+// ---------- Toggle ----------
+//
+// A switch that follows the active palette. Used by the notification
+// preferences, where a disabled row still has to stay readable.
+
+export function Toggle({
+  value,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  value: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  const colors = useThemeColors();
+  const s = useStyles(makeStyles);
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value, disabled }}
+      accessibilityLabel={label}
+      disabled={disabled}
+      hitSlop={10}
+      onPress={() => onChange(!value)}
+      style={({ pressed }) => [
+        s.toggleTrack,
+        {
+          backgroundColor: value ? colors.primary : colors.lightCard2,
+          borderColor: value ? colors.primary : colors.lightBorder,
+          opacity: disabled ? 0.55 : pressed ? 0.75 : 1,
+        },
+      ]}
+    >
+      <View
+        style={[
+          s.toggleKnob,
+          { backgroundColor: value ? '#FFFFFF' : colors.textDim },
+          value ? s.toggleKnobOn : null,
+        ]}
+      />
+    </Pressable>
+  );
+}
+
 // ---------- Skeleton ----------
 //
 // A softly pulsing placeholder for content that is still loading. Used
@@ -593,6 +639,23 @@ const makeStyles = (c: typeof colors) => StyleSheet.create({
     alignSelf: 'flex-start',
   },
   badgeLabel: { fontSize: 11.5, fontWeight: '800', letterSpacing: 0.3 },
+
+  toggleTrack: {
+    width: 46,
+    height: 27,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  toggleKnob: {
+    width: 19,
+    height: 19,
+    borderRadius: 10,
+  },
+  toggleKnobOn: { alignSelf: 'flex-end' },
 
   card: {
     borderRadius: radius.md,

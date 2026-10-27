@@ -285,6 +285,19 @@ export function ClockIcon({ size = 20, color: colorProp, strokeWidth = 1.9 }: Ic
   );
 }
 
+export function BellIcon({ size = 20, color: colorProp, strokeWidth = 1.9 }: IconProps) {
+  const color = useIconColor(colorProp);
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        d="M6.2 8.6a5.8 5.8 0 0 1 11.6 0c0 6.1 2.4 7.9 2.4 7.9H3.8s2.4-1.8 2.4-7.9Z"
+        {...stroke(color, strokeWidth)}
+      />
+      <Path d="M10.2 20.2a2.1 2.1 0 0 0 3.6 0" {...stroke(color, strokeWidth)} />
+    </Svg>
+  );
+}
+
 export function HashIcon({ size = 20, color: colorProp, strokeWidth = 1.9 }: IconProps) {
   const color = useIconColor(colorProp);
   return (

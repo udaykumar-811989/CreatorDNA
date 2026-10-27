@@ -1,7 +1,9 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    // The notification engine's tests import `node:test` / `node:assert`.
+    "types": ["node"]
   },
   "exclude": ["supabase"]
 }

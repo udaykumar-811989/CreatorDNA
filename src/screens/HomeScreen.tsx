@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { DnaMark } from '../components/DnaMark';
 import { ScoreRing } from '../components/ScoreRing';
-import { SparkIcon } from '../components/icons';
+import { BellIcon, SparkIcon } from '../components/icons';
 import {
   Avatar,
   Badge,
@@ -28,6 +28,7 @@ import {
   weekSummary,
   type Delta,
 } from '../lib/derived';
+import { unreadBadgeLabel } from '../lib/notifications/model';
 import type { AnalysisRecord } from '../lib/storage';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
 import type { CreatorAiIdea } from '../services/creatorAi';
@@ -57,6 +58,8 @@ export function HomeScreen({
   onSwitchAccount,
   onViewDna,
   onOpenReport,
+  unreadNotifications,
+  onOpenNotifications,
 }: {
   profile: InstagramProfile | null;
   dashboard: InstagramDashboard | null;
@@ -73,6 +76,8 @@ export function HomeScreen({
   onSwitchAccount: () => void;
   onViewDna: () => void;
   onOpenReport: () => void;
+  unreadNotifications: number;
+  onOpenNotifications: () => void;
 }) {
   const { mode } = useTheme();
   const c = useThemeColors();
@@ -142,6 +147,32 @@ export function HomeScreen({
         },
 
         greetRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
+        headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+        bell: {
+          width: 42,
+          height: 42,
+          borderRadius: 21,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: c.darkCard,
+          borderWidth: 1,
+          borderColor: c.darkBorder,
+        },
+        bellBadge: {
+          position: 'absolute',
+          top: 2,
+          right: 1,
+          minWidth: 17,
+          height: 17,
+          borderRadius: 9,
+          paddingHorizontal: 4,
+          backgroundColor: c.red,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1.5,
+          borderColor: c.darkBg,
+        },
+        bellBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '800' },
         // Same lockup as the onboarding page: DNA mark beside the wordmark.
         brandRow: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 2 },
         brand: { color: c.onDark, fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
@@ -331,20 +362,42 @@ export function HomeScreen({
               <Text style={styles.syncText}>· {syncText}</Text>
             </View>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Switch account"
-            hitSlop={8}
-            onPress={onSwitchAccount}
-            style={({ pressed }) => pressed && { opacity: 0.7 }}
-          >
-            <Avatar
-              uri={dashboard?.profile.profilePictureUrl ?? profile?.profilePictureUrl ?? null}
-              name={username}
-              size={48}
-              dark={isDark}
-            />
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                unreadNotifications > 0
+                  ? `Notifications, ${unreadNotifications} unread`
+                  : 'Notifications'
+              }
+              hitSlop={8}
+              onPress={onOpenNotifications}
+              style={({ pressed }) => [styles.bell, pressed && { opacity: 0.7 }]}
+            >
+              <BellIcon size={20} color={c.onDark} />
+              {unreadBadgeLabel(unreadNotifications) ? (
+                <View style={styles.bellBadge}>
+                  <Text style={styles.bellBadgeText}>
+                    {unreadBadgeLabel(unreadNotifications)}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Switch account"
+              hitSlop={8}
+              onPress={onSwitchAccount}
+              style={({ pressed }) => pressed && { opacity: 0.7 }}
+            >
+              <Avatar
+                uri={dashboard?.profile.profilePictureUrl ?? profile?.profilePictureUrl ?? null}
+                name={username}
+                size={48}
+                dark={isDark}
+              />
+            </Pressable>
+          </View>
         </View>
 
         {error && !dashboard ? (

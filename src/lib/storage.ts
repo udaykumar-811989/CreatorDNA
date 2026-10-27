@@ -27,9 +27,14 @@ export const storageKeys = {
   savedIdeas: 'creatordna.savedIdeas.v1',
   chat: 'creatordna.chat.v1',
   planStatuses: 'creatordna.planStatuses.v1',
+  notifications: 'creatordna.notifications.v1',
+  notifSignals: 'creatordna.notifSignals.v1',
   sync: 'creatordna.sync.v1',
   fabPosition: 'creatordna.fabPosition.v1',
   theme: 'creatordna.theme.v1',
+  // Device-level preference, like the theme: it belongs to whoever uses this
+  // install, not to any one signed-in account.
+  notificationPrefs: 'creatordna.notificationPrefs.v1',
 };
 
 /** Namespaces any account-owned key by scope; `''` returns the bare key. */
@@ -55,6 +60,8 @@ export type ContentKeys = {
   savedIdeas: string;
   chat: string;
   planStatuses: string;
+  notifications: string;
+  notifSignals: string;
 };
 
 export const CONTENT_KEY_NAMES: (keyof ContentKeys)[] = [
@@ -64,6 +71,8 @@ export const CONTENT_KEY_NAMES: (keyof ContentKeys)[] = [
   'savedIdeas',
   'chat',
   'planStatuses',
+  'notifications',
+  'notifSignals',
 ];
 
 /** The content keys for a scope. `''` yields the original unscoped keys. */
@@ -76,6 +85,8 @@ export function contentKeysFor(scope: string): ContentKeys {
     savedIdeas: `${storageKeys.savedIdeas}${suffix}`,
     chat: `${storageKeys.chat}${suffix}`,
     planStatuses: `${storageKeys.planStatuses}${suffix}`,
+    notifications: `${storageKeys.notifications}${suffix}`,
+    notifSignals: `${storageKeys.notifSignals}${suffix}`,
   };
 }
 

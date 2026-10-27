@@ -36,6 +36,7 @@ const SCREEN_NAMES = [
   'analysesList',
   'weeklyReport',
   'mediaKit',
+  'notifications',
   'privacy',
   'help',
   'chat',
@@ -72,6 +73,7 @@ export const NAV_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
   'profile',
   'performance',
   'settings',
+  'notifications',
 ]);
 
 /**

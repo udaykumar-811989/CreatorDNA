@@ -2,7 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
   KeyboardAvoidingView,
@@ -50,11 +50,41 @@ import {
   dnaStrengths,
   dnaWeaknesses,
   humanizeMediaType,
+  planStatusOf,
   scoreOf,
   topicsBreakdown,
   topFormatByLikes,
   type PlanStatus,
 } from './src/lib/derived';
+import {
+  DEFAULT_NOTIFICATION_PREFS,
+  normalizeNotificationPrefs,
+  type CreatorNotification,
+  type NotificationPrefs,
+  type NotificationTopic,
+} from './src/lib/notifications/model';
+import {
+  EMPTY_NOTIFICATION_SIGNALS,
+  generateNotifications,
+  type NotificationSignals,
+} from './src/lib/notifications/generate';
+import {
+  EMPTY_NOTIFICATION_STATE,
+  addNotifications,
+  clearNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  mergeRemoteNotifications,
+  removeNotification,
+  type NotificationState,
+} from './src/lib/notifications/store';
+import {
+  deleteNotifications,
+  isRemoteNotificationsConfigured,
+  pullNotifications,
+  pushNotifications,
+} from './src/lib/notifications/remote';
+import { deliverInBackground, type PushPermission } from './src/lib/notifications/push';
 import {
   CreatorAiChatAttachmentInput,
   CreatorAiChatContext,
@@ -107,6 +137,7 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 import { VideoAnalysisScreen } from './src/screens/VideoAnalysisScreen';
 import { WeeklyReportScreen } from './src/screens/WeeklyReportScreen';
 import { MediaKitScreen } from './src/screens/MediaKitScreen';
+import { NotificationsScreen } from './src/screens/NotificationsScreen';
 import { NAV_HEIGHT } from './src/theme';
 import { ThemeProvider, useTheme, useThemeColors } from './src/themeContext';
 
@@ -599,6 +630,169 @@ function AppShell() {
       setLastSyncedAt(new Date().toISOString());
     }
   }, [dashboard, setLastSyncedAt]);
+
+  // ---------- Notifications ----------
+  //
+  // In-app first: the list lives in this account's scope, so one creator's
+  // notifications can never surface under another. `creator_notifications` in
+  // Supabase mirrors the same rows (row level security ties every one of them
+  // to this session's user), but only when a session token already exists —
+  // no token, no network, or a denied browser permission never changes what
+  // the UI renders here.
+  const [notifState, setNotifState] = usePersistentState<NotificationState>(
+    contentKeys.notifications,
+    EMPTY_NOTIFICATION_STATE,
+  );
+  const [notifSignals, setNotifSignals] = usePersistentState<NotificationSignals>(
+    contentKeys.notifSignals,
+    EMPTY_NOTIFICATION_SIGNALS,
+  );
+  const [storedNotifPrefs, setNotifPrefs] = usePersistentState<NotificationPrefs>(
+    storageKeys.notificationPrefs,
+    DEFAULT_NOTIFICATION_PREFS,
+  );
+  const notifPrefs = useMemo(
+    () => normalizeNotificationPrefs(storedNotifPrefs),
+    [storedNotifPrefs],
+  );
+  const updateNotifPrefs = useCallback(
+    (patch: Partial<NotificationPrefs>) => {
+      setNotifPrefs((previous) => ({ ...normalizeNotificationPrefs(previous), ...patch }));
+    },
+    [setNotifPrefs],
+  );
+
+  // Today's planned idea — the only thing that decides whether a plan
+  // reminder exists to give.
+  const planToday = useMemo(() => {
+    const day = buildPlan(ideas)[0];
+    if (!day?.idea) {
+      return null;
+    }
+    return { idea: day.idea, status: planStatusOf(planStatuses, day.idea) };
+  }, [ideas, planStatuses]);
+
+  // Mirrors for the effects below, so they always read the newest state
+  // without re-subscribing on every notification write.
+  const notifStateRef = useRef(notifState);
+  notifStateRef.current = notifState;
+  const notifSignalsRef = useRef(notifSignals);
+  notifSignalsRef.current = notifSignals;
+  const notifPrefsRef = useRef(notifPrefs);
+  notifPrefsRef.current = notifPrefs;
+  const [notifRemoteBlocked, setNotifRemoteBlocked] = useState(false);
+  // A blocked mirror belongs to the session that caused it. A new login (or a
+  // refresh) deserves a fresh attempt instead of silence for the rest of the run.
+  useEffect(() => {
+    setNotifRemoteBlocked(false);
+  }, [supabaseAccessToken]);
+
+  // The event engine. It is a pure function of what the app currently knows,
+  // so re-running it is free: every dedupe key it has already produced is
+  // skipped, and the signal state only moves when something real moved.
+  useEffect(() => {
+    if (!isStorageHydrated()) {
+      return;
+    }
+    const state = notifStateRef.current;
+    const signals = notifSignalsRef.current;
+    const prefs = notifPrefsRef.current;
+    const knownKeys = [
+      ...state.handledKeys,
+      ...state.items.map((item: CreatorNotification) => item.dedupeKey),
+    ];
+    const result = generateNotifications({
+      now: Date.now(),
+      dashboard,
+      records: analyses,
+      ideas,
+      planToday,
+      dashboardError,
+      lastSyncedAt,
+      prefs,
+      reminderTime: prefs.reminderTime,
+      state: { knownKeys },
+      signals,
+    });
+    if (result.notifications.length > 0) {
+      const fresh = result.notifications;
+      setNotifState((previous) => addNotifications(previous, fresh));
+      for (const item of fresh) {
+        deliverInBackground(item, prefs.pushOptIn);
+      }
+    }
+    if (JSON.stringify(result.signals) !== JSON.stringify(signals)) {
+      setNotifSignals(result.signals);
+    }
+  }, [
+    dashboard,
+    dashboardError,
+    analyses,
+    ideas,
+    planToday,
+    lastSyncedAt,
+    notifPrefs,
+    setNotifState,
+    setNotifSignals,
+  ]);
+
+  // The Supabase mirror, debounced so a run of local edits costs one round
+  // trip. Push first (upsert handles both new rows and read state), retire
+  // tombstones, then pull and fold the server's copy in. An expired session
+  // stops the attempts for this login; anything else just retries later.
+  useEffect(() => {
+    if (!isStorageHydrated() || notifRemoteBlocked) {
+      return;
+    }
+    const token = supabaseAccessToken;
+    if (!token || !isRemoteNotificationsConfigured()) {
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      void (async () => {
+        const snapshot = notifStateRef.current;
+        const pushed = await pushNotifications(token, snapshot.items);
+        if (!alive) return;
+        if (pushed === 'unauthorized') {
+          setNotifRemoteBlocked(true);
+          return;
+        }
+        if (snapshot.tombstones.length > 0) {
+          const removed = await deleteNotifications(token, snapshot.tombstones);
+          if (!alive) return;
+          if (removed === 'unauthorized') {
+            setNotifRemoteBlocked(true);
+            return;
+          }
+          if (removed === 'ok') {
+            setNotifState((previous) =>
+              previous.tombstones.length > 0 ? { ...previous, tombstones: [] } : previous,
+            );
+          }
+        }
+        const pulled = await pullNotifications(token);
+        if (!alive) return;
+        if (pulled.outcome === 'unauthorized') {
+          setNotifRemoteBlocked(true);
+          return;
+        }
+        if (pulled.outcome === 'ok') {
+          setNotifState((previous) => mergeRemoteNotifications(previous, pulled.items));
+        }
+      })();
+    }, 500);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [
+    accountScope,
+    supabaseAccessToken,
+    notifRemoteBlocked,
+    notifState,
+    setNotifState,
+  ]);
   // Every chat write goes through commitChat so this ref always mirrors state
   // synchronously — a generation job that resolves between renders can still
   // find and patch its own message with it, without racing React's batching.
@@ -2117,9 +2311,22 @@ function AppShell() {
     setAnalysisError(null);
     setGenerateError(null);
     setChatError(null);
+    // Notifications describe content that no longer exists after an erase, so
+    // they leave the device *and* the database (tombstoned rows are deleted
+    // from `creator_notifications` on the next sync instead of being pulled
+    // straight back in).
+    setNotifState((previous) => clearNotifications(previous));
     // Saved accounts are intentionally kept — they're login credentials,
     // not content data, and removing them would break one-tap sign-in.
-  }, [commitChat, setAnalyses, setIdeas, setSavedIdeas, setTrendingIdeas, stopMediaRuns]);
+  }, [
+    commitChat,
+    setAnalyses,
+    setIdeas,
+    setNotifState,
+    setSavedIdeas,
+    setTrendingIdeas,
+    stopMediaRuns,
+  ]);
 
   // "Analyze my idea": score the creator's own words against their real
   // audience and goal, plus a compact, honest snapshot of who they are — no
@@ -2175,6 +2382,61 @@ function AppShell() {
 
   const selectedRecord =
     analyses.find((record) => record.id === selectedAnalysisId) ?? null;
+
+  // ---------- Notification actions ----------
+  //
+  // A tapped notification stops being unread and deep-links to what it is
+  // about. A link to an analysis that has since been erased falls back to the
+  // analytics screen instead of a dead end.
+  const openNotification = useCallback(
+    (item: CreatorNotification) => {
+      setNotifState((previous) => markNotificationRead(previous, item.id));
+      const target = item.actionTarget;
+      if (!target || !isScreen(target)) {
+        return;
+      }
+      if (target === 'analysis') {
+        const recordId = typeof item.metadata.recordId === 'string' ? item.metadata.recordId : null;
+        const record = recordId ? analyses.find((entry) => entry.id === recordId) : null;
+        if (record) {
+          openAnalysis(record, 'notifications');
+          return;
+        }
+        setScreen('performance');
+        return;
+      }
+      setScreen(target);
+    },
+    [analyses, openAnalysis, setNotifState],
+  );
+
+  const markAllNotificationsReadNow = useCallback(() => {
+    setNotifState((previous) => markAllNotificationsRead(previous));
+  }, [setNotifState]);
+
+  const deleteNotificationById = useCallback(
+    (id: string) => {
+      setNotifState((previous) => removeNotification(previous, id));
+    },
+    [setNotifState],
+  );
+
+  // Recorded only after the creator has pressed "Enable Notifications" — the
+  // browser answer is authoritative, and "Not Now" is remembered so the
+  // explanation is never re-shown on every visit.
+  const handlePushPermission = useCallback(
+    (permission: PushPermission) => {
+      updateNotifPrefs({ pushOptIn: permission === 'granted', pushPromptDismissed: true });
+    },
+    [updateNotifPrefs],
+  );
+
+  const setNotifTopic = useCallback(
+    (topic: NotificationTopic, enabled: boolean) => {
+      updateNotifPrefs({ topics: { ...notifPrefsRef.current.topics, [topic]: enabled } });
+    },
+    [updateNotifPrefs],
+  );
 
   const ideaDefaults: IdeaRequest = {
     topic:
@@ -2313,6 +2575,9 @@ function AppShell() {
         return true;
       case 'performance':
         setScreen('dna');
+        return true;
+      case 'notifications':
+        setScreen('home');
         return true;
       case 'settings':
         setScreen('profile');
@@ -2466,6 +2731,8 @@ function AppShell() {
           onSwitchAccount={() => setAccountSwitcherOpen(true)}
           onViewDna={() => setScreen('dna')}
           onOpenReport={() => setScreen('weeklyReport')}
+          unreadNotifications={notifState.items.filter((entry) => !entry.isRead).length}
+          onOpenNotifications={() => setScreen('notifications')}
         />
       ) : screen === 'dna' ? (
         <DnaScreen
@@ -2577,11 +2844,30 @@ function AppShell() {
           onOpenMediaKit={() => setScreen('mediaKit')}
           onLogout={logout}
         />
+      ) : screen === 'notifications' ? (
+        <NotificationsScreen
+          notifications={notifState.items}
+          prefs={notifPrefs}
+          onBack={() => setScreen('home')}
+          onOpen={openNotification}
+          onMarkAllRead={markAllNotificationsReadNow}
+          onDelete={deleteNotificationById}
+          onEnablePush={handlePushPermission}
+          onDismissPushPrompt={() => updateNotifPrefs({ pushPromptDismissed: true })}
+          onOpenSettings={() => setScreen('settings')}
+        />
       ) : screen === 'settings' ? (
         <SettingsScreen
           profile={profile}
           dashboard={dashboard}
           chatCount={chatMessages.length}
+          notifPrefs={notifPrefs}
+          unreadNotifications={notifState.items.filter((entry) => !entry.isRead).length}
+          onToggleNotifMaster={(enabled) => updateNotifPrefs({ master: enabled })}
+          onToggleNotifTopic={setNotifTopic}
+          onSetNotifReminderTime={(time) => updateNotifPrefs({ reminderTime: time })}
+          onNotifPushPermission={handlePushPermission}
+          onOpenNotifications={() => setScreen('notifications')}
           onBack={() => setScreen('profile')}
           onReconnect={handleConnectEntry}
           onClearChat={clearChat}
