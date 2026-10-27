@@ -708,16 +708,24 @@ export function SettingsScreen({
         visible={dialog === 'push'}
         title={PUSH_PROMPT.title}
         body={
-          pushPermission === 'granted'
-            ? 'Browser notifications are already allowed for this site. CreatorDNA will alert you when something worth knowing happens while it is in the background.'
-            : pushPermission === 'denied'
-              ? 'Your browser is blocking notifications for this site. You can allow them again from its site settings — in-app notifications keep working either way.'
-              : PUSH_PROMPT.body
+          pushPermission === 'unsupported'
+            ? 'CreatorDNA alerts you inside the app on this device, and that is always on. Browser notifications only exist where CreatorDNA runs in a browser, so there is nothing to allow here.'
+            : pushPermission === 'granted'
+              ? 'Browser notifications are already allowed for this site. CreatorDNA will alert you when something worth knowing happens while it is in the background.'
+              : pushPermission === 'denied'
+                ? 'Your browser is blocking notifications for this site. You can allow them again from its site settings — in-app notifications keep working either way.'
+                : PUSH_PROMPT.body
         }
-        confirmLabel={pushPermission === 'granted' ? 'Done' : PUSH_PROMPT.enable}
+        confirmLabel={
+          pushPermission === 'granted' || pushPermission === 'unsupported'
+            ? 'Got it'
+            : PUSH_PROMPT.enable
+        }
         onConfirm={() => {
           setDialog(null);
-          void enablePush();
+          if (pushPermission !== 'unsupported') {
+            void enablePush();
+          }
         }}
         onCancel={() => setDialog(null)}
         c={c}
