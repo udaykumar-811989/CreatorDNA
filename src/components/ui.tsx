@@ -1,6 +1,8 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useRef } from 'react';
 import {
+  Animated,
+  Easing,
   Image,
   Pressable,
   StyleProp,
@@ -459,6 +461,65 @@ export function ListRow({
     <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => pressed && s.pressed}>
       {content}
     </Pressable>
+  );
+}
+
+// ---------- Skeleton ----------
+//
+// A softly pulsing placeholder for content that is still loading. Used
+// wherever real analytics are on their way, so a loading screen never shows a
+// fake zero or a blank gap. It carries no numbers and asserts nothing.
+
+export function Skeleton({
+  width,
+  height = 14,
+  radius: corner = 7,
+  style,
+}: {
+  width?: number | `${number}%`;
+  height?: number;
+  radius?: number;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const colors = useThemeColors();
+  const opacity = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0.4,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [opacity]);
+
+  return (
+    <Animated.View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={[
+        {
+          width: width ?? '100%',
+          height,
+          borderRadius: corner,
+          backgroundColor: colors.lightBorder,
+          opacity,
+        },
+        style,
+      ]}
+    />
   );
 }
 

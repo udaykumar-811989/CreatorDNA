@@ -654,8 +654,8 @@ const ideasSchema = {
   properties: {
     ideas: {
       type: 'array',
-      minItems: 5,
-      maxItems: 5,
+      minItems: 7,
+      maxItems: 7,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -1003,14 +1003,14 @@ async function handleIdeas(
   }
   try {
     const result = await configuredProvider(config).generateJson(
-      'You are CreatorDNA, a friendly, imaginative short-form video idea partner. Return exactly five ideas as JSON with title, hook, concept, format, cta, priority, why_it_works, target_viewer, target_length, and beats for every idea, ordered best fit first: priority is "high", "medium", or "low" reflecting how well that idea fits the creator inputs. Tailor every single field to the supplied topic, audience, and goal — the hook, concept, beats, and reasoning must be recognizably about this creator’s subject and this audience’s situation, never a generic idea with the topic name swapped in. hook is the exact opening line the creator says or shows on screen, written in their voice, not a description of a hook. beats are 3 to 6 ordered, shot-by-shot production steps a creator can execute in order from first frame to last, each one plain sentence covering what to show, what to say, and any on-screen text. why_it_works is 2-3 plain sentences explaining why this idea suits this specific audience and goal. target_viewer names concretely who the Reel is for, and target_length gives a realistic short-form running time such as "15-20 seconds". cta is a direct request the creator can say on camera. Write in plain, everyday English a busy creator can read at a glance: short sentences of about 15 words or fewer, common words, no jargon, no fancy synonyms, and no marketing buzzwords. If a term must be used (hook, CTA, retention), say what it means in the same breath, for example: CTA (call to action — what you ask the viewer to do). Give more, not less: concept is 3 to 4 concrete sentences covering what happens, what the viewer sees, and what the creator says; every beat names one specific shot plus the exact on-screen text to show; cta gives the literal line to say plus what the viewer should do. Each idea must read like a friendly step-by-step brief, not a list of slogans. Never invent trends, statistics, metrics, platform features, or guaranteed results, and never promise performance. Keep every string free of markdown, hashtags, and emojis, each under 1200 characters (each beat under 400 characters), and write as if speaking plainly to a busy creator.',
+      'You are CreatorDNA, a friendly, imaginative short-form video idea partner. Return exactly seven ideas as JSON with title, hook, concept, format, cta, priority, why_it_works, target_viewer, target_length, and beats for every idea, ordered best fit first: exactly five of the seven carry priority "high" and the remaining two carry priority "medium", where the two medium ideas are the more experimental picks — still worth making, just a step below the top five. Tailor every single field to the supplied topic, audience, and goal — the hook, concept, beats, and reasoning must be recognizably about this creator’s subject and this audience’s situation, never a generic idea with the topic name swapped in. hook is the exact opening line the creator says or shows on screen, written in their voice, not a description of a hook. beats are 3 to 6 ordered, shot-by-shot production steps a creator can execute in order from first frame to last, each one plain sentence covering what to show, what to say, and any on-screen text. why_it_works is 2-3 plain sentences explaining why this idea suits this specific audience and goal. target_viewer names concretely who the Reel is for, and target_length gives a realistic short-form running time such as "15-20 seconds". cta is a direct request the creator can say on camera. Write in plain, everyday English a busy creator can read at a glance: short sentences of about 15 words or fewer, common words, no jargon, no fancy synonyms, and no marketing buzzwords. If a term must be used (hook, CTA, retention), say what it means in the same breath, for example: CTA (call to action — what you ask the viewer to do). Give more, not less: concept is 3 to 4 concrete sentences covering what happens, what the viewer sees, and what the creator says; every beat names one specific shot plus the exact on-screen text to show; cta gives the literal line to say plus what the viewer should do. Each idea must read like a friendly step-by-step brief, not a list of slogans. Never invent trends, statistics, metrics, platform features, or guaranteed results, and never promise performance. Keep every string free of markdown, hashtags, and emojis, each under 1200 characters (each beat under 400 characters), and write as if speaking plainly to a busy creator.',
       JSON.stringify({ topic, audience, goal }),
       ideasSchema,
     );
     if (
       !isRecord(result) ||
       !Array.isArray(result.ideas) ||
-      result.ideas.length !== 5 ||
+      result.ideas.length !== 7 ||
       !result.ideas.every((idea) =>
         isRecord(idea) &&
         ['title', 'hook', 'concept', 'format', 'cta', 'why_it_works', 'target_viewer', 'target_length'].every((key) =>
@@ -1031,7 +1031,150 @@ async function handleIdeas(
     ) {
       throw new CreatorAiError('malformed_model_response');
     }
-    return jsonResponse({ ideas: result.ideas }, 200, headers);
+    // The plan shows seven days, and the promise on screen is five strong
+    // picks plus two lighter ones. The model is told exactly that, but a
+    // drifted ranking must not fail a perfectly usable answer — re-rank from
+    // its own ordering and pin the split instead of rejecting the batch.
+    const ideas = result.ideas.map((idea) => ({ ...idea }));
+    const rank = (priority: unknown): number =>
+      priority === 'high' ? 0 : priority === 'medium' ? 1 : 2;
+    ideas.sort((a, b) => rank(a.priority) - rank(b.priority));
+    for (let index = 0; index < ideas.length; index += 1) {
+      ideas[index].priority = index < 5 ? 'high' : 'medium';
+    }
+    return jsonResponse({ ideas }, 200, headers);
+  } catch (error) {
+    const code = error instanceof CreatorAiError ? error.code : 'analysis_failed';
+    return jsonResponse({ error: code }, 502, headers);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Idea scoring: the "Analyze my idea" flow. Six dimensions plus one blended
+// score, all of them an estimate of fit for this creator's own audience —
+// never a forecast of views, and always labelled as such in the client.
+// ---------------------------------------------------------------------------
+const ideaScoresSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'hook_score',
+    'topic_fit',
+    'audience_fit',
+    'shareability',
+    'save_potential',
+    'cta_strength',
+    'overall',
+    'improvements',
+    'why',
+  ],
+  properties: {
+    hook_score: { type: 'integer', minimum: 0, maximum: 100 },
+    topic_fit: { type: 'integer', minimum: 0, maximum: 100 },
+    audience_fit: { type: 'integer', minimum: 0, maximum: 100 },
+    shareability: { type: 'integer', minimum: 0, maximum: 100 },
+    save_potential: { type: 'integer', minimum: 0, maximum: 100 },
+    cta_strength: { type: 'integer', minimum: 0, maximum: 100 },
+    overall: { type: 'integer', minimum: 0, maximum: 100 },
+    improvements: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 5,
+      items: { type: 'string', minLength: 1, maxLength: 400 },
+    },
+    why: { type: 'string', minLength: 1, maxLength: 1200 },
+  },
+};
+
+const IDEA_SCORE_KEYS = [
+  'hook_score',
+  'topic_fit',
+  'audience_fit',
+  'shareability',
+  'save_potential',
+  'cta_strength',
+  'overall',
+] as const;
+
+async function handleIdeaScores(
+  request: Request,
+  config: FunctionConfig,
+  headers: Headers,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await readRequestJson(request, 12_000);
+  } catch {
+    return jsonResponse({ error: 'invalid_idea_scores_request' }, 400, headers);
+  }
+  if (!isRecord(body)) {
+    return jsonResponse({ error: 'invalid_idea_scores_request' }, 400, headers);
+  }
+  // optionalText throws on an over-long field, so it runs inside its own
+  // guard: a too-long idea is a 400, never an unhandled 500.
+  let idea: string | null = null;
+  let audience: string | null = null;
+  let goal: string | null = null;
+  let context: string | null = null;
+  try {
+    idea = optionalText(body.idea, 'idea', 4000);
+    audience = optionalText(body.audience, 'audience', 300);
+    goal = optionalText(body.goal, 'goal', 300);
+    context = optionalText(body.context, 'context', 4000);
+  } catch {
+    return jsonResponse({ error: 'invalid_idea_scores_request' }, 400, headers);
+  }
+  if (!idea) {
+    return jsonResponse({ error: 'idea_required' }, 400, headers);
+  }
+
+  try {
+    const result = await configuredProvider(config).generateJson(
+      'You are CreatorDNA, a direct but kind content coach. The creator hands you one idea — a topic, a hook, a caption, or a rough script — and you judge how well it fits this specific creator: their audience, their goal, and the material they have already made. Score six dimensions as integers from 0 to 100: hook_score is how strong the opening line is at stopping a scroll; topic_fit is how well the subject suits what this creator already makes; audience_fit is how relevant it is to the people who follow them; shareability is how likely someone is to send it to a friend; save_potential is how useful it is to keep; cta_strength is how clear and specific the ask is, scoring 0 when the idea contains no call to action at all. overall is your honest blended judgement rather than a plain average: a weak hook or a missing call to action must pull it down. improvements holds 2 to 5 specific changes the creator can make today — real rewrites and additions, never advice like "make it more engaging". why is 2 to 3 plain sentences that point at the actual idea in front of you and explain the score. Every score is an estimate for planning, not a prediction of views or likes: never promise a result, and never invent analytics about the creator. Write in short everyday sentences of about 15 words, no jargon, no marketing buzzwords.',
+      JSON.stringify({
+        idea,
+        context: context || undefined,
+        audience: audience || undefined,
+        goal: goal || undefined,
+      }),
+      ideaScoresSchema,
+    );
+    const valid = isRecord(result) &&
+      IDEA_SCORE_KEYS.every(
+        (key) => typeof result[key] === 'number' && Number.isFinite(result[key]),
+      ) &&
+      Array.isArray(result.improvements) &&
+      result.improvements.length >= 2 &&
+      result.improvements.length <= 5 &&
+      result.improvements.every(
+        (item) =>
+          typeof item === 'string' && item.trim().length > 0 && item.length <= 400,
+      ) &&
+      typeof result.why === 'string' &&
+      result.why.trim().length > 0 &&
+      result.why.length <= 1200;
+    if (!valid) {
+      throw new CreatorAiError('malformed_model_response');
+    }
+    const score = (key: (typeof IDEA_SCORE_KEYS)[number]): number =>
+      Math.max(0, Math.min(100, Math.round(result[key] as number)));
+    return jsonResponse(
+      {
+        scores: {
+          hook: score('hook_score'),
+          topic_fit: score('topic_fit'),
+          audience_fit: score('audience_fit'),
+          shareability: score('shareability'),
+          save_potential: score('save_potential'),
+          cta_strength: score('cta_strength'),
+        },
+        overall: score('overall'),
+        improvements: result.improvements.map((item) => String(item).trim()),
+        why: String(result.why).trim(),
+      },
+      200,
+      headers,
+    );
   } catch (error) {
     const code = error instanceof CreatorAiError ? error.code : 'analysis_failed';
     return jsonResponse({ error: code }, 502, headers);
@@ -1825,6 +1968,10 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
   if (request.method === 'POST' && route.length === 1 && route[0] === 'ideas') {
     return await handleIdeas(request, config, headers);
+  }
+
+  if (request.method === 'POST' && route.length === 1 && route[0] === 'idea-scores') {
+    return await handleIdeaScores(request, config, headers);
   }
 
   if (request.method === 'POST' && route.length === 1 && route[0] === 'media') {

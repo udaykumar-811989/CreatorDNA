@@ -657,7 +657,7 @@ export async function generateCreatorIdeas(
   if (
     !Array.isArray(result.ideas) ||
     result.ideas.length < 1 ||
-    result.ideas.length > 5 ||
+    result.ideas.length > 7 ||
     !result.ideas.every((idea) =>
       isRecord(idea) &&
       ['title', 'hook', 'concept', 'format', 'cta'].every((key) =>
@@ -685,6 +685,89 @@ export async function generateCreatorIdeas(
       : {}),
     ...sanitizeIdeaExtras(raw),
   }));
+}
+
+// ---------- "Analyze my idea" ----------
+//
+// Scores one idea the creator wrote themselves. Everything in the result is
+// an AI estimate of fit — how well the idea suits this creator's audience and
+// goal — and is labelled that way everywhere it is shown. It never claims to
+// predict how a post will actually perform.
+
+export type IdeaScores = {
+  hook: number;
+  topic_fit: number;
+  audience_fit: number;
+  shareability: number;
+  save_potential: number;
+  cta_strength: number;
+};
+
+export type IdeaScoreResult = {
+  scores: IdeaScores;
+  overall: number;
+  improvements: string[];
+  why: string;
+};
+
+const IDEA_SCORE_FIELDS: (keyof IdeaScores)[] = [
+  'hook',
+  'topic_fit',
+  'audience_fit',
+  'shareability',
+  'save_potential',
+  'cta_strength',
+];
+
+const clampScore = (value: number): number =>
+  Math.max(0, Math.min(100, Math.round(value)));
+
+export async function scoreCreatorIdea(
+  functionUrl: string,
+  anonKey: string,
+  accessToken: string,
+  input: { idea: string; audience?: string; goal?: string; context?: string },
+): Promise<IdeaScoreResult> {
+  const result = await postCreatorAi(
+    functionUrl,
+    anonKey,
+    accessToken,
+    'idea-scores',
+    input,
+    175_000,
+  );
+  const scores = isRecord(result.scores) ? result.scores : null;
+  const improvementsOk =
+    Array.isArray(result.improvements) &&
+    result.improvements.length > 0 &&
+    result.improvements.every(
+      (item) => typeof item === 'string' && item.trim().length > 0,
+    );
+  if (
+    !scores ||
+    !IDEA_SCORE_FIELDS.every(
+      (key) => typeof scores[key] === 'number' && Number.isFinite(scores[key]),
+    ) ||
+    typeof result.overall !== 'number' ||
+    !Number.isFinite(result.overall) ||
+    !improvementsOk ||
+    typeof result.why !== 'string' ||
+    !result.why.trim()
+  ) {
+    throw new Error('CreatorDNA returned an invalid score. Please try again.');
+  }
+  const built = {} as IdeaScores;
+  for (const key of IDEA_SCORE_FIELDS) {
+    built[key] = clampScore(scores[key] as number);
+  }
+  return {
+    scores: built,
+    overall: clampScore(result.overall),
+    improvements: (result.improvements as string[])
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0),
+    why: result.why.trim(),
+  };
 }
 
 export type ContentAnalysis = {

@@ -11,8 +11,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import type { DimensionValue } from 'react-native';
 import { setStringAsync } from 'expo-clipboard';
-import type { CreatorAiIdea } from '../services/creatorAi';
+import type { CreatorAiIdea, IdeaScoreResult, IdeaScores } from '../services/creatorAi';
 import { colors, radius, type } from '../theme';
 import { useThemeColors, useStyles } from '../themeContext';
 import { Badge, GradientButton, OutlineButton, priorityBadgeProps } from './ui';
@@ -285,6 +286,11 @@ export function IdeaScriptModal({
 function ScriptRow({ label, text, highlight = false }: { label: string; text: string; highlight?: boolean }) {
   const colors = useThemeColors();
   const styles = useStyles(makeStyles);
+  // A section the idea does not have (a hand-written idea, or an older
+  // record) disappears entirely instead of leaving an empty box on screen.
+  if (!text.trim()) {
+    return null;
+  }
   return (
     <View style={styles.scriptRow}>
       <Text style={styles.scriptLabel}>{label}</Text>
@@ -301,6 +307,9 @@ function ScriptRow({ label, text, highlight = false }: { label: string; text: st
 // while each step wraps onto as many lines as it needs, so nothing is clipped.
 function ScriptBeats({ beats }: { beats: string[] }) {
   const styles = useStyles(makeStyles);
+  if (beats.length === 0) {
+    return null;
+  }
   return (
     <View style={styles.scriptRow}>
       <Text style={styles.scriptLabel}>Steps</Text>
@@ -381,6 +390,296 @@ function buildScriptText(idea: CreatorAiIdea): string {
 // cached) so the sheet, fields and script boxes follow the theme toggle;
 // `c` is the palette inside the factory. The scrim stays a fixed literal —
 // it reads correctly over either mode.
+// ---------- Analyze my idea ----------
+//
+// The creator writes the idea themselves; CreatorDNA scores how well it fits
+// their audience and goal. Every number here is an AI estimate for planning
+// and is labelled that way — nothing on this sheet predicts views or likes.
+
+const IDEA_SCORE_ROWS: Array<{ key: keyof IdeaScores; label: string }> = [
+  { key: 'hook', label: 'Hook score' },
+  { key: 'topic_fit', label: 'Topic fit' },
+  { key: 'audience_fit', label: 'Audience fit' },
+  { key: 'shareability', label: 'Shareability' },
+  { key: 'save_potential', label: 'Save potential' },
+  { key: 'cta_strength', label: 'CTA strength' },
+];
+
+export function IdeaScoreModal({
+  visible,
+  onClose,
+  defaults,
+  onScore,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  defaults: IdeaRequest;
+  onScore: (input: { idea: string; audience: string; goal: string }) => Promise<IdeaScoreResult>;
+}) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
+  const [idea, setIdea] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<IdeaScoreResult | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setIdea('');
+      setError(null);
+      setResult(null);
+      setLoading(false);
+      setCopied(false);
+    }
+  }, [visible]);
+
+  const run = async () => {
+    const text = idea.trim();
+    if (!text || loading) {
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    setCopied(false);
+    try {
+      const scored = await onScore({
+        idea: text,
+        audience: defaults.audience.trim(),
+        goal: defaults.goal.trim(),
+      });
+      setResult(scored);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : 'Could not score this idea. Please try again.',
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyFeedback = async () => {
+    if (!result) {
+      return;
+    }
+    const text = [
+      `Overall content score: ${result.overall}/100 (AI estimate)`,
+      ...IDEA_SCORE_ROWS.map((row) => `${row.label}: ${result.scores[row.key]}/100`),
+      '',
+      result.why,
+      '',
+      'How to improve:',
+      ...result.improvements.map((item) => `• ${item}`),
+    ].join('\n');
+    try {
+      await setStringAsync(text);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <Sheet visible={visible} onClose={onClose} scrollBody>
+      <View style={styles.sheetHead}>
+        <Text style={styles.sheetTitle}>Analyze my idea</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          onPress={onClose}
+          hitSlop={10}
+        >
+          <Text style={styles.sheetClose}>✕</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.sheetNote}>
+        Paste an idea, hook, caption or rough script. CreatorDNA scores how well it fits your
+        audience and goal — AI estimates for planning, not predictions of views or likes.
+      </Text>
+
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>Your idea</Text>
+        <TextInput
+          value={idea}
+          onChangeText={setIdea}
+          placeholder="e.g. A 20-second Reel: 3 free AI tools that save students an hour a day"
+          placeholderTextColor={colors.textDim}
+          style={[styles.input, styles.ideaInput]}
+          multiline
+          textAlignVertical="top"
+        />
+      </View>
+
+      {error ? (
+        <Text accessibilityRole="alert" style={styles.sheetError}>
+          {error}
+        </Text>
+      ) : null}
+
+      <GradientButton
+        label={result ? 'Score it again' : 'Score my idea'}
+        loading={loading}
+        disabled={idea.trim().length === 0}
+        onPress={() => void run()}
+        style={{ marginTop: 6 }}
+      />
+
+      {result ? (
+        <View style={styles.scoreBlock}>
+          <View style={styles.scoreHead}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.fieldLabel}>Overall content score</Text>
+              <Text style={styles.overallValue}>
+                {result.overall}
+                <Text style={styles.overallMax}>/100</Text>
+              </Text>
+            </View>
+            <Badge label="AI estimate" tone="purple" />
+          </View>
+
+          <Text style={styles.whyText}>{result.why}</Text>
+
+          <View style={{ gap: 9, marginTop: 4 }}>
+            {IDEA_SCORE_ROWS.map((row) => {
+              const value = result.scores[row.key];
+              return (
+                <View key={row.key} style={styles.scoreRow}>
+                  <Text style={styles.scoreRowLabel}>{row.label}</Text>
+                  <View style={styles.scoreTrack}>
+                    <View
+                      style={[
+                        styles.scoreFill,
+                        { width: `${value}%` as DimensionValue },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.scoreRowValue}>{value}</Text>
+                </View>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.fieldLabel, { marginTop: 8 }]}>How to improve</Text>
+          {result.improvements.map((item, index) => (
+            <View key={`${index}-${item.slice(0, 24)}`} style={styles.improveRow}>
+              <View style={styles.improveDot} />
+              <Text style={styles.improveText}>{item}</Text>
+            </View>
+          ))}
+
+          <OutlineButton
+            label={copied ? 'Copied ✓' : 'Copy feedback'}
+            onPress={() => void copyFeedback()}
+            tone="light"
+            style={{ marginTop: 12 }}
+          />
+        </View>
+      ) : null}
+    </Sheet>
+  );
+}
+
+// ---------- Add your own idea ----------
+//
+// For the idea the creator already had before opening the app. It enters the
+// plan as a draft with no AI claims attached — the words are theirs.
+
+export function CustomIdeaModal({
+  visible,
+  onClose,
+  onSubmit,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSubmit: (input: { title: string; hook: string; format: string }) => void;
+}) {
+  const colors = useThemeColors();
+  const styles = useStyles(makeStyles);
+  const [title, setTitle] = useState('');
+  const [hook, setHook] = useState('');
+  const [format, setFormat] = useState('Reel');
+
+  useEffect(() => {
+    if (visible) {
+      setTitle('');
+      setHook('');
+      setFormat('Reel');
+    }
+  }, [visible]);
+
+  const canSubmit = title.trim().length > 0 && hook.trim().length > 0;
+
+  const submit = () => {
+    if (!canSubmit) {
+      return;
+    }
+    onSubmit({
+      title: title.trim(),
+      hook: hook.trim(),
+      format: format.trim() || 'Reel',
+    });
+  };
+
+  return (
+    <Sheet visible={visible} onClose={onClose} scrollBody>
+      <View style={styles.sheetHead}>
+        <Text style={styles.sheetTitle}>Add your own idea</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+          onPress={onClose}
+          hitSlop={10}
+        >
+          <Text style={styles.sheetClose}>✕</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.sheetNote}>
+        Your words, your plan — this one is added as a draft with no AI estimate attached.
+      </Text>
+
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>Title</Text>
+        <TextInput
+          value={title}
+          onChangeText={setTitle}
+          placeholder="e.g. 3 free AI tools for students"
+          placeholderTextColor={colors.textDim}
+          style={styles.input}
+        />
+      </View>
+
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>Opening line</Text>
+        <TextInput
+          value={hook}
+          onChangeText={setHook}
+          placeholder="The first thing you say or show on screen"
+          placeholderTextColor={colors.textDim}
+          style={[styles.input, styles.ideaInput]}
+          multiline
+          textAlignVertical="top"
+        />
+      </View>
+
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>Format</Text>
+        <TextInput
+          value={format}
+          onChangeText={setFormat}
+          placeholder="Reel"
+          placeholderTextColor={colors.textDim}
+          style={styles.input}
+        />
+      </View>
+
+      <GradientButton label="Add to plan" disabled={!canSubmit} onPress={submit} />
+    </Sheet>
+  );
+}
+
 const makeStyles = (c: typeof colors) => StyleSheet.create({
   backdrop: {
     flex: 1,
@@ -495,4 +794,51 @@ const makeStyles = (c: typeof colors) => StyleSheet.create({
     marginTop: 12,
   },
   saveIconText: { ...type.small, color: c.textDim },
+
+  // Analyze my idea
+  ideaInput: { minHeight: 128, paddingTop: 12, textAlignVertical: 'top' },
+  scoreBlock: {
+    marginTop: 16,
+    gap: 10,
+    backgroundColor: c.lightCard,
+    borderRadius: radius.sm + 2,
+    borderWidth: 1,
+    borderColor: c.lightBorder,
+    padding: 14,
+  },
+  scoreHead: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  overallValue: {
+    fontSize: 34,
+    fontWeight: '800',
+    color: c.text,
+    letterSpacing: -1,
+    marginTop: 2,
+  },
+  overallMax: { fontSize: 15, fontWeight: '700', color: c.textDim },
+  whyText: { ...type.small, color: c.textSub, lineHeight: 18 },
+  scoreRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  scoreRowLabel: { ...type.small, color: c.text, width: 116, fontSize: 13 },
+  scoreTrack: {
+    flex: 1,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: c.primarySoft,
+    overflow: 'hidden',
+  },
+  scoreFill: { height: 8, borderRadius: 4, backgroundColor: c.primary },
+  scoreRowValue: {
+    ...type.small,
+    color: c.textSub,
+    width: 28,
+    textAlign: 'right',
+    fontSize: 12.5,
+  },
+  improveRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 9 },
+  improveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: c.primary, marginTop: 6 },
+  improveText: { ...type.small, color: c.text, flex: 1, lineHeight: 18, fontSize: 13.5 },
 });

@@ -2,7 +2,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { DnaMark } from '../components/DnaMark';
-import { ChevronRightIcon, GearIcon, LinkOutIcon, LogoutIcon, DocIcon } from '../components/icons';
+import { ChevronRightIcon, GearIcon, LinkOutIcon, LogoutIcon, DocIcon, SparkIcon } from '../components/icons';
 import { Avatar, Badge, ListRow, ScreenHeader } from '../components/ui';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
 import { useTheme, useThemeColors } from '../themeContext';
@@ -16,6 +16,8 @@ export function ProfileScreen({
   onOpenAnalyses,
   onViewDna,
   onOpenSettings,
+  onSwitchAccount,
+  onOpenMediaKit,
   onLogout,
 }: {
   profile: InstagramProfile | null;
@@ -25,6 +27,8 @@ export function ProfileScreen({
   onOpenAnalyses: () => void;
   onViewDna: () => void;
   onOpenSettings: () => void;
+  onSwitchAccount: () => void;
+  onOpenMediaKit: () => void;
   onLogout: () => void;
 }) {
   const { mode } = useTheme();
@@ -166,14 +170,16 @@ export function ProfileScreen({
             onPress={onOpenSettings}
           />
           <View style={styles.rowDivider} />
-          {/* Informational only: shows which Instagram account this device is
-              connected to. Switching happens via a long-press on the Profile
-              tab, so tapping this row does nothing. */}
+          {/* The row is the entry point into the account switcher, not just a
+              label: with several saved accounts the only way in used to be a
+              550 ms long-press on the Profile tab, which nobody discovers —
+              so multiple accounts looked like a single account. */}
           <ListRow
             tone={tone}
             icon={<LinkOutIcon size={19} color={iconColor} />}
             label="Connected Accounts"
-            value={connected ? `Instagram @${username}` : 'Not connected'}
+            value={connected ? `@${username}` : 'Not connected'}
+            onPress={onSwitchAccount}
           />
           <View style={styles.rowDivider} />
           <ListRow
@@ -182,6 +188,13 @@ export function ProfileScreen({
             label="My analyses"
             value={`${recordCount}`}
             onPress={onOpenAnalyses}
+          />
+          <View style={styles.rowDivider} />
+          <ListRow
+            tone={tone}
+            icon={<SparkIcon size={19} color={iconColor} />}
+            label="Media Kit"
+            onPress={onOpenMediaKit}
           />
           <View style={styles.rowDivider} />
           <ListRow

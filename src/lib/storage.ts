@@ -26,9 +26,62 @@ export const storageKeys = {
   trendingIdeas: 'creatordna.trendingIdeas.v1',
   savedIdeas: 'creatordna.savedIdeas.v1',
   chat: 'creatordna.chat.v1',
+  planStatuses: 'creatordna.planStatuses.v1',
+  sync: 'creatordna.sync.v1',
   fabPosition: 'creatordna.fabPosition.v1',
   theme: 'creatordna.theme.v1',
 };
+
+/** Namespaces any account-owned key by scope; `''` returns the bare key. */
+export function scopedStorageKey(base: string, scope: string): string {
+  return scope ? `${base}:${scope}` : base;
+}
+
+// ---------- Account-scoped content storage ----------
+//
+// Analyses, ideas and chat belong to whoever is signed in. They used to live
+// under one global key each, so switching accounts (or restoring a different
+// session) left the previous creator's content on screen — the exact bug that
+// made the app "show the previous one". These five keys are therefore
+// namespaced by an account scope: `e:<email>` for a signed-in account,
+// `ig:<handle>` for an Instagram-only connection, `guest` when signed out.
+// Theme and the FAB position stay global: they are device preferences, not
+// anyone's data.
+
+export type ContentKeys = {
+  analyses: string;
+  ideas: string;
+  trendingIdeas: string;
+  savedIdeas: string;
+  chat: string;
+  planStatuses: string;
+};
+
+export const CONTENT_KEY_NAMES: (keyof ContentKeys)[] = [
+  'analyses',
+  'ideas',
+  'trendingIdeas',
+  'savedIdeas',
+  'chat',
+  'planStatuses',
+];
+
+/** The content keys for a scope. `''` yields the original unscoped keys. */
+export function contentKeysFor(scope: string): ContentKeys {
+  const suffix = scope ? `:${scope}` : '';
+  return {
+    analyses: `${storageKeys.analyses}${suffix}`,
+    ideas: `${storageKeys.ideas}${suffix}`,
+    trendingIdeas: `${storageKeys.trendingIdeas}${suffix}`,
+    savedIdeas: `${storageKeys.savedIdeas}${suffix}`,
+    chat: `${storageKeys.chat}${suffix}`,
+    planStatuses: `${storageKeys.planStatuses}${suffix}`,
+  };
+}
+
+export function contentKeyList(keys: ContentKeys): string[] {
+  return CONTENT_KEY_NAMES.map((name) => keys[name]);
+}
 
 // React Native has no localStorage, so before AsyncStorage was wired in every
 // value lived in a plain module Map and was destroyed the moment the OS
@@ -191,10 +244,19 @@ export function readJson<T>(key: string, fallback: T): T {
 
 export function writeJson(key: string, value: unknown): void {
   try {
-    const raw = JSON.stringify(value);
-    // Cache first: every reader, and any hydration merge already in flight,
-    // must observe this value immediately — before the async disk write lands.
-    cache.set(key, raw);
+    writeRaw(key, JSON.stringify(value));
+  } catch {
+    // Quota exceeded or unavailable — keep the session working in memory.
+  }
+}
+
+// The body of writeJson, for callers that already hold serialized bytes
+// (adopting an account's content moves whole records without re-parsing).
+function writeRaw(key: string, raw: string): void {
+  // Cache first: every reader, and any hydration merge already in flight,
+  // must observe this value immediately — before the async disk write lands.
+  cache.set(key, raw);
+  try {
     const store = resolveStorage();
     if (store) {
       store.setItem(key, raw);
@@ -209,7 +271,95 @@ export function writeJson(key: string, value: unknown): void {
     }
     persistToDisk(key, raw);
   } catch {
-    // Quota exceeded or unavailable — keep the session working in memory.
+    // Storage refused the write — the in-memory copy still serves this session.
+  }
+}
+
+function readRaw(key: string): string | null {
+  try {
+    const store = resolveStorage();
+    const raw = store ? store.getItem(key) : (cache.get(key) ?? null);
+    return raw ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+// Forgets a key everywhere it can live: cache, any parked write, and disk.
+function forgetKey(key: string): void {
+  cache.delete(key);
+  pendingWrites.delete(key);
+  try {
+    const store = resolveStorage();
+    if (store) {
+      store.removeItem(key);
+      return;
+    }
+    diskWriteChain = diskWriteChain
+      .then(() => AsyncStorage.removeItem(key))
+      .catch(() => {
+        // Best effort: a key that survives on disk is re-adopted, never shown
+        // under the wrong account, because the scope moved away from it.
+      });
+  } catch {
+    // Nothing else to clean up.
+  }
+}
+
+/**
+ * Moves content into the account scope that is signed in now, without ever
+ * overwriting data: a target that already holds something is left completely
+ * alone. The only sources are the legacy unscoped keys (content written
+ * before scoping existed) and the signed-out `guest` scope — another real
+ * account's scope is never a source, so a switch can never drag one creator's
+ * content into another's keys. Called at boot it adopts pre-upgrade data,
+ * which is why upgrading the app never loses analyses.
+ */
+export function adoptContentScope(toScope: string): void {
+  const target = contentKeysFor(toScope);
+  const sources: ContentKeys[] = [contentKeysFor(''), contentKeysFor('guest')];
+  for (const source of sources) {
+    for (const name of CONTENT_KEY_NAMES) {
+      const fromKey = source[name];
+      const toKey = target[name];
+      if (fromKey === toKey) continue;
+      if (readRaw(toKey)) continue; // target already has content: never overwrite
+      const raw = readRaw(fromKey);
+      if (!raw) continue;
+      writeRaw(toKey, raw);
+      forgetKey(fromKey);
+    }
+  }
+}
+
+/**
+ * Pulls keys that only exist on disk into the read cache. Web reads go
+ * straight to localStorage and needs nothing; native reads hit the cache, so
+ * a scope created in a previous session must be loaded before the app switches
+ * to it or the account would look empty. Always resolves.
+ */
+export async function preloadStorageKeys(keys: string[]): Promise<void> {
+  if (resolveStorage()) return; // web: synchronous and already authoritative
+  try {
+    const missing = keys.filter(
+      (key) => !cache.has(key) && !pendingWrites.has(key),
+    );
+    if (missing.length === 0) return;
+    let pairs: readonly [string, string | null][] = [];
+    await runWithTimeout(
+      (async () => {
+        pairs = await AsyncStorage.multiGet(missing);
+      })(),
+      HYDRATION_TIMEOUT_MS,
+    );
+    for (const [key, raw] of pairs) {
+      if (raw === null || raw === undefined) continue;
+      if (pendingWrites.has(key)) continue;
+      cache.set(key, raw);
+    }
+  } catch {
+    // A failed preload only means the account looks empty this session; the
+    // data itself is untouched on disk.
   }
 }
 
@@ -222,8 +372,26 @@ export function usePersistentState<T>(
   // caller's default, not saved data, so pushing it back to disk would erase
   // the user's real values (theme, analyses, chat) on every cold start.
   const mountValue = useRef(state);
+  // The key can change while mounted — content keys are namespaced by account,
+  // so signing in or swapping accounts re-keys this hook. The value must then
+  // be re-read from the new key and, critically, the old account's state must
+  // not be written into it: that would be exactly the cross-account bleed the
+  // scoping exists to prevent.
+  const currentKey = useRef(key);
+  const skipNextWrite = useRef(false);
 
   useEffect(() => {
+    if (currentKey.current === key) return;
+    currentKey.current = key;
+    skipNextWrite.current = true;
+    setState(readJson(key, initial));
+  }, [key, initial]);
+
+  useEffect(() => {
+    if (skipNextWrite.current) {
+      skipNextWrite.current = false;
+      return;
+    }
     if (!isStorageHydrated() && state === mountValue.current) {
       // Still the untouched mount value and storage has not answered yet:
       // skip the write. Any real edit (state now differs) still goes through,

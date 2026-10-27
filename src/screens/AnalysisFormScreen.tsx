@@ -61,6 +61,12 @@ export function AnalysisFormScreen({
   const [transcribing, setTranscribing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // The Instagram post the fields were filled from, so the record can carry its
+  // thumbnail/permalink back to the analysis and the form can say honestly
+  // which numbers it imported instead of leaving them looking typed in.
+  const [pickedPost, setPickedPost] = useState<
+    InstagramDashboard['media'][number] | null
+  >(null);
   const [uploadingMedia, setUploadingMedia] = useState<{ name: string; percent: number } | null>(null);
   // Height of the open keyboard. Android resizes the window (adjustResize) but
   // never scrolls the focused field clear of the keyboard, so the form pads its
@@ -255,9 +261,23 @@ export function AnalysisFormScreen({
       caption: cleanCaption || null,
       metrics,
       media: selectedMedia,
+      // Only set when the fields really came from a post, so the saved record
+      // links back to the exact Instagram asset it was built from.
+      mediaLink: pickedPost
+        ? {
+          mediaId: pickedPost.id,
+          thumbnailUrl: pickedPost.thumbnailUrl,
+          permalink: pickedPost.permalink,
+          mediaType: pickedPost.mediaType,
+        }
+        : null,
     });
   };
 
+  // Filling from a post must never leave another post's numbers behind: the
+  // metrics are written unconditionally (blank when this post has none) and
+  // views is cleared, because Instagram does not return per-post views in the
+  // payload the app reads — inventing one would be a fake metric.
   const prefillFromMedia = (media: InstagramDashboard['media'][number]) => {
     const firstLine = (media.caption ?? '').split('\n')[0].trim();
     const nextTitle = firstLine
@@ -266,17 +286,22 @@ export function AnalysisFormScreen({
         : firstLine
       : `${humanizeMediaType(media.mediaType)} post`;
     setTitle(nextTitle);
-    if (media.caption) {
-      setCaption(media.caption);
-    }
-    if (media.likes !== null) {
-      setLikes(String(media.likes));
-    }
-    if (media.comments !== null) {
-      setComments(String(media.comments));
-    }
+    setCaption(media.caption ?? '');
+    setLikes(media.likes !== null ? String(media.likes) : '');
+    setComments(media.comments !== null ? String(media.comments) : '');
+    setViews('');
+    setPickedPost(media);
     setLocalError(null);
     setPickerOpen(false);
+  };
+
+  const clearPickedPost = () => {
+    setTitle('');
+    setCaption('');
+    setLikes('');
+    setComments('');
+    setViews('');
+    setPickedPost(null);
   };
 
   const mediaItems = dashboard?.media ?? [];
@@ -328,10 +353,30 @@ export function AnalysisFormScreen({
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.fromPostsTitle}>Pick from your posts</Text>
-                <Text style={styles.fromPostsSub}>Pre-fill the caption and engagement from Instagram</Text>
+                <Text style={styles.fromPostsSub}>
+                  Fills the title, caption, likes and comments for you
+                </Text>
               </View>
               <Text style={styles.chevron}>›</Text>
             </Pressable>
+          ) : null}
+
+          {/* Says exactly what was imported and what could not be — Instagram
+              returns no per-post views and no spoken transcript in the data
+              this app reads, so those two stay honestly empty instead of
+              being guessed at. */}
+          {pickedPost ? (
+            <View style={styles.pickedCard}>
+              <Text style={styles.pickedTitle}>Filled from your Instagram post</Text>
+              <Text style={styles.pickedText}>
+                Title, caption, likes and comments came from that post.
+                Instagram doesn’t share a post’s views or its spoken words
+                here, so add those two yourself if you have them.
+              </Text>
+              <Pressable onPress={clearPickedPost} hitSlop={8} accessibilityRole="button">
+                <Text style={styles.pickedClear}>Clear filled fields</Text>
+              </Pressable>
+            </View>
           ) : null}
 
           <Field label="Title">
@@ -594,6 +639,25 @@ const makeStyles = (c: typeof colors) => StyleSheet.create({
   fromPostsTitle: { ...type.bodyBold, color: c.text, fontSize: 14.5 },
   fromPostsSub: { ...type.small, color: c.textSub, fontSize: 12, marginTop: 2 },
   chevron: { fontSize: 24, color: c.textDim, fontWeight: '600' },
+
+  pickedCard: {
+    gap: 5,
+    backgroundColor: c.primarySoft,
+    borderWidth: 1,
+    borderColor: c.lightBorder,
+    borderRadius: radius.md,
+    padding: 13,
+  },
+  pickedTitle: { ...type.bodyBold, color: c.primaryDeep, fontSize: 13.5 },
+  pickedText: { ...type.small, color: c.textSub, fontSize: 12, lineHeight: 17 },
+  pickedClear: {
+    ...type.small,
+    color: c.primary,
+    fontWeight: '700',
+    fontSize: 12,
+    marginTop: 4,
+    alignSelf: 'flex-start',
+  },
 
   field: { gap: 7 },
   fieldHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },

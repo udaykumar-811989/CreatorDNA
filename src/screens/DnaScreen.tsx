@@ -20,11 +20,17 @@ import {
   OutlineButton,
   PillTabs,
 } from '../components/ui';
+import { DnaRadar } from '../components/DnaRadar';
 import {
+  biggestOpportunity,
+  creatorType,
+  dnaNeeds,
   dnaScore,
   dnaStrengths,
   dnaWeaknesses,
   formatCount,
+  nextMove,
+  radarAxes,
   whatWorksRows,
 } from '../lib/derived';
 import type { AnalysisRecord } from '../lib/storage';
@@ -70,6 +76,11 @@ export function DnaScreen({
   const rows = whatWorksRows(records, dashboard);
   const strengths = dnaStrengths(records);
   const weaknesses = dnaWeaknesses(records);
+  const axes = radarAxes(records);
+  const creator = creatorType(records);
+  const move = nextMove(records, dashboard);
+  const opportunity = biggestOpportunity(records, dashboard);
+  const needs = dnaNeeds(records, dashboard);
 
   return (
     <View style={styles.screen}>
@@ -132,38 +143,109 @@ export function DnaScreen({
             ) : null}
           </Card>
         ) : tab === 'Overview' ? (
-          <Card style={{ marginTop: 4 }}>
-            <Text style={styles.sectionTitle}>What Works For You</Text>
-            {rows.length === 0 ? (
-              <EmptyState
-                glyph="◎"
-                title="Not enough data yet"
-                hint="Analyze more content to reveal your best topics, hooks, and formats."
-                actionLabel="Analyze content"
-                onAction={onAnalyze}
-              />
-            ) : (
-              <View style={styles.rows}>
-                {rows.map((row, index) => {
-                  const Icon = rowIcons[row.icon];
-                  return (
-                    <View key={row.key}>
-                      <View style={styles.workRow}>
-                        <View style={styles.workIcon}>
-                          <Icon size={17} color={colors.primary} />
+          <>
+            {/* Who this creator is, in one label — read from their own
+                analyzed material, never assigned by the model. */}
+            {creator ? (
+              <Card style={styles.typeCard}>
+                <Text style={styles.eyebrow}>Creator type</Text>
+                <Text style={styles.typeLabel}>{creator.label}</Text>
+                <Text style={styles.typeBasis}>{creator.basis}</Text>
+              </Card>
+            ) : null}
+
+            {axes.length >= 3 ? (
+              <Card style={{ marginTop: 4 }}>
+                <Text style={styles.sectionTitle}>Your DNA Profile</Text>
+                <View style={styles.radarWrap}>
+                  <DnaRadar axes={axes} />
+                </View>
+                <Text style={styles.radarCaption}>
+                  Averages from {records.length} analyzed post{records.length === 1 ? '' : 's'},
+                  scored 0–10 by CreatorDNA.
+                </Text>
+              </Card>
+            ) : null}
+
+            {/* One recommendation, not a list: the weakest dimension with the
+                evidence behind it, plus the single biggest opening. */}
+            {move ? (
+              <Card style={styles.moveCard}>
+                <View style={styles.moveHead}>
+                  <Text style={styles.eyebrow}>Your Next Move</Text>
+                  <Badge label="AI" tone="purple" />
+                </View>
+                <Text style={styles.moveTitle}>{move.title}</Text>
+                <Text style={styles.moveDetail}>{move.detail}</Text>
+                {opportunity ? (
+                  <>
+                    <Text style={[styles.eyebrow, { marginTop: 6 }]}>Biggest opportunity</Text>
+                    <Text style={styles.moveDetail}>{opportunity}</Text>
+                  </>
+                ) : null}
+              </Card>
+            ) : null}
+
+            <Card style={{ marginTop: 4 }}>
+              <Text style={styles.sectionTitle}>What Works For You</Text>
+              {rows.length === 0 ? (
+                <EmptyState
+                  glyph="◎"
+                  title="Not enough data yet"
+                  hint="Analyze more content to reveal your best topics, hooks, and formats."
+                  actionLabel="Analyze content"
+                  onAction={onAnalyze}
+                />
+              ) : (
+                <View style={styles.rows}>
+                  {rows.map((row, index) => {
+                    const Icon = rowIcons[row.icon];
+                    return (
+                      <View key={row.key}>
+                        <View style={styles.workRow}>
+                          <View style={styles.workIcon}>
+                            <Icon size={17} color={colors.primary} />
+                          </View>
+                          <Text style={styles.workLabel}>{row.label}</Text>
+                          <Text style={styles.workValue} numberOfLines={2}>
+                            {row.value}
+                          </Text>
                         </View>
-                        <Text style={styles.workLabel}>{row.label}</Text>
-                        <Text style={styles.workValue} numberOfLines={2}>
-                          {row.value}
-                        </Text>
+                        {index < rows.length - 1 ? <View style={styles.divider} /> : null}
                       </View>
-                      {index < rows.length - 1 ? <View style={styles.divider} /> : null}
+                    );
+                  })}
+                </View>
+              )}
+            </Card>
+
+            {/* Exactly what is still missing and how to unlock it — an
+                incomplete profile explains itself instead of going blank. */}
+            {needs.length > 0 ? (
+              <Card style={styles.needsCard}>
+                <Text style={styles.sectionTitle}>To complete your DNA</Text>
+                <View style={styles.rows}>
+                  {needs.map((need, index) => (
+                    <View key={need}>
+                      <View style={styles.needRow}>
+                        <View style={styles.needDot} />
+                        <Text style={styles.needText}>{need}</Text>
+                      </View>
+                      {index < needs.length - 1 ? <View style={styles.divider} /> : null}
                     </View>
-                  );
-                })}
-              </View>
-            )}
-          </Card>
+                  ))}
+                </View>
+                {!profile ? (
+                  <OutlineButton
+                    label="Connect Instagram"
+                    onPress={onConnect}
+                    tone="light"
+                    style={{ marginTop: 10 }}
+                  />
+                ) : null}
+              </Card>
+            ) : null}
+          </>
         ) : tab === 'Strengths' ? (
           <Card style={{ marginTop: 4 }}>
             <Text style={styles.sectionTitle}>Your Strengths</Text>
@@ -257,6 +339,34 @@ const makeStyles = (c: typeof colors) => StyleSheet.create({
   profileMeta: { ...type.small, color: c.textSub, marginTop: 3 },
   scoreWrap: { alignItems: 'center', gap: 6 },
   scoreLabel: { ...type.tiny, color: c.textSub, textTransform: 'uppercase' },
+
+  eyebrow: {
+    ...type.tiny,
+    color: c.textSub,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  typeCard: { gap: 6 },
+  typeLabel: { ...type.h3, color: c.text, fontSize: 23, letterSpacing: -0.4 },
+  typeBasis: { ...type.small, color: c.textSub, fontSize: 12.5, lineHeight: 17 },
+
+  radarWrap: { alignItems: 'center', paddingVertical: 6 },
+  radarCaption: { ...type.tiny, color: c.textDim, textAlign: 'center', lineHeight: 16 },
+
+  moveCard: { backgroundColor: c.primarySoft, borderColor: c.lightBorder, gap: 8 },
+  moveHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  moveTitle: { ...type.h4, color: c.text, fontSize: 18, letterSpacing: -0.3 },
+  moveDetail: { ...type.small, color: c.textSub, lineHeight: 19, fontSize: 13.5 },
+
+  needsCard: { gap: 4 },
+  needRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 9 },
+  needDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: c.amber, marginTop: 6 },
+  needText: { ...type.small, color: c.textSub, fontSize: 13.5, lineHeight: 18 },
 
   sectionTitle: { ...type.h4, color: c.text, marginBottom: 4 },
   rows: { marginTop: 8 },

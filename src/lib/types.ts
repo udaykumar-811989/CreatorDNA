@@ -34,6 +34,8 @@ const SCREEN_NAMES = [
   'recommendations',
   'analysisForm',
   'analysesList',
+  'weeklyReport',
+  'mediaKit',
   'privacy',
   'help',
   'chat',
@@ -58,6 +60,8 @@ export const LIGHT_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
   'recommendations',
   'analysisForm',
   'analysesList',
+  'weeklyReport',
+  'mediaKit',
 ]);
 
 export const NAV_SCREENS: ReadonlySet<Screen> = new Set<Screen>([

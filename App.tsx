@@ -33,18 +33,27 @@ import {
 } from './src/lib/config';
 import {
   AnalysisRecord,
+  adoptContentScope,
+  contentKeyList,
+  contentKeysFor,
   hydrateStorage,
   isStorageHydrated,
+  preloadStorageKeys,
+  scopedStorageKey,
   storageKeys,
   usePersistentState,
 } from './src/lib/storage';
 import {
   buildPlan,
+  creatorType,
   dnaScore,
   dnaStrengths,
   dnaWeaknesses,
+  humanizeMediaType,
   scoreOf,
   topicsBreakdown,
+  topFormatByLikes,
+  type PlanStatus,
 } from './src/lib/derived';
 import {
   CreatorAiChatAttachmentInput,
@@ -59,6 +68,7 @@ import {
   generateCreatorMedia,
   getCreatorAiJob,
   refreshCreatorAiSession,
+  scoreCreatorIdea,
   sendCreatorAiChat,
   signInAnonymouslyForCreatorAi,
   signInForCreatorAi,
@@ -95,6 +105,8 @@ import { ProfileScreen } from './src/screens/ProfileScreen';
 import { RecommendationsScreen } from './src/screens/RecommendationsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { VideoAnalysisScreen } from './src/screens/VideoAnalysisScreen';
+import { WeeklyReportScreen } from './src/screens/WeeklyReportScreen';
+import { MediaKitScreen } from './src/screens/MediaKitScreen';
 import { NAV_HEIGHT } from './src/theme';
 import { ThemeProvider, useTheme, useThemeColors } from './src/themeContext';
 
@@ -487,26 +499,106 @@ function AppShell() {
   const pendingOAuthState = useRef<string | null>(null);
   const sessionRestoreStarted = useRef(false);
 
+  // ---------- Account scope ----------
+  // Analyses, ideas and chat are namespaced by whoever is signed in. An email
+  // session wins when both exist (it owns the server-side rows); otherwise the
+  // connected Instagram handle; otherwise the signed-out scope. Without this,
+  // switching accounts kept showing the previous creator's content, because
+  // every one of these keys used to be global.
+  const [accountScope, setAccountScope] = useState<string>('guest');
+  const lastAdoptedScope = useRef<string | null>(null);
+
+  useEffect(() => {
+    const email = loadAuthSession()?.email?.toLowerCase() ?? null;
+    const handle =
+      (dashboard?.profile.username ?? profile?.username ?? '').toLowerCase() ||
+      null;
+    const next = email ? `e:${email}` : handle ? `ig:${handle}` : 'guest';
+    if (next === lastAdoptedScope.current) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      // Native reads from a cache, so the target scope's bytes must be in it
+      // before the hooks re-key, or the account would look empty on a device
+      // where the data already exists.
+      await preloadStorageKeys([
+        ...contentKeyList(contentKeysFor(next)),
+        scopedStorageKey(storageKeys.sync, next),
+      ]);
+      if (cancelled) return;
+      adoptContentScope(next);
+      lastAdoptedScope.current = next;
+      setAccountScope(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [dashboard?.profile.username, profile?.username, supabaseAccessToken]);
+
   // ---------- Real, persisted app data ----------
+  const contentKeys = contentKeysFor(accountScope);
   const [analyses, setAnalyses] = usePersistentState<AnalysisRecord[]>(
-    storageKeys.analyses,
+    contentKeys.analyses,
     [],
   );
-  const [ideas, setIdeas] = usePersistentState<CreatorAiIdea[]>(storageKeys.ideas, []);
+  const [ideas, setIdeas] = usePersistentState<CreatorAiIdea[]>(contentKeys.ideas, []);
   const [trendingIdeas, setTrendingIdeas] = usePersistentState<CreatorAiIdea[]>(
-    storageKeys.trendingIdeas,
+    contentKeys.trendingIdeas,
     [],
   );
   const [savedIdeas, setSavedIdeas] = usePersistentState<CreatorAiIdea[]>(
-    storageKeys.savedIdeas,
+    contentKeys.savedIdeas,
     [],
   );
   // Chat history, including the per-message media payload (see
   // ChatMessageRecord). Older entries stored without `media` still validate.
   const [chatMessages, setChatMessages] = usePersistentState<ChatMessageRecord[]>(
-    storageKeys.chat,
+    contentKeys.chat,
     [],
   );
+  // Where each idea sits in the publishing pipeline, scoped like the ideas
+  // themselves so one account's statuses never surface under another.
+  const [planStatuses, setPlanStatuses] = usePersistentState<Record<string, PlanStatus>>(
+    contentKeys.planStatuses,
+    {},
+  );
+  const setPlanStatus = useCallback((key: string, status: PlanStatus) => {
+    setPlanStatuses((previous) => ({ ...previous, [key]: status }));
+  }, [setPlanStatuses]);
+  // A hand-written idea joins the plan as a plain draft: no AI score, no
+  // fabricated script — just the creator's own words.
+  const addCustomIdea = useCallback(
+    (input: { title: string; hook: string; format: string }) => {
+      setIdeas((previous) => [
+        ...previous,
+        {
+          title: input.title,
+          hook: input.hook,
+          concept: '',
+          format: input.format,
+          cta: '',
+          priority: 'medium',
+        },
+      ]);
+    },
+    [setIdeas],
+  );
+  // When this account's analytics were last refreshed — scoped alongside the
+  // rest of the content, so one account's sync time never shows under another.
+  const [lastSyncedAt, setLastSyncedAt] = usePersistentState<string | null>(
+    scopedStorageKey(storageKeys.sync, accountScope),
+    null,
+  );
+  const lastDashboardRef = useRef<InstagramDashboard | null>(null);
+  useEffect(() => {
+    // Only a freshly fetched dashboard restamps the time. Restored state and
+    // re-renders leave it alone, so the stamp always means "we fetched this".
+    if (dashboard && dashboard !== lastDashboardRef.current) {
+      lastDashboardRef.current = dashboard;
+      setLastSyncedAt(new Date().toISOString());
+    }
+  }, [dashboard, setLastSyncedAt]);
   // Every chat write goes through commitChat so this ref always mirrors state
   // synchronously — a generation job that resolves between renders can still
   // find and patch its own message with it, without racing React's batching.
@@ -918,8 +1010,13 @@ function AppShell() {
       try {
         // Instagram-only saved account (no password is ever involved in
         // this app's usual flow): restore the stored connection directly —
-        // there is no credential to refresh.
+        // there is no credential to refresh. Any email session belonging to a
+        // previously signed-in account must not survive this swap: leaving it
+        // in place is what let one login keep another creator's identity
+        // attached to the app while the screen showed this one.
         if (!account.refreshToken) {
+          clearAuthSession();
+          setSupabaseAccessToken(null);
           setProfile(null);
           setDashboard(null);
           setDashboardError(null);
@@ -1033,37 +1130,51 @@ function AppShell() {
   }, []);
 
   // Keep the remembered account's Instagram details fresh for the swap list
-  // (runs after connect, dashboard loads, and profile changes). Password
-  // sessions refresh their email entry; Instagram-only sessions refresh the
-  // entry saved under their handle. Only refresh — never auto-create.
+  // (runs after connect, dashboard loads, and profile changes). The row is
+  // identified by the Instagram handle that is actually connected — never by
+  // email alone. Matching on email used to stamp whichever account happened
+  // to be live onto someone else's row, after which the two rows collapsed
+  // into one and the switcher showed a single account carrying another
+  // account's insights. Credentials only ever move onto the row that owns
+  // them, and rows are refreshed, never created here.
   useEffect(() => {
     if (!sessionToken) {
       return;
     }
     const session = loadAuthSession();
-    const email = session?.email;
+    const email = session?.email?.toLowerCase() ?? null;
     const shown = dashboard?.profile ?? profile;
-    const existing = loadSavedAccounts().find((entry) =>
-      email && session?.refreshToken
-        ? entry.email.toLowerCase() === email.toLowerCase()
-        : Boolean(
-            shown &&
-              entry.instagramUsername?.toLowerCase() ===
-                shown.username.toLowerCase(),
-          ),
-    );
+    const handle = shown?.username.toLowerCase() ?? null;
+    const accounts = loadSavedAccounts();
+    const existing = handle
+      ? accounts.find(
+          (entry) => entry.instagramUsername?.toLowerCase() === handle,
+        )
+      : email
+        ? accounts.find((entry) => entry.email.toLowerCase() === email)
+        : undefined;
     if (!existing) {
       return;
     }
-    setSavedAccounts(upsertSavedAccount({
-      ...existing,
-      refreshToken: session?.refreshToken ?? existing.refreshToken,
-      instagramToken: sessionToken,
-      instagramUsername: shown?.username ?? existing.instagramUsername,
-      instagramPictureUrl:
-        shown?.profilePictureUrl ?? existing.instagramPictureUrl,
-      savedAt: Date.now(),
-    }));
+    const next: SavedAccount = { ...existing, savedAt: Date.now() };
+    if (handle) {
+      // Found by handle: this row IS the connected account, so refreshing its
+      // Instagram fields is safe by construction.
+      next.instagramToken = sessionToken;
+      next.instagramUsername = handle;
+      next.instagramPictureUrl =
+        shown?.profilePictureUrl ?? existing.instagramPictureUrl;
+    }
+    if (
+      email &&
+      session?.refreshToken &&
+      existing.email.toLowerCase() === email
+    ) {
+      // Supabase rotates refresh tokens on use; only the row that owns this
+      // email session may receive the rotated one.
+      next.refreshToken = session.refreshToken;
+    }
+    setSavedAccounts(upsertSavedAccount(next));
   }, [dashboard, profile, sessionToken]);
 
   useEffect(() => {
@@ -2010,6 +2121,32 @@ function AppShell() {
     // not content data, and removing them would break one-tap sign-in.
   }, [commitChat, setAnalyses, setIdeas, setSavedIdeas, setTrendingIdeas, stopMediaRuns]);
 
+  // "Analyze my idea": score the creator's own words against their real
+  // audience and goal, plus a compact, honest snapshot of who they are — no
+  // invented analytics, only what this account has actually shown.
+  const scoreIdea = useCallback(
+    async (input: { idea: string; audience: string; goal: string }) => {
+      if (!creatorAiFunctionUrl || !supabaseAnonKey) {
+        throw new Error('CreatorDNA is not configured yet. Please try again later.');
+      }
+      const token = await getCreatorToken();
+      const type = creatorType(analyses);
+      const format = topFormatByLikes(dashboard);
+      const followers = dashboard?.profile.followersCount ?? null;
+      const parts = [
+        type ? `Creator type: ${type.label}` : null,
+        format ? `Best performing format: ${humanizeMediaType(format)}` : null,
+        followers !== null ? `Followers: ${followers}` : null,
+        analyses.length > 0 ? `Analyzed posts: ${analyses.length}` : null,
+      ].filter((part): part is string => part !== null);
+      return await scoreCreatorIdea(creatorAiFunctionUrl, supabaseAnonKey, token, {
+        ...input,
+        context: parts.length > 0 ? parts.join(' · ') : undefined,
+      });
+    },
+    [analyses, dashboard, getCreatorToken],
+  );
+
   const navigateTab = useCallback((tab: NavTab) => {
     setScreen(tab === 'content' ? 'ideas' : tab);
   }, []);
@@ -2313,6 +2450,8 @@ function AppShell() {
           error={dashboardError}
           records={analyses}
           ideaCount={ideas.length}
+          ideas={ideas}
+          lastSyncedAt={lastSyncedAt}
           onRetry={() => {
             if (sessionToken) {
               void loadDashboard(sessionToken);
@@ -2323,7 +2462,10 @@ function AppShell() {
           }}
           onReconnect={() => void reconnectInstagram()}
           onConnect={handleConnectEntry}
+          onCreatePost={() => setScreen('ideas')}
+          onSwitchAccount={() => setAccountSwitcherOpen(true)}
           onViewDna={() => setScreen('dna')}
+          onOpenReport={() => setScreen('weeklyReport')}
         />
       ) : screen === 'dna' ? (
         <DnaScreen
@@ -2345,6 +2487,7 @@ function AppShell() {
           onGenerate={(mode, request) => void handleGenerate(mode, request)}
           onToggleSave={handleToggleSave}
           onAnalyze={() => openForm('ideas')}
+          onScoreIdea={scoreIdea}
         />
       ) : screen === 'analysisForm' ? (
         <AnalysisFormScreen
@@ -2366,6 +2509,24 @@ function AppShell() {
           onBack={() => setScreen('profile')}
           onOpen={(record) => openAnalysis(record, 'analysesList')}
           onAnalyze={() => openForm('analysesList')}
+        />
+      ) : screen === 'weeklyReport' ? (
+        <WeeklyReportScreen
+          profile={profile}
+          dashboard={dashboard}
+          records={analyses}
+          onBack={() => setScreen('home')}
+          onAnalyze={() => openForm('weeklyReport')}
+          onConnect={handleConnectEntry}
+        />
+      ) : screen === 'mediaKit' ? (
+        <MediaKitScreen
+          profile={profile}
+          dashboard={dashboard}
+          records={analyses}
+          lastSyncedAt={lastSyncedAt}
+          onBack={() => setScreen('profile')}
+          onConnect={handleConnectEntry}
         />
       ) : screen === 'analysis' ? (
         <VideoAnalysisScreen
@@ -2391,8 +2552,11 @@ function AppShell() {
           generating={generating}
           generateError={generateError}
           defaults={ideaDefaults}
+          planStatuses={planStatuses}
           onGenerate={(mode, request) => void handleGenerate(mode, request)}
           onToggleSave={handleToggleSave}
+          onSetStatus={setPlanStatus}
+          onAddIdea={addCustomIdea}
         />
       ) : screen === 'performance' ? (
         <PerformanceScreen
@@ -2409,6 +2573,8 @@ function AppShell() {
           onOpenAnalyses={() => setScreen('analysesList')}
           onViewDna={() => setScreen('dna')}
           onOpenSettings={() => setScreen('settings')}
+          onSwitchAccount={() => setAccountSwitcherOpen(true)}
+          onOpenMediaKit={() => setScreen('mediaKit')}
           onLogout={logout}
         />
       ) : screen === 'settings' ? (

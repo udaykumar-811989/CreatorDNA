@@ -1,16 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { GenerateIdeasModal, IdeaScriptModal, IdeaRequest } from '../components/modals';
+import {
+  GenerateIdeasModal,
+  IdeaScoreModal,
+  IdeaScriptModal,
+  IdeaRequest,
+} from '../components/modals';
 import { DotsIcon, PlayIcon, SparkIcon, BookmarkIcon } from '../components/icons';
 import {
   Badge,
   EmptyState,
   GradientButton,
+  OutlineButton,
   PillTabs,
   priorityBadgeProps,
 } from '../components/ui';
 import { isIdeaSaved, sortIdeas } from '../lib/derived';
-import type { CreatorAiIdea } from '../services/creatorAi';
+import type { CreatorAiIdea, IdeaScoreResult } from '../services/creatorAi';
 import { colors, FAB_CLEARANCE, radius, type } from '../theme';
 import { useThemeColors, useStyles } from '../themeContext';
 
@@ -26,6 +32,7 @@ export function IdeasScreen({
   onGenerate,
   onToggleSave,
   onAnalyze,
+  onScoreIdea,
 }: {
   ideas: CreatorAiIdea[];
   trendingIdeas: CreatorAiIdea[];
@@ -36,12 +43,18 @@ export function IdeasScreen({
   onGenerate: (mode: 'replace' | 'append' | 'trending', request: IdeaRequest) => void;
   onToggleSave: (idea: CreatorAiIdea) => void;
   onAnalyze: () => void;
+  onScoreIdea: (input: {
+    idea: string;
+    audience: string;
+    goal: string;
+  }) => Promise<IdeaScoreResult>;
 }) {
   const colors = useThemeColors();
   const styles = useStyles(makeStyles);
   const [tab, setTab] = useState(TABS[0]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [generateMode, setGenerateMode] = useState<'replace' | 'trending' | null>(null);
+  const [scoreOpen, setScoreOpen] = useState(false);
   const [scriptIdea, setScriptIdea] = useState<CreatorAiIdea | null>(null);
   const wasGenerating = useRef(false);
 
@@ -85,6 +98,30 @@ export function IdeasScreen({
           >
             <DotsIcon size={20} color={colors.text} />
           </Pressable>
+        </View>
+
+        {/* The Content tab opens with the question the creator actually has,
+            plus the two ways to answer it: let CreatorDNA propose a post, or
+            bring your own idea and have it scored. */}
+        <View style={styles.hero}>
+          <Text style={styles.heroTitle}>What should I post today?</Text>
+          <Text style={styles.heroSub}>
+            CreatorDNA builds the next post from your own DNA — hook, script, caption, CTA and the
+            reason it fits you.
+          </Text>
+          <View style={styles.heroActions}>
+            <GradientButton
+              label={ideas.length > 0 ? 'Generate another' : 'Generate ideas'}
+              onPress={() => openGenerate('replace')}
+              style={{ flex: 1 }}
+            />
+            <OutlineButton
+              label="Analyze my idea"
+              onPress={() => setScoreOpen(true)}
+              tone="light"
+              style={{ flex: 1 }}
+            />
+          </View>
         </View>
 
         <PillTabs options={TABS} value={tab} onChange={setTab} />
@@ -191,8 +228,16 @@ export function IdeasScreen({
             />
             <MenuOption
               label="Refresh ideas"
-              hint="Generate a fresh set of five ideas"
+              hint="Generate a fresh set of seven ideas"
               onPress={() => openGenerate('replace')}
+            />
+            <MenuOption
+              label="Analyze my idea"
+              hint="Score an idea, hook or caption against your audience"
+              onPress={() => {
+                setMenuOpen(false);
+                setScoreOpen(true);
+              }}
             />
           </View>
         </View>
@@ -207,6 +252,13 @@ export function IdeasScreen({
         defaults={defaults}
         title={generateMode === 'trending' ? 'Trending ideas' : 'Fresh Reel ideas'}
         submitLabel={generateMode === 'trending' ? 'Find trending ideas' : 'Generate ideas'}
+      />
+
+      <IdeaScoreModal
+        visible={scoreOpen}
+        onClose={() => setScoreOpen(false)}
+        defaults={defaults}
+        onScore={onScoreIdea}
       />
 
       <IdeaScriptModal
@@ -289,6 +341,18 @@ const makeStyles = (c: typeof colors) =>
       borderWidth: 1,
       borderColor: c.lightBorder,
     },
+
+    hero: {
+      gap: 8,
+      backgroundColor: c.primarySoft,
+      borderWidth: 1,
+      borderColor: c.lightBorder,
+      borderRadius: radius.md + 2,
+      padding: 15,
+    },
+    heroTitle: { ...type.h4, color: c.text, fontSize: 18, letterSpacing: -0.3 },
+    heroSub: { ...type.small, color: c.textSub, lineHeight: 18, fontSize: 13.5 },
+    heroActions: { flexDirection: 'row', gap: 10, marginTop: 6 },
 
     cards: { gap: 12 },
     ideaCard: {

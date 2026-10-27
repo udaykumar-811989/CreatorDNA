@@ -1,20 +1,35 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { GenerateIdeasModal, IdeaScriptModal, IdeaRequest } from '../components/modals';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  CustomIdeaModal,
+  GenerateIdeasModal,
+  IdeaScriptModal,
+  IdeaRequest,
+} from '../components/modals';
 import { SparkIcon } from '../components/icons';
 import {
   Badge,
   EmptyState,
   GradientButton,
+  OutlineButton,
   PillTabs,
   priorityBadgeProps,
 } from '../components/ui';
-import { buildPlan, isIdeaSaved, sortIdeas } from '../lib/derived';
+import {
+  PLAN_STATUSES,
+  buildPlan,
+  isIdeaSaved,
+  planStatusKey,
+  planStatusOf,
+  sortIdeas,
+  statusMeta,
+  type PlanStatus,
+} from '../lib/derived';
 import type { CreatorAiIdea } from '../services/creatorAi';
 import { useStyles, useThemeColors } from '../themeContext';
 import { colors, FAB_CLEARANCE, radius, type } from '../theme';
 
-const WEEK_STRIP_TABS = ['My Week', 'Upcoming'];
+const WEEK_STRIP_TABS = ['My Week', '30 Days', 'Upcoming'];
 
 export function PlanScreen({
   ideas,
@@ -22,21 +37,29 @@ export function PlanScreen({
   generating,
   generateError,
   defaults,
+  planStatuses,
   onGenerate,
   onToggleSave,
+  onSetStatus,
+  onAddIdea,
 }: {
   ideas: CreatorAiIdea[];
   savedIdeas: CreatorAiIdea[];
   generating: boolean;
   generateError: string | null;
   defaults: IdeaRequest;
+  planStatuses: Record<string, PlanStatus>;
   onGenerate: (mode: 'replace' | 'append' | 'trending', request: IdeaRequest) => void;
   onToggleSave: (idea: CreatorAiIdea) => void;
+  onSetStatus: (key: string, status: PlanStatus) => void;
+  onAddIdea: (input: { title: string; hook: string; format: string }) => void;
 }) {
   const colors = useThemeColors();
   const styles = useStyles(makeStyles);
   const [view, setView] = useState(WEEK_STRIP_TABS[0]);
   const [generateOpen, setGenerateOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [statusFor, setStatusFor] = useState<CreatorAiIdea | null>(null);
   const [scriptIdea, setScriptIdea] = useState<CreatorAiIdea | null>(null);
   const wasGenerating = useRef(false);
 
@@ -48,6 +71,8 @@ export function PlanScreen({
   }, [generating, generateError]);
 
   const plan = buildPlan(ideas);
+  const monthPlan = buildPlan(ideas, new Date(), 30);
+  const covered = monthPlan.filter((day) => day.idea !== null).length;
   const upcoming = sortIdeas(ideas).slice(7);
   const days = plan;
   // Real calendar date, e.g. "Wed, Oct 21" — the plan always builds from today.
@@ -57,6 +82,23 @@ export function PlanScreen({
       month: 'short',
       day: 'numeric',
     });
+
+  // The status chip that sits on every planned day. Tapping it opens the
+  // status sheet — changing a status never touches the idea itself.
+  const statusBadgeFor = (idea: CreatorAiIdea) => {
+    const meta = statusMeta(planStatusOf(planStatuses, idea));
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Status: ${meta.label}. Tap to change.`}
+        hitSlop={6}
+        onPress={() => setStatusFor(idea)}
+        style={({ pressed }) => pressed && { opacity: 0.6 }}
+      >
+        <Badge label={meta.label} tone={meta.tone} />
+      </Pressable>
+    );
+  };
 
   return (
     <View style={styles.screen}>
@@ -128,19 +170,92 @@ export function PlanScreen({
                         : day.idea.format}
                     </Text>
                     <View style={styles.dayCardFoot}>
-                      <Badge {...priorityBadgeProps(day.idea.priority)} />
+                      <View style={styles.footBadges}>
+                        {statusBadgeFor(day.idea)}
+                        <Badge {...priorityBadgeProps(day.idea.priority)} />
+                      </View>
                       <Text style={styles.viewScript}>View Script ›</Text>
                     </View>
                   </Pressable>
                 ) : (
-                  <View key={day.index} style={[styles.dayCard, styles.dayCardEmpty]}>
-                    <Text style={styles.dayCardDay}>{dateLabel(day.date)}</Text>
-                    <Text style={styles.dayCardEmptyText}>No idea planned — a rest day</Text>
-                  </View>
+                  // A day the plan hasn't filled yet: an honest, quiet rest
+                  // day rather than the old "No idea planned" dead end. Tapping
+                  // it is the fastest way to fill the gap.
+                  <Pressable
+                    key={day.index}
+                    accessibilityRole="button"
+                    onPress={() => setGenerateOpen(true)}
+                    style={({ pressed }) => [
+                      styles.dayCard,
+                      styles.dayCardEmpty,
+                      pressed && { opacity: 0.85 },
+                    ]}
+                  >
+                    <View style={styles.dayCardHead}>
+                      <Text style={styles.dayCardDay}>{dateLabel(day.date)}</Text>
+                      {day.isToday ? <Badge label="Today" tone="purple" /> : null}
+                    </View>
+                    <Text style={styles.dayCardEmptyText}>Rest day</Text>
+                    <Text style={styles.viewScript}>Add an idea ›</Text>
+                  </Pressable>
                 ),
               )}
             </View>
           )
+        ) : view === WEEK_STRIP_TABS[1] ? (
+          // The 30-day view is honest about coverage: every cell is a real
+          // day, filled ones have an idea attached, hollow ones are rest days
+          // waiting on more ideas. No day is ever shown as "planned" when it
+          // isn't.
+          <View style={styles.monthCard}>
+            <Text style={styles.monthTitle}>30-day plan</Text>
+            <Text style={styles.monthSummary}>
+              {covered} of 30 days have an idea · {30 - covered} rest day
+              {30 - covered === 1 ? '' : 's'}
+            </Text>
+            <View style={styles.monthGrid}>
+              {monthPlan.map((day) => (
+                <Pressable
+                  key={day.index}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    day.idea
+                      ? `${dateLabel(day.date)}: ${day.idea.title}`
+                      : `${dateLabel(day.date)}: rest day`
+                  }
+                  onPress={() => {
+                    if (day.idea) setScriptIdea(day.idea);
+                    else setGenerateOpen(true);
+                  }}
+                  style={({ pressed }) => [
+                    styles.monthCell,
+                    day.idea && styles.monthCellFilled,
+                    day.isToday && styles.monthCellToday,
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.monthDay,
+                      day.idea && styles.monthDayFilled,
+                      day.isToday && styles.monthDayToday,
+                    ]}
+                  >
+                    {day.dayNumber}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.monthHint}>
+              Tap a filled day to open its idea, or a hollow one to add ideas. Days with nothing
+              planned are rest days — generate more to fill them.
+            </Text>
+            <GradientButton
+              label="Generate 7 more"
+              onPress={() => setGenerateOpen(true)}
+              style={{ marginTop: 4 }}
+            />
+          </View>
         ) : (
           <View style={styles.cards}>
             {upcoming.length === 0 ? (
@@ -185,6 +300,12 @@ export function PlanScreen({
           </Text>
           <GradientButton label="Generate Ideas" onPress={() => setGenerateOpen(true)} style={{ marginTop: 14 }} />
         </View>
+
+        <OutlineButton
+          label="Add your own idea"
+          onPress={() => setCustomOpen(true)}
+          tone="light"
+        />
       </ScrollView>
 
       <GenerateIdeasModal
@@ -195,7 +316,7 @@ export function PlanScreen({
         error={generateError}
         defaults={defaults}
         title="Add more ideas"
-        submitLabel="Generate 5 more"
+        submitLabel="Generate 7 more"
         appendNote="New ideas are added to your plan instead of replacing the ones you already have."
       />
 
@@ -208,6 +329,59 @@ export function PlanScreen({
         }}
         onClose={() => setScriptIdea(null)}
       />
+
+      <CustomIdeaModal
+        visible={customOpen}
+        onClose={() => setCustomOpen(false)}
+        onSubmit={(input) => {
+          onAddIdea(input);
+          setCustomOpen(false);
+        }}
+      />
+
+      {/* Status sheet: four states, one tap. The status is stored against the
+          idea's own title, so regenerating the plan around it never loses it. */}
+      <Modal
+        visible={statusFor !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStatusFor(null)}
+      >
+        <Pressable style={styles.statusBackdrop} onPress={() => setStatusFor(null)}>
+          <Pressable style={styles.statusSheet} onPress={() => {}}>
+            <Text style={styles.statusTitle}>Plan status</Text>
+            <Text style={styles.statusIdea} numberOfLines={2}>
+              {statusFor?.title}
+            </Text>
+            {PLAN_STATUSES.map((entry) => {
+              const active =
+                statusFor !== null && planStatusOf(planStatuses, statusFor) === entry.key;
+              return (
+                <Pressable
+                  key={entry.key}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  onPress={() => {
+                    if (statusFor) onSetStatus(planStatusKey(statusFor), entry.key);
+                    setStatusFor(null);
+                  }}
+                  style={({ pressed }) => [
+                    styles.statusOption,
+                    active && styles.statusOptionActive,
+                    pressed && { opacity: 0.75 },
+                  ]}
+                >
+                  <View style={styles.statusOptionHead}>
+                    <Badge label={entry.label} tone={entry.tone} />
+                    {active ? <Text style={styles.statusCheck}>✓</Text> : null}
+                  </View>
+                  <Text style={styles.statusHint}>{entry.hint}</Text>
+                </Pressable>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -299,4 +473,71 @@ const makeStyles = (c: typeof colors) => StyleSheet.create({
     lineHeight: 19,
     fontSize: 13.5,
   },
+
+  footBadges: { flexDirection: 'row', alignItems: 'center', gap: 7, flexShrink: 1 },
+
+  // 30-day coverage grid
+  monthCard: {
+    gap: 8,
+    backgroundColor: c.lightCard,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: c.lightBorder,
+    padding: 16,
+  },
+  monthTitle: { ...type.h4, color: c.text, fontSize: 18 },
+  monthSummary: { ...type.small, color: c.textSub, fontSize: 13.5 },
+  monthGrid: { flexDirection: 'row', flexWrap: 'wrap', width: '100%', marginTop: 4 },
+  monthCell: {
+    width: '17%',
+    marginRight: '3%',
+    marginBottom: '3%',
+    aspectRatio: 1,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: c.white,
+    borderWidth: 1,
+    borderColor: c.lightBorder,
+  },
+  monthCellFilled: { backgroundColor: c.primarySoft, borderColor: c.primary },
+  monthCellToday: { borderWidth: 2, borderColor: c.primary },
+  monthDay: { fontSize: 13, fontWeight: '700', color: c.textDim },
+  monthDayFilled: { color: c.primaryDeep },
+  monthDayToday: { color: c.primary },
+  monthHint: { ...type.tiny, color: c.textDim, lineHeight: 16 },
+
+  // Status sheet
+  statusBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(10, 9, 26, 0.55)',
+    justifyContent: 'flex-end',
+  },
+  statusSheet: {
+    backgroundColor: c.white,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 26,
+    gap: 10,
+  },
+  statusTitle: { ...type.h3, color: c.text, fontSize: 20 },
+  statusIdea: { ...type.small, color: c.textSub, marginBottom: 2, fontSize: 13.5 },
+  statusOption: {
+    borderWidth: 1.5,
+    borderColor: c.lightBorder,
+    backgroundColor: c.lightCard,
+    borderRadius: radius.sm + 2,
+    padding: 13,
+    gap: 6,
+  },
+  statusOptionActive: { borderColor: c.primary, backgroundColor: c.primarySoft },
+  statusOptionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  statusCheck: { fontSize: 15, fontWeight: '800', color: c.primary },
+  statusHint: { ...type.tiny, color: c.textSub, lineHeight: 16 },
 });

@@ -116,6 +116,15 @@ export function growthDelta(current: number | null, previous: number | null): De
   return { pct, up: pct >= 0 };
 }
 
+// "↑ 12%" / "↓ 8%" for a delta. Callers decide separately whether a delta is
+// safe to show at all — this never invents a number it wasn't handed.
+export function deltaText(delta: Delta): string {
+  if (!delta) {
+    return '';
+  }
+  return `${delta.up ? '↑' : '↓'} ${Math.abs(delta.pct)}%`;
+}
+
 export function engagementRate(
   stats: InstagramDashboard['stats'] | null | undefined,
 ): number | null {
@@ -194,6 +203,304 @@ export function quickInsight(
     return `You have ${ideaCount} AI idea${ideaCount === 1 ? '' : 's'} ready — open Content to pick your next Reel.`;
   }
   return null;
+}
+
+// The creator's strongest format, by average likes on their recent posts.
+// Returns null when there is nothing to compare — an empty state is the only
+// honest answer when the account has too little content.
+export function topFormatByLikes(
+  dashboard: InstagramDashboard | null,
+  minPosts = 2,
+): string | null {
+  const media = (dashboard?.media ?? []).filter((item) => item.likes !== null);
+  if (media.length < minPosts) {
+    return null;
+  }
+  const byType = new Map<string, number[]>();
+  for (const item of media) {
+    const bucket = byType.get(item.mediaType) ?? [];
+    bucket.push(item.likes ?? 0);
+    byType.set(item.mediaType, bucket);
+  }
+  let bestType: string | null = null;
+  let bestAverage = -1;
+  for (const [mediaType, likes] of byType) {
+    const average = likes.reduce((sum, value) => sum + value, 0) / likes.length;
+    if (average > bestAverage) {
+      bestAverage = average;
+      bestType = mediaType;
+    }
+  }
+  return bestType;
+}
+
+// The hours the creator's best posts actually went out, read from the
+// timestamps of their top-liked posts. Null until at least two dated posts
+// exist — a "best time" with one post behind it would be a guess.
+export function topPostingWindow(dashboard: InstagramDashboard | null): string | null {
+  const top = (dashboard?.media ?? [])
+    .filter((item) => item.likes !== null && item.timestamp)
+    .sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0))
+    .slice(0, 3);
+  const hours = top
+    .map((item) => new Date(item.timestamp as string).getHours())
+    .filter((hour) => Number.isFinite(hour));
+  if (hours.length < 2) {
+    return null;
+  }
+  const minHour = Math.min(...hours);
+  const maxHour = Math.max(...hours);
+  if (minHour === maxHour) {
+    return formatHour(minHour);
+  }
+  return `${formatHour(minHour)} – ${formatHour(maxHour)}`;
+}
+
+// ---------- This week ----------
+//
+// Both windows come from the same daily series the account insights are built
+// on, so the comparison is real data against real data: no extrapolation, no
+// fabricated baseline. Every field degrades to null rather than a fake zero.
+
+export type WeekSummary = {
+  views: number | null;
+  viewsDelta: Delta;
+  interactions: number | null;
+  interactionsDelta: Delta;
+  postsThisWeek: number | null;
+  bestPost: { title: string; likes: number | null; mediaType: string } | null;
+  strongestFormat: string | null;
+};
+
+const totalsSum = (values: Array<number | null>): number | null => {
+  const present = values.filter((value): value is number => value !== null);
+  return present.length > 0 ? present.reduce((total, value) => total + value, 0) : null;
+};
+
+export function weekSummary(
+  dashboard: InstagramDashboard | null,
+  now = new Date(),
+): WeekSummary | null {
+  if (!dashboard) {
+    return null;
+  }
+  const current = periodTotals(dashboard, 7, now);
+  const previous = previousPeriodTotals(dashboard, 7, now);
+  const currentInteractions = totalsSum([current.likes, current.comments]);
+  const previousInteractions = previous
+    ? totalsSum([previous.likes, previous.comments])
+    : null;
+
+  const weekStartKey = toDateKey(
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6),
+  );
+  const media = dashboard.media;
+  const postedThisWeek = media.filter(
+    (item) => item.timestamp && item.timestamp.slice(0, 10) >= weekStartKey,
+  );
+  const scored = postedThisWeek
+    .filter((item) => item.likes !== null)
+    .sort((a, b) => (b.likes ?? 0) - (a.likes ?? 0));
+  const best = scored[0] ?? null;
+
+  return {
+    views: current.views,
+    viewsDelta: growthDelta(current.views, previous?.views ?? null),
+    interactions: currentInteractions,
+    interactionsDelta: growthDelta(currentInteractions, previousInteractions),
+    // Only answerable when the account really has posts in the list; an empty
+    // media list means the fetch told us nothing, not that they posted zero.
+    postsThisWeek: media.length === 0 ? null : postedThisWeek.length,
+    bestPost: best
+      ? {
+        title:
+          (best.caption ?? '').split('\n')[0].trim().slice(0, 64) ||
+          `${humanizeMediaType(best.mediaType)} post`,
+        likes: best.likes,
+        mediaType: best.mediaType,
+      }
+      : null,
+    strongestFormat: topFormatByLikes(dashboard),
+  };
+}
+
+// "12m ago" for the last sync stamp. Anything older than a month is still
+// reported truthfully rather than hidden.
+export function relativeTime(iso: string | null | undefined, now = new Date()): string | null {
+  if (!iso) {
+    return null;
+  }
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) {
+    return null;
+  }
+  const seconds = Math.round((now.getTime() - then) / 1000);
+  if (seconds < 60) {
+    return 'just now';
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+// ---------- DNA profile ----------
+
+export type DnaAxis = { key: ScoreKey; label: string; value: number; count: number };
+
+// One axis per scored dimension: the average across every analysis that
+// scored it, on the 0–10 scale. Dimensions nobody scored are left out rather
+// than drawn as an empty spoke.
+export function radarAxes(records: AnalysisRecord[]): DnaAxis[] {
+  return categoryStats(records).map((stat) => ({
+    key: stat.key,
+    label: stat.label,
+    value: stat.value,
+    count: stat.count,
+  }));
+}
+
+const TYPE_NOUN: Record<ScoreKey, string> = {
+  hook: 'Scroll-Stopper',
+  retention: 'Storyteller',
+  engagement: 'Community Builder',
+  content_quality: 'Craft Creator',
+  cta: 'Action Driver',
+};
+
+// Topic keywords the analyses actually use, mapped to a readable style word.
+// A topic that matches nothing keeps its neutral fallback rather than being
+// forced into a category it does not belong to.
+const TOPIC_STYLE: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /educat|teach|tutorial|how to|\btips\b|lesson|guide|explain/i, label: 'Educational' },
+  { pattern: /\bai\b|tech|software|app|gadget|code|digital|automation/i, label: 'Tech' },
+  { pattern: /business|brand|market|startup|entrepreneur|sell|sales/i, label: 'Business' },
+  { pattern: /money|finance|invest|budget|wealth|income/i, label: 'Finance' },
+  { pattern: /fit|gym|workout|health|wellness|nutrition|yoga|self-care/i, label: 'Wellness' },
+  { pattern: /beauty|makeup|skin|hair|fashion|style|outfit/i, label: 'Lifestyle' },
+  { pattern: /food|recipe|cook|bake|kitchen/i, label: 'Food' },
+  { pattern: /travel|trip|vlog|adventure/i, label: 'Travel' },
+  { pattern: /game|gaming|esports/i, label: 'Gaming' },
+  { pattern: /funny|comedy|joke|meme|skit|prank/i, label: 'Comedy' },
+  { pattern: /story|journey|narrative|diary|memory/i, label: 'Story' },
+  { pattern: /sport|football|cricket|basketball|match/i, label: 'Sport' },
+];
+
+export function topTopicOf(records: AnalysisRecord[]): string | null {
+  const topics = new Map<string, number>();
+  for (const record of records) {
+    const primary = record.analysis.topics.primary;
+    if (primary) {
+      topics.set(primary, (topics.get(primary) ?? 0) + 1);
+    }
+  }
+  const best = [...topics.entries()].sort((a, b) => b[1] - a[1])[0];
+  return best ? best[0] : null;
+}
+
+// A Creator Type is a reading of the creator's own material, not a label the
+// AI invented: the style word comes from their most-analyzed topic, the noun
+// from their strongest scored dimension. Needs three analyses to claim one.
+export function creatorType(records: AnalysisRecord[]): { label: string; basis: string } | null {
+  const stats = categoryStats(records);
+  if (stats.length === 0 || records.length < 3) {
+    return null;
+  }
+  const strongest = [...stats].sort((a, b) => b.value - a.value)[0];
+  const noun = TYPE_NOUN[strongest.key];
+
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    const primary = record.analysis.topics.primary?.trim();
+    if (!primary) {
+      continue;
+    }
+    const match = TOPIC_STYLE.find((entry) => entry.pattern.test(primary));
+    if (match) {
+      counts.set(match.label, (counts.get(match.label) ?? 0) + 1);
+    }
+  }
+  const style = counts.size > 0 ? [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0] : null;
+
+  return {
+    label: style ? `${style} ${noun}` : noun,
+    basis: `${records.length} analyzed post${records.length === 1 ? '' : 's'} · strongest dimension: ${strongest.label} ${strongest.value}/10`,
+  };
+}
+
+export type NextMove = { title: string; detail: string };
+
+// One recommendation, chosen from the creator's own weakest scored dimension
+// and phrased as a single concrete change — not a list of generic tips.
+export function nextMove(records: AnalysisRecord[], dashboard: InstagramDashboard | null): NextMove | null {
+  const stats = categoryStats(records);
+  if (stats.length === 0) {
+    return null;
+  }
+  const weakest = [...stats].sort((a, b) => a.value - b.value)[0];
+  const titles: Record<ScoreKey, string> = {
+    hook: 'Lead with a sharper hook',
+    retention: 'Hold the first three seconds tighter',
+    engagement: 'End with a question worth answering',
+    content_quality: 'Cut one repeat from the middle',
+    cta: 'Add one clear call to action',
+  };
+  const parts = [
+    `${weakest.label} is your lowest dimension at ${weakest.value}/10 across ${weakest.count} analys${weakest.count === 1 ? 'is' : 'es'}.`,
+  ];
+  if (weakest.direction === 'slipping') {
+    parts.push('It is also trending down.');
+  }
+  const format = topFormatByLikes(dashboard);
+  if (format) {
+    parts.push(`Your ${humanizeMediaType(format)} perform best, so make this change there first.`);
+  } else {
+    parts.push('Apply it to your next post and analyze it again to see the movement.');
+  }
+  return { title: titles[weakest.key], detail: parts.join(' ') };
+}
+
+// The flip side of the weak spot: the thing already working, worth more of.
+export function biggestOpportunity(records: AnalysisRecord[], dashboard: InstagramDashboard | null): string | null {
+  const stats = categoryStats(records);
+  if (stats.length === 0) {
+    return null;
+  }
+  const strongest = [...stats].sort((a, b) => b.value - a.value)[0];
+  const subject =
+    topTopicOf(records) ??
+    (topFormatByLikes(dashboard) ? humanizeMediaType(topFormatByLikes(dashboard) as string) : null);
+  if (subject) {
+    return `Publish another ${subject} post — ${strongest.label} is already your strongest dimension at ${strongest.value}/10, so that content is the easiest to scale.`;
+  }
+  return `${strongest.label} is your strongest dimension at ${strongest.value}/10 — build your next post around it.`;
+}
+
+// What the profile still lacks, in the creator's own terms, so an
+// incomplete DNA never looks like a broken one.
+export function dnaNeeds(records: AnalysisRecord[], dashboard: InstagramDashboard | null): string[] {
+  const needs: string[] = [];
+  if (records.length === 0) {
+    needs.push('Analyze a post to start your Creator DNA.');
+  } else if (records.length < 3) {
+    needs.push(
+      `Analyze ${3 - records.length} more post${3 - records.length === 1 ? '' : 's'} to unlock your Creator Type and Next Move.`,
+    );
+  }
+  if (!dashboard) {
+    needs.push('Connect Instagram to add real format, topic and posting-time performance.');
+  } else if (dashboard.media.length === 0) {
+    needs.push('Instagram returned no recent media for this account, so format performance stays hidden.');
+  }
+  if (dashboard && !dashboard.daily) {
+    needs.push('Instagram has not shared daily insights for this account, so week-over-week comparisons stay unavailable.');
+  }
+  return needs;
 }
 
 // ---------- DNA derivations ----------
@@ -626,9 +933,13 @@ export type PlanDay = {
   idea: CreatorAiIdea | null;
 };
 
-export function buildPlan(ideas: CreatorAiIdea[], now = new Date()): PlanDay[] {
+export function buildPlan(
+  ideas: CreatorAiIdea[],
+  now = new Date(),
+  days = 7,
+): PlanDay[] {
   const ordered = sortIdeas(ideas);
-  return Array.from({ length: 7 }, (_, index) => {
+  return Array.from({ length: days }, (_, index) => {
     const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + index);
     return {
       index,
@@ -639,6 +950,47 @@ export function buildPlan(ideas: CreatorAiIdea[], now = new Date()): PlanDay[] {
       idea: ordered[index] ?? null,
     };
   });
+}
+
+// ---------- Plan statuses ----------
+//
+// Where an idea sits in the publishing pipeline. The status belongs to the
+// idea (identified by its title, the same key the saved list uses), so moving
+// a status around the plan never rewrites the idea itself, and an unknown or
+// old value falls back to "draft" instead of breaking the screen.
+
+export type PlanStatus = 'draft' | 'scheduled' | 'published' | 'skipped';
+
+export const PLAN_STATUSES: ReadonlyArray<{
+  key: PlanStatus;
+  label: string;
+  tone: 'gray' | 'purple' | 'green' | 'amber';
+  hint: string;
+}> = [
+  { key: 'draft', label: 'Draft', tone: 'gray', hint: 'Idea only — nothing is decided yet.' },
+  { key: 'scheduled', label: 'Scheduled', tone: 'purple', hint: 'You plan to post it on this day.' },
+  { key: 'published', label: 'Published', tone: 'green', hint: 'It is live — go analyze it.' },
+  { key: 'skipped', label: 'Skipped', tone: 'amber', hint: 'Dropping this one from the day.' },
+];
+
+export function planStatusKey(idea: CreatorAiIdea): string {
+  return idea.title.trim().toLowerCase();
+}
+
+export function planStatusOf(
+  statuses: Record<string, PlanStatus | undefined> | null | undefined,
+  idea: CreatorAiIdea | null,
+): PlanStatus {
+  if (!idea) {
+    return 'draft';
+  }
+  const value = statuses?.[planStatusKey(idea)];
+  return PLAN_STATUSES.some((entry) => entry.key === value) ? (value as PlanStatus) : 'draft';
+}
+
+export function statusMeta(status: PlanStatus): { label: string; tone: 'gray' | 'purple' | 'green' | 'amber' } {
+  const found = PLAN_STATUSES.find((entry) => entry.key === status);
+  return { label: found?.label ?? 'Draft', tone: found?.tone ?? 'gray' };
 }
 
 export function isIdeaSaved(saved: CreatorAiIdea[], idea: CreatorAiIdea): boolean {
