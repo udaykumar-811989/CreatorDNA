@@ -367,6 +367,28 @@ test('a deployment without the trending column says so instead of failing loudly
   assert.match(message, /trending order is not available/i);
 });
 
+test('the Instagram posting gate explains itself instead of blaming the session', () => {
+  // PostgREST rejects an insert from an unconnected account with SQLSTATE
+  // 42501 — the same 403 shape an expired token gets, so the message has to
+  // come from the body, not the status.
+  const message = communityErrorMessage({
+    code: '42501',
+    message: 'new row violates row-level security policy for table "creator_posts"',
+  });
+  assert.match(message, /connected instagram/i);
+  assert.doesNotMatch(message, /row-level security|42501|creator_posts/);
+  assert.match(
+    communityErrorMessage({ message: 'new row violates row-level security policy' }),
+    /connected instagram/i,
+  );
+  // A check-constraint violation (also "violates …") must not be mistaken
+  // for the gate — it stays a generic failure.
+  assert.match(
+    communityErrorMessage({ message: 'new row violates check constraint "followers_positive"' }),
+    /try again/i,
+  );
+});
+
 test('every milestone has a badge, and no two badges look alike', () => {
   for (const milestone of MILESTONES) {
     const badge = MILESTONE_BADGES[milestone];

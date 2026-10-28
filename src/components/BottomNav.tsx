@@ -2,10 +2,13 @@ import { useEffect, useRef, type ComponentType } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, NAV_HEIGHT } from '../theme';
 import { useThemeColors, useStyles } from '../themeContext';
-import { CompassIcon, DnaIcon, HomeIcon, IdeasIcon, PersonIcon, PlanIcon } from './icons';
+import { CompassIcon, DnaIcon, HomeIcon, IdeasIcon, PersonIcon } from './icons';
 
-export type NavTab = 'home' | 'content' | 'discover' | 'dna' | 'plan' | 'profile';
+export type NavTab = 'home' | 'content' | 'discover' | 'dna' | 'profile';
 
+// Five tabs, not six: "Content" carries both the schedule and the ideas behind
+// it (see ContentScreen), so a separate Plan tab only ever split one workflow
+// across two buttons.
 const tabs: Array<{
   key: NavTab;
   label: string;
@@ -15,7 +18,6 @@ const tabs: Array<{
   { key: 'content', label: 'Content', Icon: IdeasIcon },
   { key: 'discover', label: 'Discover', Icon: CompassIcon },
   { key: 'dna', label: 'DNA', Icon: DnaIcon },
-  { key: 'plan', label: 'Plan', Icon: PlanIcon },
   { key: 'profile', label: 'Profile', Icon: PersonIcon },
 ];
 
@@ -127,6 +129,11 @@ export function BottomNav({
   }, []);
   return (
     <View
+      // The bar is one set of tabs, so it is a tablist — that is what makes
+      // "selected" mean anything to a screen reader on the web build, where
+      // react-native-web does not render accessibilityState.selected itself.
+      accessibilityRole="tablist"
+      accessibilityLabel="Primary"
       style={[
         styles.nav,
         {
@@ -143,6 +150,7 @@ export function BottomNav({
             key={key}
             accessibilityRole="tab"
             accessibilityState={{ selected: isActive }}
+            aria-selected={isActive}
             accessibilityLabel={label}
             accessibilityHint={
               key === 'profile' ? 'Long press to switch saved accounts' : undefined

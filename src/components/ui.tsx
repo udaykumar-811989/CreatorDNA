@@ -113,6 +113,11 @@ export function PillTabs({
   const isDark = variant === 'dark';
   return (
     <View
+      // A single-select switch over views is the tab pattern: labelling the
+      // group a tablist and each option a tab is what lets a screen reader
+      // announce "Plan, tab, selected" instead of two unrelated buttons.
+      accessibilityRole="tablist"
+      accessibilityLabel="Choose a view"
       style={[
         s.pillTrack,
         { backgroundColor: colors.lightCard2 },
@@ -124,8 +129,14 @@ export function PillTabs({
         return (
           <Pressable
             key={option}
-            accessibilityRole="button"
+            accessibilityRole="tab"
             accessibilityState={{ selected: active }}
+            // react-native-web does not render accessibilityState.selected, so
+            // without this a screen reader on the web build has no way to know
+            // which option is active. RN maps the same prop to
+            // accessibilityState.selected on native.
+            aria-selected={active}
+            aria-label={option}
             onPress={() => onChange(option)}
             style={[s.pillItem, active && (isDark ? s.pillItemActiveDark : s.pillItemActive)]}
           >

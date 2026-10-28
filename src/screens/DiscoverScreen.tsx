@@ -51,9 +51,6 @@ import {
   TOP_CREATOR_LIMIT,
   currentUserIdFromToken,
   validateComment,
-  validateDisplayName,
-  validateHandle,
-  validateNiche,
   validatePostBody,
   type CommunityPost,
   type CreatorProfile,
@@ -285,6 +282,7 @@ export function DiscoverScreen({
   initialTab,
   onTabChange,
   onOpenCreator,
+  onConnect,
 }: {
   getCreatorToken: () => Promise<string>;
   /** Hands a trend's subject to the Ideas tab so AI can build a post from it. */
@@ -294,6 +292,8 @@ export function DiscoverScreen({
   onTabChange?: (tab: DiscoverTab) => void;
   /** Opens a creator's profile screen. */
   onOpenCreator: (userId: string) => void;
+  /** Starts the Instagram connection flow (the gate in front of posting). */
+  onConnect: () => void;
 }) {
   const c = useThemeColors();
   const { mode } = useTheme();
@@ -658,6 +658,10 @@ export function DiscoverScreen({
 
   const [myProfile, setMyProfile] = useState<CreatorProfile | null>(null);
   const [profileLoaded, setProfileLoaded] = useState(false);
+  // Whether *this* creator has connected Instagram. Posting is limited to
+  // connected accounts (the DB insert policy enforces it too), so the
+  // composer reads this before offering a text box. null = still checking.
+  const [igConnected, setIgConnected] = useState<boolean | null>(null);
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [postsTotal, setPostsTotal] = useState<number | null>(null);
   const [feedKind, setFeedKind] = useState<PostKind | 'all'>('all');
@@ -684,9 +688,6 @@ export function DiscoverScreen({
   const [commentSending, setCommentSending] = useState(false);
   const [reactionBusy, setReactionBusy] = useState<string | null>(null);
 
-  const [profileDraft, setProfileDraft] = useState({ handle: '', name: '', niche: '' });
-  const [profileError, setProfileError] = useState<string | null>(null);
-  const [profileSaving, setProfileSaving] = useState(false);
 
   // Editing, deleting, reporting, and the directory-visibility switch.
   const [editPost, setEditPost] = useState<CommunityPost | null>(null);
@@ -714,14 +715,21 @@ export function DiscoverScreen({
       try {
         const token = await getCreatorToken();
         const me = recordId(token);
-        const [profileResult, postResult] = await Promise.all([
+        const [profileResult, postResult, statsResult] = await Promise.all([
           community.listProfiles(token, me ? { userId: me, limit: 1 } : { limit: 1, offset: 0 }),
           community.listPosts(token, { kind, sort, limit: 20 }),
+          community.fetchFollowerStats(token),
         ]);
         if (!alive.current) return;
         if (profileResult.ok) {
           setMyProfile(profileResult.data.items[0] ?? null);
           setProfileLoaded(true);
+        }
+        // A follower-stats row only exists once the app has really read this
+        // creator's Instagram, so its absence means "not connected" — and a
+        // failed read must not masquerade as connected.
+        if (statsResult.ok) {
+          setIgConnected(statsResult.data !== null);
         }
         if (!postResult.ok) {
           setFeedError(postResult.message);
@@ -856,6 +864,13 @@ export function DiscoverScreen({
   );
 
   const submitPost = useCallback(async () => {
+    // Belt and braces: the composer is hidden for unconnected accounts, but
+    // this stops a stale view from even trying — the database would reject
+    // the insert anyway, and the creator should not discover that mid-upload.
+    if (igConnected === false) {
+      setComposerError('Connect your Instagram account to CreatorDNA before posting.');
+      return;
+    }
     const body = validatePostBody(composerBody);
     if (!body.ok) {
       setComposerError(body.error);
@@ -904,7 +919,7 @@ export function DiscoverScreen({
     } finally {
       if (alive.current) setComposerSending(false);
     }
-  }, [composerBody, composerKind, composerPhoto, getCreatorToken]);
+  }, [composerBody, composerKind, composerPhoto, getCreatorToken, igConnected]);
 
   /**
    * Attaches one photo. Nothing is uploaded here — only chosen — so a creator
@@ -972,44 +987,6 @@ export function DiscoverScreen({
     }
   }, [commentBody, openPostId, getCreatorToken]);
 
-  const submitProfile = useCallback(async () => {
-    const handle = validateHandle(profileDraft.handle);
-    if (!handle.ok) {
-      setProfileError(handle.error);
-      return;
-    }
-    const name = validateDisplayName(profileDraft.name);
-    if (!name.ok) {
-      setProfileError(name.error);
-      return;
-    }
-    const niche = validateNiche(profileDraft.niche);
-    if (!niche.ok) {
-      setProfileError(niche.error);
-      return;
-    }
-    setProfileSaving(true);
-    setProfileError(null);
-    try {
-      const token = await getCreatorToken();
-      const result = await community.saveProfile(token, {
-        handle: handle.value,
-        displayName: name.value,
-        niche: niche.value,
-      });
-      if (!alive.current) return;
-      if (!result.ok) {
-        setProfileError(result.message);
-        return;
-      }
-      setMyProfile(result.data);
-      setProfileLoaded(true);
-    } catch {
-      if (alive.current) setProfileError('Your profile could not be saved. Please retry.');
-    } finally {
-      if (alive.current) setProfileSaving(false);
-    }
-  }, [profileDraft, getCreatorToken]);
 
   // ------------------------------------------------- edit / delete / report
 
@@ -1391,72 +1368,41 @@ export function DiscoverScreen({
 
   const renderCommunity = () => (
     <>
-      {!profileLoaded ? null : myProfile ? null : (
-        <Card tone={tone} style={s.composer}>
-          <Text style={s.composerTitle}>Join the community</Text>
-          <Text style={s.excerpt}>
-            Pick a handle so other creators can see who posted. Your posts stay hidden from the
-            directory until you do.
-          </Text>
-          <View style={s.field}>
-            <Text style={s.fieldLabel}>Handle</Text>
-            <TextInput
-              value={profileDraft.handle}
-              onChangeText={(next) => setProfileDraft((d) => ({ ...d, handle: next }))}
-              placeholder="yourhandle"
-              placeholderTextColor={c.onDarkDim}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={s.input}
-              accessibilityLabel="Creator handle"
-            />
-          </View>
-          <View style={s.field}>
-            <Text style={s.fieldLabel}>Display name</Text>
-            <TextInput
-              value={profileDraft.name}
-              onChangeText={(next) => setProfileDraft((d) => ({ ...d, name: next }))}
-              placeholder="Your name"
-              placeholderTextColor={c.onDarkDim}
-              style={s.input}
-              accessibilityLabel="Display name"
-            />
-          </View>
-          <View style={s.field}>
-            <Text style={s.fieldLabel}>Niche (optional)</Text>
-            <TextInput
-              value={profileDraft.niche}
-              onChangeText={(next) => setProfileDraft((d) => ({ ...d, niche: next }))}
-              placeholder="e.g. fitness, food, tech"
-              placeholderTextColor={c.onDarkDim}
-              style={s.input}
-              accessibilityLabel="Niche"
-            />
-          </View>
-          {profileError ? <Text style={s.fieldError}>{profileError}</Text> : null}
-          <GradientButton
-            label={profileSaving ? 'Saving…' : 'Create my profile'}
-            onPress={() => void submitProfile()}
-            loading={profileSaving}
-            disabled={profileSaving}
-          />
-        </Card>
-      )}
 
       <Card tone={tone} style={s.composer}>
         <View style={s.composerHead}>
-          <Text style={s.composerTitle}>Share a post</Text>
-          <Pressable
-            onPress={() => setComposerOpen((open) => !open)}
-            style={s.refresh}
-            accessibilityRole="button"
-            accessibilityLabel={composerOpen ? 'Close composer' : 'Open composer'}
-          >
-            <PlusIcon size={15} color={c.primary} />
-            <Text style={s.refreshLabel}>{composerOpen ? 'Cancel' : 'Post'}</Text>
-          </Pressable>
+          <Text style={s.composerTitle}>
+            {igConnected === false ? 'Connect Instagram to post' : 'Share a post'}
+          </Text>
+          {igConnected === false ? null : (
+            <Pressable
+              onPress={() => setComposerOpen((open) => !open)}
+              style={s.refresh}
+              accessibilityRole="button"
+              accessibilityLabel={composerOpen ? 'Close composer' : 'Open composer'}
+            >
+              <PlusIcon size={15} color={c.primary} />
+              <Text style={s.refreshLabel}>{composerOpen ? 'Cancel' : 'Post'}</Text>
+            </Pressable>
+          )}
         </View>
-        {composerOpen ? (
+        {igConnected === false ? (
+          // Only creators whose Instagram this app has actually read may post.
+          // The insert policy in the database enforces the same rule, so this
+          // card is the honest front door rather than the only lock.
+          <>
+            <Text style={s.excerpt}>
+              Community posting is open to creators who connect their Instagram account to
+              CreatorDNA. Once connected, your posts appear under your real handle with your
+              verified follower count.
+            </Text>
+            <GradientButton
+              label="Connect Instagram"
+              onPress={onConnect}
+              style={{ alignSelf: 'flex-start' }}
+            />
+          </>
+        ) : composerOpen ? (
           <>
             <ChipRow
               options={POST_KINDS.map((kind) => ({ key: kind, label: POST_KIND_LABELS[kind] }))}
@@ -1524,7 +1470,7 @@ export function DiscoverScreen({
           <Text style={s.excerpt}>
             {myProfile
               ? 'Share a photo or an update — every signed-in creator can see, like and comment on it.'
-              : 'Create your handle above to post.'}
+              : 'Set your handle in Profile to post.'}
           </Text>
         )}
       </Card>

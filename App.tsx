@@ -132,10 +132,9 @@ import { DiscoverScreen, type DiscoverTab } from './src/screens/DiscoverScreen';
 import { CreatorProfileScreen } from './src/screens/CreatorProfileScreen';
 import { DnaScreen } from './src/screens/DnaScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
-import { IdeasScreen } from './src/screens/IdeasScreen';
+import { ContentScreen } from './src/screens/ContentScreen';
 import { OnboardingScreen } from './src/screens/OnboardingScreen';
 import { PerformanceScreen } from './src/screens/PerformanceScreen';
-import { PlanScreen } from './src/screens/PlanScreen';
 import { PrivacyScreen } from './src/screens/PrivacyScreen';
 import { HelpScreen } from './src/screens/HelpScreen';
 import { LANDING_BG, LandingScreen } from './src/screens/LandingScreen';
@@ -352,15 +351,15 @@ const NO_FAB: ReadonlySet<Screen> = new Set<Screen>([
 // crossed milestone within the same day.
 const MILESTONE_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
-// The bottom-bar screens, in the same order as the bar itself: a left/right
-// swipe across the app cycles through them, and Back from any of them lands
-// on Home.
+// Five bottom-bar destinations, in the order a horizontal swipe moves
+// between them, and Back from any of them lands on Home. "Plan" is not a
+// destination of its own: it is the Plan half of the Content tab, reached by
+// route (or by the switch inside Content), so it never appears here.
 const TAB_SCREENS: readonly string[] = [
   'home',
   'ideas',
   'discover',
   'dna',
-  'plan',
   'profile',
 ];
 
@@ -2657,12 +2656,11 @@ function AppShell() {
       ? 'dna'
       : screen === 'settings'
         ? 'profile'
-        : screen === 'ideas'
+        : screen === 'ideas' || screen === 'plan'
           ? 'content'
           : screen === 'home' ||
               screen === 'discover' ||
               screen === 'dna' ||
-              screen === 'plan' ||
               screen === 'profile'
             ? screen
             : 'home';
@@ -2717,6 +2715,11 @@ function AppShell() {
       return true;
     }
     switch (current) {
+      case 'plan':
+        // Plan is a route into the Content tab now, so it backs out exactly
+        // like the tab it belongs to instead of dropping to the system default.
+        setScreen('home');
+        return true;
       case 'onboarding':
         // The welcome flow steps back instead of leaving the app.
         if (onboardingStep > 0) {
@@ -2921,6 +2924,7 @@ function AppShell() {
             setCreatorProfileId(userId);
             setScreen('creatorProfile');
           }}
+          onConnect={handleConnectEntry}
         />
       ) : screen === 'creatorProfile' ? (
         <CreatorProfileScreen
@@ -2937,18 +2941,25 @@ function AppShell() {
           onAnalyze={() => openForm('dna')}
           onConnect={handleConnectEntry}
         />
-      ) : screen === 'ideas' ? (
-        <IdeasScreen
+      ) : screen === 'ideas' || screen === 'plan' ? (
+        // One Content tab. The `plan` route still exists, so a notification
+        // or a saved link that says "Open Plan" lands on the same screen with
+        // the Plan half already selected.
+        <ContentScreen
+          initialView={screen === 'plan' ? 'Plan' : 'Ideas'}
           ideas={ideas}
           trendingIdeas={trendingIdeas}
           savedIdeas={savedIdeas}
           generating={generating}
           generateError={generateError}
           defaults={ideaDefaults}
+          planStatuses={planStatuses}
           onGenerate={(mode, request) => void handleGenerate(mode, request)}
           onToggleSave={handleToggleSave}
           onAnalyze={() => openForm('ideas')}
           onScoreIdea={scoreIdea}
+          onSetStatus={setPlanStatus}
+          onAddIdea={addCustomIdea}
         />
       ) : screen === 'analysisForm' ? (
         <AnalysisFormScreen
@@ -3005,19 +3016,6 @@ function AppShell() {
           record={selectedRecord}
           records={analyses}
           onBack={() => setScreen('analysis')}
-        />
-      ) : screen === 'plan' ? (
-        <PlanScreen
-          ideas={ideas}
-          savedIdeas={savedIdeas}
-          generating={generating}
-          generateError={generateError}
-          defaults={ideaDefaults}
-          planStatuses={planStatuses}
-          onGenerate={(mode, request) => void handleGenerate(mode, request)}
-          onToggleSave={handleToggleSave}
-          onSetStatus={setPlanStatus}
-          onAddIdea={addCustomIdea}
         />
       ) : screen === 'performance' ? (
         <PerformanceScreen

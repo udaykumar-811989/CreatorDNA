@@ -124,6 +124,25 @@ async function request<T>(
     return offline<T>();
   }
   if (response.status === 401 || response.status === 403) {
+    // PostgREST reports an RLS denial as 403 with SQLSTATE 42501 — the same
+    // status a rejected token gets. Read the body first so the connected-
+    // Instagram posting gate can say what is actually missing instead of
+    // telling the creator their session expired.
+    let denied: unknown = null;
+    try {
+      denied = await response.json();
+    } catch {
+      denied = null;
+    }
+    if (
+      isRecord(denied) &&
+      (denied.code === '42501' ||
+        String(denied.message ?? '')
+          .toLowerCase()
+          .includes('row-level security'))
+    ) {
+      return fail<T>('rejected', communityErrorMessage(denied));
+    }
     return unauthorized<T>();
   }
   if (response.status === 204 || options.expect === 'empty') {
@@ -137,7 +156,6 @@ async function request<T>(
     payload = null;
   }
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) return unauthorized<T>();
     return fail<T>('rejected', communityErrorMessage(payload));
   }
   return parse(payload, response);

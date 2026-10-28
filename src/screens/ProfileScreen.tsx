@@ -1,6 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { CommunityHandleCard } from '../components/CommunityHandleCard';
 import { DnaMark } from '../components/DnaMark';
 import { MilestonesCard } from '../components/MilestonesCard';
 import { ChevronRightIcon, GearIcon, LinkOutIcon, LogoutIcon, DocIcon, SparkIcon } from '../components/icons';
@@ -135,6 +136,11 @@ export function ProfileScreen({
             </View>
           ) : null}
         </View>
+
+        {/* Community identity. This is the "Join the community" card that used
+            to sit above the Community feed and push it below the fold — a
+            handle is set once, so it lives with the rest of the profile. */}
+        <CommunityHandleCard getCreatorToken={getCreatorToken} />
 
         {/* DNA card */}
         <Pressable

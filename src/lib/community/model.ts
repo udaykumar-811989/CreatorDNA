@@ -787,6 +787,16 @@ export function communityErrorMessage(body: unknown): string {
   if (message.includes('rate_limited'))
     return "You're doing that too often. Wait a moment and try again.";
   if (message.includes('permission denied')) return 'You do not have access to that.';
+  // The insert policy requires a connected Instagram account (a row in
+  // creator_follower_stats), so PostgREST refuses the post with SQLSTATE
+  // 42501. Say what is actually missing instead of a generic failure.
+  if (
+    str(body.code) === '42501' ||
+    message.includes('row-level security') ||
+    message.includes('violates row-level')
+  ) {
+    return 'Only creators with a connected Instagram account can post. Connect Instagram and retry.';
+  }
   // PostgREST's "no such function" — the app still works, this one read is not
   // available yet, so the screen can drop the field instead of failing.
   if (message.includes('community_summary') || message.includes('community_creator_summary')) {
