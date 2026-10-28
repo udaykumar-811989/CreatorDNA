@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Linking,
   Pressable,
   ScrollView,
@@ -9,12 +10,14 @@ import {
   TextInput,
   View,
   type StyleProp,
+  type ImageStyle,
   type TextStyle,
   type ViewStyle,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 
 import {
-  ChevronRightIcon,
+  ImageIcon,
   LinkOutIcon,
   PlusIcon,
   QuoteIcon,
@@ -37,20 +40,16 @@ import {
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ReportSheet } from '../components/ReportSheet';
 import {
-  LEADERBOARD_METRICS,
-  LEADERBOARD_METRIC_LABELS,
-  LEADERBOARD_PERIODS,
-  LEADERBOARD_PERIOD_LABELS,
-  LEADERBOARD_SCOPE_LABELS,
-  LEADERBOARD_SCOPES,
+  FEED_SORTS,
+  FEED_SORT_LABELS,
+  FEED_SORT_RULES,
+  LEADERBOARD_RULES,
   LEADERBOARD_SCOPE_RULES,
-  PERIOD_SENSITIVE_METRICS,
+  MEDIA_MAX_BYTES,
   POST_KINDS,
   POST_KIND_LABELS,
   TOP_CREATOR_LIMIT,
   currentUserIdFromToken,
-  leaderboardRule,
-  validateBio,
   validateComment,
   validateDisplayName,
   validateHandle,
@@ -58,10 +57,8 @@ import {
   validatePostBody,
   type CommunityPost,
   type CreatorProfile,
-  type LeaderboardMetric,
-  type LeaderboardPeriod,
+  type FeedSort,
   type LeaderboardRow,
-  type LeaderboardScope,
   type PostComment,
   type PostKind,
   type ReportReason,
@@ -84,28 +81,28 @@ import { TREND_TTL_MS, fetchTrends, trendsAgeLabel } from '../services/discover'
 import { FAB_CLEARANCE, radius, type } from '../theme';
 import { useThemeColors, useTheme } from '../themeContext';
 
-// Discover — the app's window onto what is happening outside it.
+// Discover — the app's window onto what is happening around it.
 //
-// Four tabs, each honest about where its numbers come from:
-//   Trends      real Reddit / X / Hacker News posts, each linking to its source
-//   Feed        the in-app community: posts, likes and comments
-//   Creators    the public creator directory, with real follows
-//   Leaderboard in-app metrics, with the ranking rule printed on screen
+// Three tabs, each honest about where its numbers come from:
+//   Trends       real Reddit / X / Hacker News posts, each linking to its source
+//   Community    the in-app feed: photo posts, likes and comments, in a Latest
+//                or Trending order whose rule is printed on screen
+//   Top Creators the connected Instagram accounts, ranked 1..20 by the follower
+//                count this app read from Instagram itself
 //
 // Nothing here is seeded or invented. A source without a configured credential
-// says so by name; an empty feed says so plainly; a ranking shows its formula.
+// says so by name; an empty feed says so plainly; the ranking prints its rule.
 
-export type DiscoverTab = 'trends' | 'feed' | 'creators' | 'leaderboard';
+export type DiscoverTab = 'trends' | 'community' | 'topCreators';
 
 type Tab = DiscoverTab;
 
-const TAB_ORDER: Tab[] = ['trends', 'feed', 'creators', 'leaderboard'];
+const TAB_ORDER: Tab[] = ['trends', 'community', 'topCreators'];
 
 const TAB_LABELS: Record<Tab, string> = {
   trends: 'Trends',
-  feed: 'Feed',
-  creators: 'Creators',
-  leaderboard: 'Leaderboard',
+  community: 'Community',
+  topCreators: 'Top Creators',
 };
 
 const SOURCE_TONES: Record<TrendSourceKey, 'green' | 'amber' | 'red' | 'gray'> = {
@@ -526,6 +523,23 @@ export function DiscoverScreen({
         composerHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
         composerTitle: { ...type.h4, color: c.onDark },
         composerActions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+        photoPreview: { gap: 8 },
+        photoImage: {
+          width: '100%',
+          aspectRatio: 4 / 3,
+          borderRadius: radius.md,
+          backgroundColor: c.track,
+        },
+        attach: {
+          flexDirection: 'row',
+          gap: 6,
+          alignItems: 'center',
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: c.darkBorder,
+        },
 
         rank: { ...type.h4, color: c.onDarkDim, width: 30, textAlign: 'center' },
         rankTop: { color: c.primary },
@@ -647,6 +661,7 @@ export function DiscoverScreen({
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [postsTotal, setPostsTotal] = useState<number | null>(null);
   const [feedKind, setFeedKind] = useState<PostKind | 'all'>('all');
+  const [feedSort, setFeedSort] = useState<FeedSort>('latest');
   const [feedLoading, setFeedLoading] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
 
@@ -655,6 +670,11 @@ export function DiscoverScreen({
   const [composerBody, setComposerBody] = useState('');
   const [composerSending, setComposerSending] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
+  // The picked photo, held locally until the post is actually created. It is
+  // uploaded first and the returned storage URL is what gets written to the
+  // row — the device path never leaves the device as data.
+  const [composerPhoto, setComposerPhoto] = useState<string | null>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   const [openPostId, setOpenPostId] = useState<string | null>(null);
   const [comments, setComments] = useState<PostComment[]>([]);
@@ -686,8 +706,9 @@ export function DiscoverScreen({
   const [listedBusy, setListedBusy] = useState(false);
 
   const loadFeed = useCallback(
-    async (options: { kind?: PostKind | 'all' } = {}) => {
+    async (options: { kind?: PostKind | 'all'; sort?: FeedSort } = {}) => {
       const kind = options.kind ?? feedKind;
+      const sort = options.sort ?? feedSort;
       setFeedLoading(true);
       setFeedError(null);
       try {
@@ -695,7 +716,7 @@ export function DiscoverScreen({
         const me = recordId(token);
         const [profileResult, postResult] = await Promise.all([
           community.listProfiles(token, me ? { userId: me, limit: 1 } : { limit: 1, offset: 0 }),
-          community.listPosts(token, { kind, limit: 20 }),
+          community.listPosts(token, { kind, sort, limit: 20 }),
         ]);
         if (!alive.current) return;
         if (profileResult.ok) {
@@ -724,7 +745,7 @@ export function DiscoverScreen({
         if (alive.current) setFeedLoading(false);
       }
     },
-    [feedKind, getCreatorToken, recordId],
+    [feedKind, feedSort, getCreatorToken, recordId],
   );
 
   const loadComments = useCallback(
@@ -844,9 +865,28 @@ export function DiscoverScreen({
     setComposerError(null);
     try {
       const token = await getCreatorToken();
-      const result = await community.createPost(token, { kind: composerKind, body: body.value });
+      // The photo goes up first: if the upload fails the creator still keeps
+      // their words, and is told plainly what happened before posting.
+      let mediaUrl: string | null = null;
+      if (composerPhoto) {
+        const upload = await community.uploadPostPhoto(token, composerPhoto);
+        if (!alive.current) return;
+        if (!upload.ok) {
+          setComposerError(upload.message);
+          return;
+        }
+        mediaUrl = upload.data;
+      }
+      const result = await community.createPost(token, {
+        kind: composerKind,
+        body: body.value,
+        mediaUrl,
+      });
       if (!alive.current) return;
       if (!result.ok) {
+        // The photo is already in storage but its post never existed — remove
+        // it so a failed share does not leave an orphaned object behind.
+        if (mediaUrl) void community.deletePostPhoto(token, mediaUrl);
         setComposerError(result.message);
         return;
       }
@@ -856,6 +896,7 @@ export function DiscoverScreen({
       setPosts((prev) => [created, ...prev]);
       setPostsTotal((total) => (total === null ? null : total + 1));
       setComposerBody('');
+      setComposerPhoto(null);
       setComposerOpen(false);
       setFeedKind('all');
     } catch {
@@ -863,7 +904,39 @@ export function DiscoverScreen({
     } finally {
       if (alive.current) setComposerSending(false);
     }
-  }, [composerBody, composerKind, getCreatorToken]);
+  }, [composerBody, composerKind, composerPhoto, getCreatorToken]);
+
+  /**
+   * Attaches one photo. Nothing is uploaded here — only chosen — so a creator
+   * who changes their mind can remove it before the post exists. Metadata
+   * (including location) is not read from the file.
+   */
+  const pickPhoto = useCallback(async () => {
+    if (photoBusy) return;
+    setPhotoBusy(true);
+    setComposerError(null);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 0.8,
+        exif: false,
+      });
+      const asset = result.canceled ? null : result.assets[0];
+      if (!asset) return;
+      if (asset.fileSize && asset.fileSize > MEDIA_MAX_BYTES) {
+        setComposerError('That photo is over the 8 MB limit. Pick a smaller one.');
+        return;
+      }
+      setComposerPhoto(asset.uri);
+    } catch {
+      if (alive.current) {
+        setComposerError('The photo picker could not be opened. Check permissions and retry.');
+      }
+    } finally {
+      if (alive.current) setPhotoBusy(false);
+    }
+  }, [photoBusy]);
 
   const submitComment = useCallback(async () => {
     if (!openPostId) return;
@@ -996,6 +1069,10 @@ export function DiscoverScreen({
         return;
       }
       const id = deleteTarget.id;
+      // Best effort: the post is gone, so a photo that cannot be removed must
+      // not turn a successful delete into an error. It is already unreadable
+      // to everyone once its post row is deleted.
+      if (deleteTarget.mediaUrl) void community.deletePostPhoto(token, deleteTarget.mediaUrl);
       setPosts((prev) => prev.filter((entry) => entry.id !== id));
       setPostsTotal((total) => (total === null ? null : Math.max(0, total - 1)));
       if (openPostId === id) {
@@ -1003,7 +1080,7 @@ export function DiscoverScreen({
         setComments([]);
       }
       setDeleteTarget(null);
-      setNotice('Your update was deleted.');
+      setNotice('Your post was deleted.');
     } catch {
       if (alive.current) setNotice('That update could not be deleted. Please retry.');
     } finally {
@@ -1107,288 +1184,45 @@ export function DiscoverScreen({
     }
   }, [myProfile, listedBusy, getCreatorToken]);
 
-  // ============================================================ CREATORS ====
+  // ======================================================== TOP CREATORS ====
+  //
+  // One list, one rule: the accounts whose Instagram this app has actually
+  // read, ordered by that follower count, ranked 1..20. No metric, window or
+  // niche controls here — each of those would answer a different question
+  // than the one this tab asks, and the rule is printed under the title.
 
-  const CREATOR_PAGE = 20;
+  const [top, setTop] = useState<LeaderboardRow[]>([]);
+  const [topLoading, setTopLoading] = useState(false);
+  const [topError, setTopError] = useState<string | null>(null);
 
-  const [creatorScope, setCreatorScope] = useState<'suggested' | 'all' | 'following'>(
-    'suggested',
-  );
-  const [creators, setCreators] = useState<CreatorProfile[]>([]);
-  const [creatorsTotal, setCreatorsTotal] = useState<number | null>(null);
-  const [creatorQuery, setCreatorQuery] = useState('');
-  const [creatorNiche, setCreatorNiche] = useState<string | null>(null);
-  const [niches, setNiches] = useState<string[]>([]);
-  const [creatorsLoading, setCreatorsLoading] = useState(false);
-  const [creatorsLoadingMore, setCreatorsLoadingMore] = useState(false);
-  const [creatorsError, setCreatorsError] = useState<string | null>(null);
-  const [followed, setFollowed] = useState<Set<string>>(new Set());
-  const [followBusy, setFollowBusy] = useState<string | null>(null);
-  const creatorsKeyRef = useRef<string | null>(null);
-  const creatorsBootedRef = useRef(false);
-
-  /** Niche chips are a convenience — without them the directory still works. */
-  const loadNiches = useCallback(async () => {
+  const loadTop = useCallback(async () => {
+    setTopLoading(true);
+    setTopError(null);
     try {
       const token = await getCreatorToken();
-      const result = await community.listNiches(token);
-      if (alive.current && result.ok && result.data.length > 0) setNiches(result.data);
-    } catch {
-      /* ignore */
-    }
-  }, [getCreatorToken]);
-
-  const loadCreators = useCallback(
-    async (options: { append?: boolean } = {}) => {
-      const key = `${creatorScope}|${creatorQuery.trim().toLowerCase()}|${creatorNiche ?? ''}`;
-      creatorsKeyRef.current = key;
-      const offset = options.append ? creators.length : 0;
-      if (options.append) setCreatorsLoadingMore(true);
-      else setCreatorsLoading(true);
-      setCreatorsError(null);
-      try {
-        const token = await getCreatorToken();
-        const me = recordId(token);
-        let items: CreatorProfile[] = [];
-        let total: number | null = null;
-
-        if (creatorScope === 'following') {
-          const result = await community.listFollowing(token, { limit: CREATOR_PAGE, offset });
-          if (!result.ok) {
-            setCreatorsError(result.message);
-            if (!options.append) setCreators([]);
-            return;
-          }
-          // Search and niche are applied here because a follow edge is a
-          // relationship, not a searchable row.
-          const term = creatorQuery.trim().toLowerCase();
-          items = result.data.filter(
-            (entry) =>
-              entry.userId !== me &&
-              (!creatorNiche || entry.niche.toLowerCase() === creatorNiche.toLowerCase()) &&
-              (!term ||
-                entry.handle.toLowerCase().includes(term) ||
-                entry.displayName.toLowerCase().includes(term)),
-          );
-        } else if (creatorScope === 'suggested') {
-          const result = await community.suggestCreators(token, {
-            limit: CREATOR_PAGE,
-            offset,
-            niche: creatorNiche,
-            search: creatorQuery,
-          });
-          if (!result.ok) {
-            setCreatorsError(result.message);
-            if (!options.append) setCreators([]);
-            return;
-          }
-          items = result.data.items.filter((entry) => entry.userId !== me);
-          total = result.data.total;
-        } else {
-          const result = await community.listProfiles(token, {
-            search: creatorQuery,
-            niche: creatorNiche ?? undefined,
-            limit: CREATOR_PAGE,
-            offset,
-          });
-          if (!result.ok) {
-            setCreatorsError(result.message);
-            if (!options.append) setCreators([]);
-            return;
-          }
-          items = result.data.items.filter((entry) => entry.userId !== me);
-          total = result.data.total;
-        }
-
-        if (!alive.current) return;
-        setCreators((prev) => (options.append ? [...prev, ...items] : items));
-        setCreatorsTotal(total);
-
-        const followedResult = await community.fetchFollowedIds(
-          token,
-          items.map((entry) => entry.userId),
-        );
-        if (!alive.current) return;
-        if (followedResult.ok) {
-          setFollowed((prev) => {
-            const next = new Set(prev);
-            for (const id of followedResult.data) next.add(id);
-            return next;
-          });
-        }
-      } catch {
-        if (alive.current) {
-          setCreatorsError('Creators could not be loaded. Check your connection and retry.');
-        }
-      } finally {
-        if (alive.current) {
-          setCreatorsLoading(false);
-          setCreatorsLoadingMore(false);
-        }
-      }
-    },
-    [creatorScope, creatorQuery, creatorNiche, creators.length, getCreatorToken, recordId],
-  );
-
-  const creatorRequestKey = `${creatorScope}|${creatorQuery.trim().toLowerCase()}|${creatorNiche ?? ''}`;
-  useEffect(() => {
-    if (!creatorsBootedRef.current) {
-      creatorsBootedRef.current = true;
-      void loadNiches();
-      void loadCreators();
-      return undefined;
-    }
-    if (creatorsKeyRef.current === creatorRequestKey) return undefined;
-    // Typing debounces; a scope or niche chip is a deliberate tap and loads at once.
-    const isTyping = creatorsKeyRef.current?.split('|')[1] !== creatorRequestKey.split('|')[1];
-    const timer = setTimeout(() => void loadCreators(), isTyping ? 450 : 0);
-    return () => clearTimeout(timer);
-  }, [creatorRequestKey, loadCreators, loadNiches]);
-
-  const toggleFollow = useCallback(
-    async (creator: CreatorProfile) => {
-      if (followBusy) return;
-      const wasFollowing = followed.has(creator.userId);
-      setFollowBusy(creator.userId);
-      setFollowed((prev) => {
-        const next = new Set(prev);
-        if (wasFollowing) next.delete(creator.userId);
-        else next.add(creator.userId);
-        return next;
+      recordId(token);
+      // `instagram` names both the column and the pool: the server ranks only
+      // creators it has a verified reading for, so nothing on this device can
+      // widen the list or move a rank.
+      const result = await community.fetchLeaderboard(token, 'instagram', {
+        limit: TOP_CREATOR_LIMIT,
+        verifiedOnly: true,
       });
-      setCreators((prev) =>
-        prev.map((entry) =>
-          entry.userId === creator.userId
-            ? {
-                ...entry,
-                followerCount: Math.max(0, entry.followerCount + (wasFollowing ? -1 : 1)),
-              }
-            : entry,
-        ),
-      );
-      try {
-        const token = await getCreatorToken();
-        const result = wasFollowing
-          ? await community.unfollowCreator(token, creator.userId)
-          : await community.followCreator(token, creator.userId);
-        if (!alive.current) return;
-        if (!result.ok) {
-          setNotice(result.message);
-          setFollowed((prev) => {
-            const next = new Set(prev);
-            if (wasFollowing) next.add(creator.userId);
-            else next.delete(creator.userId);
-            return next;
-          });
-          setCreators((prev) =>
-            prev.map((entry) =>
-              entry.userId === creator.userId
-                ? { ...entry, followerCount: creator.followerCount }
-                : entry,
-            ),
-          );
-          return;
-        }
-        setCreators((prev) =>
-          prev.map((entry) =>
-            entry.userId === creator.userId
-              ? { ...entry, followerCount: result.data.followerCount }
-              : entry,
-          ),
-        );
-      } catch {
-        if (!alive.current) return;
-        setNotice('That follow could not be saved. Please retry.');
-        setFollowed((prev) => {
-          const next = new Set(prev);
-          if (wasFollowing) next.add(creator.userId);
-          else next.delete(creator.userId);
-          return next;
-        });
-        setCreators((prev) =>
-          prev.map((entry) =>
-            entry.userId === creator.userId ? { ...entry, followerCount: creator.followerCount } : entry,
-          ),
-        );
-      } finally {
-        if (alive.current) setFollowBusy(null);
+      if (!alive.current) return;
+      if (!result.ok) {
+        setTopError(result.message);
+        setTop([]);
+        return;
       }
-    },
-    [followBusy, followed, getCreatorToken],
-  );
-
-  // =========================================================== LEADERBOARD ===
-
-  const BOARD_PAGE = 25;
-
-  // The screen opens on the Top list: a short, server-verified pool a creator
-  // can actually believe, with the whole directory one tap away.
-  const [scope, setScope] = useState<LeaderboardScope>('top');
-  const [metric, setMetric] = useState<LeaderboardMetric>('overall');
-  const [period, setPeriod] = useState<LeaderboardPeriod>('7d');
-  const [boardNiche, setBoardNiche] = useState<string | null>(null);
-  const [board, setBoard] = useState<LeaderboardRow[]>([]);
-  const [boardLoading, setBoardLoading] = useState(false);
-  const [boardLoadingMore, setBoardLoadingMore] = useState(false);
-  const [boardError, setBoardError] = useState<string | null>(null);
-
-  const periodApplies = PERIOD_SENSITIVE_METRICS.includes(metric);
-  const boardLimit = scope === 'top' ? TOP_CREATOR_LIMIT : BOARD_PAGE;
-  const isTopScope = scope === 'top';
-
-  const loadBoard = useCallback(
-    async (options: { append?: boolean } = {}) => {
-      const offset = options.append ? board.length : 0;
-      if (options.append) setBoardLoadingMore(true);
-      else setBoardLoading(true);
-      setBoardError(null);
-      try {
-        const token = await getCreatorToken();
-        recordId(token);
-        const result = await community.fetchLeaderboard(token, metric, {
-          limit: boardLimit,
-          offset,
-          niche: boardNiche,
-          // A window that does not affect this column would still change the
-          // rows behind it, so it is passed through either way.
-          period,
-          // The Top pool is chosen by the server from creators whose Instagram
-          // it has read — nothing on this device can widen it.
-          verifiedOnly: isTopScope,
-        });
-        if (!alive.current) return;
-        if (!result.ok) {
-          setBoardError(result.message);
-          if (!options.append) setBoard([]);
-          return;
-        }
-        setBoard((prev) => (options.append ? [...prev, ...result.data] : result.data));
-      } catch {
-        if (alive.current) {
-          setBoardError('The ranking could not be loaded. Check your connection and retry.');
-        }
-      } finally {
-        if (alive.current) {
-          setBoardLoading(false);
-          setBoardLoadingMore(false);
-        }
+      setTop(result.data);
+    } catch {
+      if (alive.current) {
+        setTopError('The ranking could not be loaded. Check your connection and retry.');
       }
-    },
-    [metric, period, boardNiche, scope, board.length, getCreatorToken, recordId],
-  );
-
-  // Scope, metric, window and niche are single deliberate taps — reload now.
-  const boardKey = `${scope}|${metric}|${period}|${boardNiche ?? ''}`;
-  const boardKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (boardKeyRef.current === null) {
-      boardKeyRef.current = boardKey;
-      return;
+    } finally {
+      if (alive.current) setTopLoading(false);
     }
-    if (boardKeyRef.current === boardKey) return;
-    boardKeyRef.current = boardKey;
-    void loadBoard();
-  }, [boardKey, loadBoard]);
+  }, [getCreatorToken, recordId]);
 
   // Each tab loads the first time it is opened and refreshes on demand; the
   // data it already fetched stays on screen while the creator switches back.
@@ -1396,29 +1230,21 @@ export function DiscoverScreen({
   useEffect(() => {
     if (loadedTabs.current.has(tab)) return;
     loadedTabs.current.add(tab);
-    if (tab === 'feed') void loadFeed();
-    if (tab === 'creators') void loadCreators();
-    if (tab === 'leaderboard') void loadBoard();
-  }, [tab, loadFeed, loadCreators, loadBoard]);
+    if (tab === 'community') void loadFeed();
+    if (tab === 'topCreators') void loadTop();
+  }, [tab, loadFeed, loadTop]);
 
   // ================================================================ render ===
 
   const refreshNow = useCallback(() => {
     setNotice(null);
     if (tab === 'trends') void loadTrends({ force: true });
-    else if (tab === 'feed') void loadFeed();
-    else if (tab === 'creators') void loadCreators();
-    else void loadBoard();
-  }, [tab, loadTrends, loadFeed, loadCreators, loadBoard]);
+    else if (tab === 'community') void loadFeed();
+    else void loadTop();
+  }, [tab, loadTrends, loadFeed, loadTop]);
 
   const busy =
-    tab === 'trends'
-      ? trendsRefreshing
-      : tab === 'feed'
-        ? feedLoading
-        : tab === 'creators'
-          ? creatorsLoading
-          : boardLoading;
+    tab === 'trends' ? trendsRefreshing : tab === 'community' ? feedLoading : topLoading;
 
   const renderTrends = () => {
     const statusReports = trends?.sources ?? [];
@@ -1563,7 +1389,7 @@ export function DiscoverScreen({
     );
   };
 
-  const renderFeed = () => (
+  const renderCommunity = () => (
     <>
       {!profileLoaded ? null : myProfile ? null : (
         <Card tone={tone} style={s.composer}>
@@ -1619,7 +1445,7 @@ export function DiscoverScreen({
 
       <Card tone={tone} style={s.composer}>
         <View style={s.composerHead}>
-          <Text style={s.composerTitle}>Share an update</Text>
+          <Text style={s.composerTitle}>Share a post</Text>
           <Pressable
             onPress={() => setComposerOpen((open) => !open)}
             style={s.refresh}
@@ -1641,17 +1467,52 @@ export function DiscoverScreen({
             <TextInput
               value={composerBody}
               onChangeText={setComposerBody}
-              placeholder="What are you working on? Max 1000 characters."
+              placeholder="What are you working on? Add a caption for your photo. Max 1000 characters."
               placeholderTextColor={c.onDarkDim}
               multiline
               maxLength={1000}
               style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]}
-              accessibilityLabel="Update text"
+              accessibilityLabel="Post text"
             />
+            {composerPhoto ? (
+              <View style={s.photoPreview}>
+                <Image
+                  source={{ uri: composerPhoto }}
+                  style={s.photoImage as StyleProp<ImageStyle>}
+                  resizeMode="cover"
+                  accessibilityLabel="Photo attached to this post"
+                />
+                <Pressable
+                  onPress={() => setComposerPhoto(null)}
+                  style={s.refresh}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove the attached photo"
+                >
+                  <TrashIcon size={14} color={c.red} />
+                  <Text style={[s.refreshLabel, { color: c.red }]}>Remove photo</Text>
+                </Pressable>
+              </View>
+            ) : null}
             {composerError ? <Text style={s.fieldError}>{composerError}</Text> : null}
             <View style={s.composerActions}>
+              <Pressable
+                onPress={() => void pickPhoto()}
+                disabled={photoBusy}
+                style={s.attach}
+                accessibilityRole="button"
+                accessibilityLabel={composerPhoto ? 'Change the photo' : 'Add a photo'}
+              >
+                {photoBusy ? (
+                  <ActivityIndicator size="small" color={c.primary} />
+                ) : (
+                  <ImageIcon size={16} color={c.primary} />
+                )}
+                <Text style={s.refreshLabel}>
+                  {photoBusy ? 'Opening…' : composerPhoto ? 'Change photo' : 'Add photo'}
+                </Text>
+              </Pressable>
               <GradientButton
-                label={composerSending ? 'Posting…' : 'Post update'}
+                label={composerSending ? 'Sharing…' : 'Share a post'}
                 onPress={() => void submitPost()}
                 loading={composerSending}
                 disabled={composerSending}
@@ -1662,7 +1523,7 @@ export function DiscoverScreen({
         ) : (
           <Text style={s.excerpt}>
             {myProfile
-              ? 'Ask for feedback, share a win, or post a collab call.'
+              ? 'Share a photo or an update — every signed-in creator can see, like and comment on it.'
               : 'Create your handle above to post.'}
           </Text>
         )}
@@ -1683,8 +1544,8 @@ export function DiscoverScreen({
             {listedBusy
               ? 'Saving…'
               : myProfile.isListed
-                ? 'Your profile appears in the Creators list and on the leaderboard, and other creators can follow you.'
-                : 'Your profile is hidden from the Creators list and the leaderboard. Your posts still show your handle in the feed.'}
+                ? 'Your profile appears on Top Creators if your Instagram is connected, and other creators can follow you.'
+                : 'Your profile is hidden from Top Creators. Your posts still show your handle in the community.'}
           </Text>
         </Card>
       ) : null}
@@ -1731,6 +1592,21 @@ export function DiscoverScreen({
 
       <View style={s.toolbar}>
         <ChipRow
+          options={FEED_SORTS.map((entry) => ({ key: entry, label: FEED_SORT_LABELS[entry] }))}
+          value={feedSort}
+          onChange={(key) => {
+            const next = key as FeedSort;
+            setFeedSort(next);
+            loadedTabs.current.add('community');
+            void loadFeed({ sort: next });
+          }}
+          label="Order the community feed"
+        />
+      </View>
+      <Text style={s.stamp}>{FEED_SORT_RULES[feedSort]}</Text>
+
+      <View style={s.toolbar}>
+        <ChipRow
           options={[
             { key: 'all', label: 'All' },
             ...POST_KINDS.map((kind) => ({ key: kind, label: POST_KIND_LABELS[kind] })),
@@ -1739,19 +1615,19 @@ export function DiscoverScreen({
           onChange={(key) => {
             const next = key as PostKind | 'all';
             setFeedKind(next);
-            loadedTabs.current.add('feed');
+            loadedTabs.current.add('community');
             void loadFeed({ kind: next });
           }}
-          label="Filter updates"
+          label="Filter posts"
         />
       </View>
 
       <View style={s.toolbar}>
         <Text style={s.stamp}>
           {feedLoading
-            ? 'Loading updates…'
+            ? 'Loading posts…'
             : postsTotal !== null
-              ? `${postsTotal} update${postsTotal === 1 ? '' : 's'}`
+              ? `${postsTotal} post${postsTotal === 1 ? '' : 's'}`
               : `${posts.length} shown`}
         </Text>
         <Pressable
@@ -1759,7 +1635,7 @@ export function DiscoverScreen({
           style={s.refresh}
           disabled={feedLoading}
           accessibilityRole="button"
-          accessibilityLabel="Refresh updates"
+          accessibilityLabel="Refresh posts"
         >
           {feedLoading ? (
             <ActivityIndicator size="small" color={c.primary} />
@@ -1785,14 +1661,27 @@ export function DiscoverScreen({
         <EmptyState
           tone={tone}
           glyph="✎"
-          title="No updates yet"
+          title={feedSort === 'trending' ? 'Nothing trending yet' : 'No posts yet'}
           hint={
-            feedKind === 'all'
-              ? 'Be the first to share what you are working on — a win, a question, or a collab call.'
-              : `No ${POST_KIND_LABELS[feedKind as PostKind].toLowerCase()} posts yet. Try “All”.`
+            feedSort === 'trending'
+              ? 'Trending is ordered by real likes and comments — the first post gets it moving.'
+              : feedKind === 'all'
+                ? 'Be the first to share a photo or an update — every signed-in creator can see it.'
+                : `No ${POST_KIND_LABELS[feedKind as PostKind].toLowerCase()} posts yet. Try “All”.`
           }
-          actionLabel={feedKind === 'all' ? undefined : 'Show all'}
-          onAction={feedKind === 'all' ? undefined : () => setFeedKind('all')}
+          actionLabel={
+            feedSort === 'trending' ? 'See latest' : feedKind === 'all' ? undefined : 'Show all'
+          }
+          onAction={
+            feedSort === 'trending'
+              ? () => {
+                  setFeedSort('latest');
+                  void loadFeed({ sort: 'latest' });
+                }
+              : feedKind === 'all'
+                ? undefined
+                : () => setFeedKind('all')
+          }
         />
       ) : (
         <View style={{ gap: 12 }}>
@@ -1830,295 +1719,39 @@ export function DiscoverScreen({
     </>
   );
 
-  const scopeFilters = useMemo(
-    () =>
-      [
-        { key: 'suggested', label: 'Suggested' },
-        { key: 'all', label: 'All' },
-        { key: 'following', label: 'Following' },
-      ] as { key: string; label: string }[],
-    [],
-  );
+  /**
+   * The single number this tab ranks on. `-1` from the RPC means no reading
+   * exists, and it is shown as unavailable rather than as a confident zero —
+   * a pool member always has a real count, so this is belt and braces.
+   */
+  const igFollowerCaption = (row: LeaderboardRow): string =>
+    row.instagramFollowers >= 0
+      ? formatCount(row.instagramFollowers)
+      : 'Unavailable';
 
-  const nicheFilters = useMemo(
-    () =>
-      [
-        { key: '', label: 'All niches' },
-        ...niches.map((entry) => ({ key: entry, label: entry })),
-      ] as { key: string; label: string }[],
-    [niches],
-  );
-
-  // A page is "finished" when the server sent fewer rows than were asked for,
-  // or when the directory's own count says there is nothing left.
-  const creatorsHaveMore =
-    creatorsTotal !== null
-      ? creators.length < creatorsTotal
-      : creators.length % CREATOR_PAGE === 0 && creators.length > 0;
-
-  const renderCreators = () => (
+  const renderTopCreators = () => (
     <>
-      <ChipRow
-        options={scopeFilters}
-        value={creatorScope}
-        onChange={(key) => setCreatorScope(key as 'suggested' | 'all' | 'following')}
-        label="Creator lists"
-      />
-      <SearchField
-        value={creatorQuery}
-        onChange={setCreatorQuery}
-        placeholder="Search creators, niches, handles"
-        label="Search creators"
-      />
-      {niches.length > 0 ? (
-        <ChipRow
-          options={nicheFilters}
-          value={creatorNiche ?? ''}
-          onChange={(key) => setCreatorNiche(key || null)}
-          label="Filter by niche"
-        />
-      ) : null}
-      <View style={s.toolbar}>
-        <Text style={s.stamp}>
-          {creatorsLoading
-            ? 'Searching…'
-            : creatorScope === 'following'
-              ? `Following ${creators.length}`
-              : creatorsTotal !== null && !creatorQuery && !creatorNiche
-                ? `${creatorsTotal} creator${creatorsTotal === 1 ? '' : 's'} in the directory`
-                : `${creators.length} result${creators.length === 1 ? '' : 's'}`}
-        </Text>
-        <Pressable
-          onPress={() => void loadCreators()}
-          style={s.refresh}
-          disabled={creatorsLoading}
-          accessibilityRole="button"
-          accessibilityLabel="Refresh creators"
-        >
-          {creatorsLoading ? (
-            <ActivityIndicator size="small" color={c.primary} />
-          ) : (
-            <RefreshIcon size={16} color={c.primary} />
-          )}
-          <Text style={s.refreshLabel}>Refresh</Text>
-        </Pressable>
-      </View>
-
-      {creatorsError ? (
-        <ErrorBanner message={creatorsError} onRetry={() => void loadCreators()} s={s} />
-      ) : null}
-      {notice ? <Text style={s.notice}>{notice}</Text> : null}
-
-      {creatorsLoading && creators.length === 0 ? (
-        <View style={{ gap: 12 }}>
-          {[0, 1, 2].map((row) => (
-            <RowSkeleton key={row} s={s} />
-          ))}
-        </View>
-      ) : creators.length === 0 ? (
-        <EmptyState
-          tone={tone}
-          glyph="◍"
-          title={
-            creatorScope === 'following'
-              ? 'You are not following anyone yet'
-              : creatorQuery || creatorNiche
-                ? 'No creators match those filters'
-                : 'The directory is empty'
-          }
-          hint={
-            creatorScope === 'following'
-              ? 'Follow a creator from Suggested or All and they will show up here.'
-              : creatorQuery || creatorNiche
-                ? 'Try a shorter term, or clear the search and niche filter to see everyone.'
-                : 'Create your handle on the Feed tab — creators who join will appear here.'
-          }
-          actionLabel={
-            creatorScope === 'following'
-              ? 'See suggested'
-              : creatorQuery || creatorNiche
-                ? 'Clear filters'
-                : undefined
-          }
-          onAction={
-            creatorScope === 'following'
-              ? () => setCreatorScope('suggested')
-              : creatorQuery || creatorNiche
-                ? () => {
-                    setCreatorQuery('');
-                    setCreatorNiche(null);
-                  }
-                : undefined
-          }
-        />
-      ) : (
-        <View style={{ gap: 12 }}>
-          {creators.map((creator) => {
-            const isFollowing = followed.has(creator.userId);
-            const busyRow = followBusy === creator.userId;
-            return (
-              <Card key={creator.userId} tone={tone} style={s.card}>
-                <View style={s.postHead}>
-                  <Avatar uri={creator.avatarUrl} name={creator.displayName} size={44} />
-                  <View style={s.postWho}>
-                    <Text style={s.postName} numberOfLines={1}>
-                      {creator.displayName}
-                    </Text>
-                    <Text style={s.postHandle} numberOfLines={1}>
-                      @{creator.handle}
-                      {creator.niche ? ` · ${creator.niche}` : ''}
-                    </Text>
-                  </View>
-                  <Pressable
-                    onPress={() => void toggleFollow(creator)}
-                    disabled={busyRow}
-                    style={[
-                      s.refresh,
-                      isFollowing && {
-                        backgroundColor: c.darkCard,
-                        borderWidth: 1,
-                        borderColor: c.darkBorder,
-                      },
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      isFollowing ? `Unfollow ${creator.displayName}` : `Follow ${creator.displayName}`
-                    }
-                  >
-                    {busyRow ? (
-                      <ActivityIndicator size="small" color={c.primary} />
-                    ) : (
-                      <Text style={[s.refreshLabel, isFollowing && { color: c.onDarkSub }]}>
-                        {isFollowing ? 'Following' : 'Follow'}
-                      </Text>
-                    )}
-                  </Pressable>
-                </View>
-                {creator.bio ? (
-                  <Text style={s.excerpt} numberOfLines={2}>
-                    {creator.bio}
-                  </Text>
-                ) : null}
-                <Text style={s.meta}>
-                  {formatCount(creator.followerCount)} followers ·{' '}
-                  {formatCount(creator.postCount)} posts · {formatCount(creator.viewCount)} views
-                </Text>
-                <View style={s.actions}>
-                  <Pressable
-                    onPress={() => onOpenCreator(creator.userId)}
-                    style={s.link}
-                    accessibilityRole="button"
-                    accessibilityLabel={`View ${creator.displayName}'s profile`}
-                  >
-                    <Text style={s.linkLabel}>View profile</Text>
-                    <ChevronRightIcon size={14} color={c.primary} />
-                  </Pressable>
-                </View>
-              </Card>
-            );
-          })}
-        </View>
-      )}
-
-      {creatorsHaveMore && creators.length > 0 ? (
-        <Pressable
-          onPress={() => void loadCreators({ append: true })}
-          disabled={creatorsLoadingMore}
-          style={s.refresh}
-          accessibilityRole="button"
-          accessibilityLabel="Load more creators"
-        >
-          {creatorsLoadingMore ? (
-            <ActivityIndicator size="small" color={c.primary} />
-          ) : null}
-          <Text style={s.refreshLabel}>
-            {creatorsLoadingMore ? 'Loading…' : 'Load more creators'}
-          </Text>
-        </Pressable>
-      ) : null}
-    </>
-  );
-
-  const boardCaptionFor = (): string => {
-    if (metric === 'followers') return 'followers';
-    if (metric === 'views') return 'views';
-    if (metric === 'trending') return `${LEADERBOARD_PERIOD_LABELS[period].toLowerCase()} engagement`;
-    return 'points';
-  };
-
-  const boardHasMore = !isTopScope && board.length > 0 && board.length % BOARD_PAGE === 0;
-
-  const renderLeaderboard = () => (
-    <>
-      <ChipRow
-        options={LEADERBOARD_SCOPES.map((entry) => ({
-          key: entry,
-          label: LEADERBOARD_SCOPE_LABELS[entry],
-        }))}
-        value={scope}
-        onChange={(key) => setScope(key as LeaderboardScope)}
-        label="Who appears in the ranking"
-      />
-      <PillTabs
-        options={LEADERBOARD_METRICS.map((entry) => LEADERBOARD_METRIC_LABELS[entry])}
-        value={LEADERBOARD_METRIC_LABELS[metric]}
-        onChange={(label) => {
-          const next = LEADERBOARD_METRICS.find(
-            (entry) => LEADERBOARD_METRIC_LABELS[entry] === label,
-          );
-          if (next) setMetric(next);
-        }}
-        variant={mode === 'dark' ? 'dark' : 'light'}
-      />
-      <Text style={s.rules}>
-        Who is listed: {LEADERBOARD_SCOPE_RULES[scope]}
-      </Text>
-      <Text style={s.rules}>
-        How this ranking is decided: {leaderboardRule(metric, period)}
-      </Text>
-
-      {niches.length > 0 ? (
-        <ChipRow
-          options={nicheFilters}
-          value={boardNiche ?? ''}
-          onChange={(key) => setBoardNiche(key || null)}
-          label="Filter the ranking by niche"
-        />
-      ) : null}
-
-      <ChipRow
-        options={LEADERBOARD_PERIODS.map((entry) => ({
-          key: entry,
-          label: LEADERBOARD_PERIOD_LABELS[entry],
-        }))}
-        value={period}
-        onChange={(key) => setPeriod(key as LeaderboardPeriod)}
-        label="Ranking time window"
-      />
-      <Text style={s.stamp}>
-        {periodApplies
-          ? `Engagement columns count the ${LEADERBOARD_PERIOD_LABELS[period].toLowerCase()}.`
-          : 'Follower and view totals are lifetime numbers — no history exists to window, so the time range does not change these columns.'}
-      </Text>
+      {/* The rules are printed, not buried: who qualifies and how they are
+          ordered is the whole contract of this tab. */}
+      <Text style={s.rules}>{LEADERBOARD_SCOPE_RULES.top}</Text>
+      <Text style={s.rules}>{LEADERBOARD_RULES.instagram}</Text>
 
       <View style={s.toolbar}>
         <Text style={s.stamp}>
-          {boardLoading
+          {topLoading
             ? 'Ranking…'
-            : isTopScope
-              ? board.length === 0
-                ? 'Top 20 · ranked 1–20'
-                : `Top ${board.length} of ${TOP_CREATOR_LIMIT} · ranked 1–${board.length}`
-              : `${board.length} ranked creator${board.length === 1 ? '' : 's'}`}
+            : top.length === 0
+              ? `Top ${TOP_CREATOR_LIMIT} · ranked 1–${TOP_CREATOR_LIMIT}`
+              : `Top ${top.length} of ${TOP_CREATOR_LIMIT} · ranked 1–${top.length}`}
         </Text>
         <Pressable
-          onPress={() => void loadBoard()}
+          onPress={() => void loadTop()}
           style={s.refresh}
-          disabled={boardLoading}
+          disabled={topLoading}
           accessibilityRole="button"
-          accessibilityLabel="Refresh ranking"
+          accessibilityLabel="Refresh the ranking"
         >
-          {boardLoading ? (
+          {topLoading ? (
             <ActivityIndicator size="small" color={c.primary} />
           ) : (
             <RefreshIcon size={16} color={c.primary} />
@@ -2127,56 +1760,27 @@ export function DiscoverScreen({
         </Pressable>
       </View>
 
-      {boardError ? (
-        <ErrorBanner message={boardError} onRetry={() => void loadBoard()} s={s} />
-      ) : null}
+      {topError ? <ErrorBanner message={topError} onRetry={() => void loadTop()} s={s} /> : null}
       {notice ? <Text style={s.notice}>{notice}</Text> : null}
 
-      {boardLoading && board.length === 0 ? (
+      {topLoading && top.length === 0 ? (
         <View style={{ gap: 12 }}>
           {[0, 1, 2].map((row) => (
             <RowSkeleton key={row} s={s} />
           ))}
         </View>
-      ) : board.length === 0 ? (
+      ) : top.length === 0 ? (
         <EmptyState
           tone={tone}
           glyph="#"
-          title={
-            boardNiche
-              ? `No ranked creators in ${boardNiche}`
-              : isTopScope
-                ? 'No Instagram-connected creators yet'
-                : 'No ranking yet'
-          }
-          hint={
-            boardNiche
-              ? 'No listed creator works in that niche yet — clear the filter to see the whole ranking.'
-              : isTopScope
-                ? 'The Top list is only filled by creators who opened this app, connected Instagram, and let CreatorDNA read their real follower count. Connect yours to be ranked.'
-                : 'Creators appear once they have a profile and at least one measured metric.'
-          }
-          actionLabel={
-            boardNiche
-              ? 'Clear niche filter'
-              : isTopScope
-                ? 'See everyone'
-                : 'Open the directory'
-          }
-          onAction={
-            boardNiche
-              ? () => setBoardNiche(null)
-              : isTopScope
-                ? () => setScope('all')
-                : () => {
-                    loadedTabs.current.add('creators');
-                    setTab('creators');
-                  }
-          }
+          title="No Instagram-connected creators yet"
+          hint="This list fills itself: a creator appears once they open CreatorDNA, connect Instagram, and let the app read their real follower count. Connect yours to be ranked."
+          actionLabel="Refresh"
+          onAction={() => void loadTop()}
         />
       ) : (
         <View style={{ gap: 10 }}>
-          {board.map((row) => (
+          {top.map((row) => (
             <Card
               key={row.userId}
               tone={tone}
@@ -2192,22 +1796,13 @@ export function DiscoverScreen({
                   @{row.handle}
                 </Text>
                 <View style={s.metaRow}>
-                  {row.instagramFollowers >= 0 ? (
-                    <Badge
-                      label={`${formatCount(row.instagramFollowers)} IG followers`}
-                      tone="green"
-                    />
-                  ) : (
-                    <Badge label="Instagram not connected" tone="gray" />
-                  )}
-                  {metric === 'trending' || metric === 'overall' ? (
-                    <Badge label={`${formatCount(row.engagement7d)} engagement`} tone="blue" />
-                  ) : null}
+                  <Badge label={`${igFollowerCaption(row)} IG followers`} tone="green" />
+                  {row.verified ? <Badge label="Verified" tone="blue" /> : null}
                 </View>
               </View>
               <View style={s.boardValue}>
-                <Text style={s.boardNumber}>{formatCount(row.value)}</Text>
-                <Text style={s.boardCaption}>{boardCaptionFor()}</Text>
+                <Text style={s.boardNumber}>{igFollowerCaption(row)}</Text>
+                <Text style={s.boardCaption}>Instagram followers</Text>
                 <Pressable
                   onPress={() => onOpenCreator(row.userId)}
                   style={s.link}
@@ -2222,25 +1817,10 @@ export function DiscoverScreen({
         </View>
       )}
 
-      {boardHasMore && !boardLoading ? (
-        <Pressable
-          onPress={() => void loadBoard({ append: true })}
-          disabled={boardLoadingMore}
-          style={s.refresh}
-          accessibilityRole="button"
-          accessibilityLabel="Load more ranked creators"
-        >
-          {boardLoadingMore ? <ActivityIndicator size="small" color={c.primary} /> : null}
-          <Text style={s.refreshLabel}>
-            {boardLoadingMore ? 'Loading…' : 'Load more'}
-          </Text>
-        </Pressable>
-      ) : null}
-
       <Text style={s.rules}>
-        {isTopScope
-          ? 'Instagram follower counts come from the app reading the account itself — they are shown as a verified badge and never change a rank. Ranks are 1–20 across the whole Top pool.'
-          : 'Instagram follower counts are shown as a verified badge only — they never change a rank. Ranks are global across the whole directory and do not restart on later pages.'}
+        Every row above is a connected account and every number is the follower count this app
+        read from Instagram. Ranks are 1–{TOP_CREATOR_LIMIT}, do not restart on a later page, and
+        never come from an estimate or a guess.
       </Text>
     </>
   );
@@ -2270,9 +1850,8 @@ export function DiscoverScreen({
         showsVerticalScrollIndicator={false}
       >
         {tab === 'trends' ? renderTrends() : null}
-        {tab === 'feed' ? renderFeed() : null}
-        {tab === 'creators' ? renderCreators() : null}
-        {tab === 'leaderboard' ? renderLeaderboard() : null}
+        {tab === 'community' ? renderCommunity() : null}
+        {tab === 'topCreators' ? renderTopCreators() : null}
       </ScrollView>
 
       <ConfirmDialog
@@ -2417,6 +1996,9 @@ function PostCard({
   const c = useThemeColors();
   const author = post.author;
   const isMine = myId !== null && post.userId === myId;
+  // A photo URL that fails to load shows an honest line instead of an empty
+  // box, and never retries in a loop.
+  const [photoBroken, setPhotoBroken] = useState(false);
   return (
     <Card tone={tone} style={s.card}>
       <View style={s.postHead}>
@@ -2443,6 +2025,20 @@ function PostCard({
         </Text>
       ) : null}
       <Text style={s.postBody}>{post.body}</Text>
+      {post.mediaUrl && !photoBroken ? (
+        <View style={s.photoPreview}>
+          <Image
+            source={{ uri: post.mediaUrl }}
+            style={s.photoImage as StyleProp<ImageStyle>}
+            resizeMode="cover"
+            onError={() => setPhotoBroken(true)}
+            accessibilityLabel={`Photo shared by ${author?.displayName ?? 'a creator'}`}
+          />
+        </View>
+      ) : null}
+      {post.mediaUrl && photoBroken ? (
+        <Text style={s.stamp}>The photo for this post could not be loaded.</Text>
+      ) : null}
       {post.tags.length > 0 ? (
         <View style={s.tags}>
           {post.tags.map((tag) => (

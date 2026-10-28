@@ -1,7 +1,12 @@
+import { Platform } from 'react-native';
+import { File, UploadType } from 'expo-file-system';
+
 import { supabaseAnonKey, supabaseUrl } from '../lib/config';
 import {
   LEADERBOARD_METRICS,
   LEADERBOARD_PERIODS,
+  MEDIA_BUCKET,
+  MEDIA_MIME_TYPES,
   REPORT_REASONS,
   SCHEMA_NOT_DEPLOYED,
   VERIFIED_STATS_UNAVAILABLE,
@@ -11,7 +16,10 @@ import {
   creatorSummaryFromJson,
   currentUserIdFromToken,
   followerStatsFromRow,
+  isPostMediaUrl,
   leaderboardRowFromJson,
+  mediaMimeType,
+  mediaObjectPath,
   parseTags,
   postFromRow,
   profileFromRow,
@@ -29,6 +37,7 @@ import {
   type CommunityPost,
   type CreatorProfile,
   type CreatorSummary,
+  type FeedSort,
   type FollowerStats,
   type LeaderboardMetric,
   type LeaderboardPeriod,
@@ -357,6 +366,8 @@ export type PostQuery = {
   kind?: PostKind | 'all';
   userId?: string;
   tag?: string;
+  /** "latest" is chronological; "trending" is ordered server-side by engagement. */
+  sort?: FeedSort;
   limit?: number;
   offset?: number;
 };
@@ -369,7 +380,13 @@ export async function listPosts(
   const offset = Math.max(0, query.offset ?? 0);
   const params = new URLSearchParams({
     select: '*',
-    order: 'created_at.desc',
+    // `engagement_count` is a stored generated column, so the trending order
+    // is computed once in the database rather than by sorting one page here —
+    // otherwise page 2 would restart the ranking.
+    order:
+      query.sort === 'trending'
+        ? 'engagement_count.desc,created_at.desc,id.desc'
+        : 'created_at.desc,id.desc',
     limit: String(limit),
     offset: String(offset),
   });
@@ -400,6 +417,8 @@ export type PostInput = {
   body: string;
   tags?: string[];
   link?: string;
+  /** Public storage URL of an already-uploaded photo, or null for text only. */
+  mediaUrl?: string | null;
 };
 
 export async function createPost(
@@ -412,22 +431,29 @@ export async function createPost(
   if (!title.ok) return fail('rejected', title.error);
   const userId = currentUserIdFromToken(token);
   if (!userId) return unauthorized<CommunityPost>();
+  // The parser is the gate: a URL from any other origin never reaches the row.
+  const mediaUrl = isPostMediaUrl(input.mediaUrl) ? input.mediaUrl : null;
 
   // The count columns are not in the column-scoped INSERT grant, so this
-  // payload cannot carry a forged like/view total even if it tried.
+  // payload cannot carry a forged like/view total even if it tried. The photo
+  // key is only sent when there is one: a text post stays insertable on a
+  // deployment that has not received the media column yet.
+  const payload: Record<string, unknown> = {
+    user_id: userId,
+    kind: input.kind,
+    title: title.value || null,
+    body: body.value,
+    tags: parseTags((input.tags ?? []).join(' ')),
+    link: input.link ? input.link.trim().slice(0, 400) : null,
+  };
+  if (mediaUrl) payload.media_url = mediaUrl;
+
   return request(
     {
       method: 'POST',
       path: '/creator_posts',
       token,
-      body: {
-        user_id: userId,
-        kind: input.kind,
-        title: title.value || null,
-        body: body.value,
-        tags: parseTags((input.tags ?? []).join(' ')),
-        link: input.link ? input.link.trim().slice(0, 400) : null,
-      },
+      body: payload,
       prefer: 'return=representation',
     },
     (data) => {
@@ -475,6 +501,107 @@ export async function deletePost(token: string, id: string): Promise<CommunityRe
     { method: 'DELETE', path: `/creator_posts?id=eq.${encodeURIComponent(id)}`, token, expect: 'empty' },
     () => ({ ok: true, data: null }),
   );
+}
+
+// ------------------------------------------------------------ post photos ---
+
+const STORAGE = `${supabaseUrl}/storage/v1`;
+
+function storageHeaders(token: string, mime: string): Record<string, string> {
+  return {
+    apikey: supabaseAnonKey,
+    Authorization: `Bearer ${token}`,
+    'Content-Type': mime,
+    'x-upsert': 'false',
+  };
+}
+
+/** Maps a storage HTTP failure onto something a person can act on. */
+function storageFailure(status: number): CommunityResult<string> {
+  if (status === 401 || status === 403) return unauthorized<string>();
+  if (status === 404) {
+    return fail(
+      'rejected',
+      'Photo uploads are not available on this deployment yet. Your text will still post.',
+    );
+  }
+  if (status === 413) return fail('rejected', 'That photo is over the 8 MB limit. Pick a smaller one.');
+  if (status === 415) return fail('rejected', 'Use a JPEG, PNG or WebP photo.');
+  if (status === 409) return fail('rejected', 'That photo could not be saved. Please retry.');
+  if (status === 400) return fail('rejected', 'That file could not be uploaded. Please try another photo.');
+  return offline<string>();
+}
+
+/**
+ * Uploads one photo into the community bucket and returns its public URL.
+ * The object is written under the author's own id, which is exactly what the
+ * storage policy allows, and nothing but the returned URL is ever trusted.
+ */
+export async function uploadPostPhoto(
+  token: string,
+  localUri: string,
+): Promise<CommunityResult<string>> {
+  const userId = currentUserIdFromToken(token);
+  if (!userId) return unauthorized<string>();
+
+  const fileName = localUri.split('/').pop()?.split('?')[0] || 'photo.jpg';
+  const mime = mediaMimeType(fileName);
+  if (!(MEDIA_MIME_TYPES as readonly string[]).includes(mime)) {
+    return fail('rejected', 'Use a JPEG, PNG or WebP photo.');
+  }
+  const extension = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+  const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+  const endpoint = `${STORAGE}/object/${MEDIA_BUCKET}/${path}`;
+  const publicUrl = `${STORAGE}/object/public/${MEDIA_BUCKET}/${path}`;
+
+  let status: number;
+  try {
+    if (Platform.OS === 'web') {
+      // The picker hands back a blob: URL on the web build, so the bytes are
+      // read straight from it rather than through the file-system module.
+      const blob = await (await fetch(localUri)).blob();
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        // The computed type, not the browser's guess: the bucket only accepts
+        // the three image types the app validated against.
+        headers: storageHeaders(token, mime),
+        body: blob,
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      status = response.status;
+    } else {
+      const file = new File(localUri);
+      const result = await file.upload(endpoint, {
+        uploadType: UploadType.BINARY_CONTENT,
+        headers: storageHeaders(token, mime),
+      });
+      status = result.status;
+    }
+  } catch {
+    return offline<string>();
+  }
+
+  if (status < 200 || status >= 300) return storageFailure(status);
+  if (!isPostMediaUrl(publicUrl)) return fail('rejected', 'That photo could not be saved. Please retry.');
+  return { ok: true, data: publicUrl };
+}
+
+/**
+ * Removes the stored photo when its post is deleted. Best effort by design:
+ * the post is already gone, so a failed cleanup must never surface as an error.
+ */
+export async function deletePostPhoto(token: string, mediaUrl: string): Promise<void> {
+  const path = mediaObjectPath(mediaUrl);
+  if (!path) return;
+  try {
+    await fetch(`${STORAGE}/object/${MEDIA_BUCKET}/${path}`, {
+      method: 'DELETE',
+      headers: { apikey: supabaseAnonKey, Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch {
+    /* nothing to report — the post itself is already deleted */
+  }
 }
 
 // ------------------------------------------------------------- reactions ----
@@ -829,13 +956,21 @@ export async function fetchLeaderboard(
   // paginated or Instagram-only request cannot be reproduced honestly, and
   // pretending otherwise would show a filter that does nothing.
   if (extended.message !== SCHEMA_NOT_DEPLOYED) return extended;
-  // Only the plain first page of the whole directory is reproducible on an old
-  // schema. The Top pool cannot be faked — filtering by "Instagram connected"
+  // The Instagram ranking has no older signature to fall back to: serving the
+  // in-app follower order instead would answer a different question with a
+  // confident wrong number.
+  if (metric === 'instagram') {
+    return fail(
+      'rejected',
+      'Instagram rankings are not available on this deployment yet. Pull the update and retry.',
+    );
+  }
+  // The Top pool cannot be faked either — filtering by "Instagram connected"
   // on a database without that column would rank creators who never connected.
   if (verifiedOnly) {
     return fail(
       'rejected',
-      'The Instagram-connected Top 20 is not available on this deployment yet. Switch to Everyone to see the full ranking.',
+      'The Instagram-connected Top 20 is not available on this deployment yet. Pull the update and retry.',
     );
   }
   if (offset > 0 || niche || period !== '7d') {

@@ -2,12 +2,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  FEED_SORTS,
+  FEED_SORT_LABELS,
+  FEED_SORT_RULES,
+  LEADERBOARD_METRICS,
+  LEADERBOARD_METRIC_LABELS,
   LEADERBOARD_PERIODS,
   LEADERBOARD_PERIOD_LABELS,
   LEADERBOARD_RULES,
   LEADERBOARD_SCOPES,
   LEADERBOARD_SCOPE_LABELS,
   LEADERBOARD_SCOPE_RULES,
+  MEDIA_BUCKET,
+  MEDIA_MAX_BYTES,
+  MEDIA_MIME_TYPES,
   MILESTONES,
   MILESTONE_BADGES,
   PERIOD_SENSITIVE_METRICS,
@@ -23,8 +31,11 @@ import {
   currentUserIdFromToken,
   followerStatsFromRow,
   highestEarned,
+  isPostMediaUrl,
   leaderboardRowFromJson,
   leaderboardRule,
+  mediaMimeType,
+  mediaObjectPath,
   milestoneLabel,
   milestoneProgress,
   nextMilestone,
@@ -298,7 +309,7 @@ test('milestoneLabel shortens each threshold', () => {
 });
 
 test('the ranking rules are all stated', () => {
-  for (const key of ['followers', 'views', 'trending', 'overall'] as const) {
+  for (const key of ['instagram', 'followers', 'views', 'trending', 'overall'] as const) {
     assert.ok(LEADERBOARD_RULES[key].length > 20, key);
   }
 });
@@ -346,6 +357,14 @@ test('communityErrorMessage never leaks an unknown message verbatim', () => {
   assert.match(message, /try again/i);
   assert.match(communityErrorMessage(null), /check your connection/i);
   assert.match(communityErrorMessage('junk'), /check your connection/i);
+});
+
+test('a deployment without the trending column says so instead of failing loudly', () => {
+  const message = communityErrorMessage({
+    message: 'column creator_posts.engagement_count does not exist',
+  });
+  assert.doesNotMatch(message, /engagement_count/);
+  assert.match(message, /trending order is not available/i);
 });
 
 test('every milestone has a badge, and no two badges look alike', () => {
@@ -509,7 +528,67 @@ test('a printed ranking rule follows the selected window', () => {
   assert.equal(leaderboardRule('followers', '30d'), LEADERBOARD_RULES.followers);
   assert.equal(leaderboardRule('views', '7d'), LEADERBOARD_RULES.views);
   // Every metric still has a rule at the default window.
-  for (const metric of ['followers', 'views', 'trending', 'overall'] as const) {
+  for (const metric of ['instagram', 'followers', 'views', 'trending', 'overall'] as const) {
     assert.ok(leaderboardRule(metric, '7d').length > 0);
   }
+});
+
+// ------------------------------------------------------- feed order & photos ---
+
+test('the community feed offers exactly the two orders it can really run', () => {
+  assert.deepEqual([...FEED_SORTS], ['latest', 'trending']);
+  assert.equal(Object.keys(FEED_SORT_LABELS).length, FEED_SORTS.length);
+  assert.equal(Object.keys(FEED_SORT_RULES).length, FEED_SORTS.length);
+  // The trending rule must state the tie-break, because that is what keeps
+  // page 2 from disagreeing with page 1.
+  assert.match(FEED_SORT_RULES.trending, /liked/i);
+  assert.match(FEED_SORT_RULES.trending, /commented/i);
+  assert.match(FEED_SORT_RULES.trending, /newer/i);
+  assert.match(FEED_SORT_RULES.latest, /newest/i);
+});
+
+test('the Instagram metric exists everywhere the UI can name a metric', () => {
+  assert.ok(LEADERBOARD_METRICS.includes('instagram'));
+  assert.equal(LEADERBOARD_METRIC_LABELS.instagram, 'Instagram Followers');
+  // It is a lifetime reading, so it must not pretend a window applies.
+  assert.equal(leaderboardRule('instagram', '30d'), LEADERBOARD_RULES.instagram);
+});
+
+test('a post photo is only accepted from this project\u2019s own bucket', () => {
+  const ours = 'https://proj.supabase.co/storage/v1/object/public/community-posts/u1/a.jpg';
+  assert.equal(isPostMediaUrl(ours), true);
+  assert.equal(isPostMediaUrl('/storage/v1/object/public/community-posts/u1/a.jpg'), false);
+  assert.equal(isPostMediaUrl('https://evil.example/x.jpg'), false);
+  assert.equal(isPostMediaUrl('https://proj.supabase.co/storage/v1/object/public/other/a.jpg'), false);
+  assert.equal(isPostMediaUrl(null), false);
+  // A crafted row with a foreign host must be dropped by the parser itself.
+  const post = postFromRow({
+    id: 'p',
+    user_id: 'u',
+    body: 'x',
+    media_url: 'https://evil.example/pixel.gif',
+  });
+  assert.ok(post);
+  assert.equal(post.mediaUrl, null);
+  const withPhoto = postFromRow({ id: 'p', user_id: 'u', body: 'x', media_url: ours });
+  assert.ok(withPhoto);
+  assert.equal(withPhoto.mediaUrl, ours);
+});
+
+test('the object path is only derived from a URL we own', () => {
+  assert.equal(
+    mediaObjectPath('https://proj.supabase.co/storage/v1/object/public/community-posts/u1/a.jpg'),
+    'u1/a.jpg',
+  );
+  assert.equal(mediaObjectPath('https://evil.example/u1/a.jpg'), null);
+  assert.equal(mediaObjectPath(null), null);
+});
+
+test('the upload mime is guessed from the file name', () => {
+  assert.equal(mediaMimeType('shot.PNG'), 'image/png');
+  assert.equal(mediaMimeType('a.webp'), 'image/webp');
+  assert.equal(mediaMimeType('a.heic'), 'image/jpeg');
+  assert.ok(MEDIA_MIME_TYPES.includes('image/webp'));
+  assert.equal(MEDIA_BUCKET, 'community-posts');
+  assert.equal(MEDIA_MAX_BYTES, 8 * 1024 * 1024);
 });

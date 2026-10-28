@@ -13,6 +13,72 @@ export const POST_KIND_LABELS: Record<PostKind, string> = {
   showcase: 'Showcase',
 };
 
+/**
+ * How the Community feed can be ordered. Both sorts are real queries against
+ * the posts table — "Trending" is an engagement order, not a curated list.
+ */
+export const FEED_SORTS = ['latest', 'trending'] as const;
+export type FeedSort = (typeof FEED_SORTS)[number];
+
+export const FEED_SORT_LABELS: Record<FeedSort, string> = {
+  latest: 'Latest',
+  trending: 'Trending',
+};
+
+/** Printed next to the chips so nobody has to guess what "trending" means. */
+export const FEED_SORT_RULES: Record<FeedSort, string> = {
+  latest: 'Newest first — every post in the order it was shared.',
+  trending: 'Most liked and commented on first; ties go to the newer post.',
+};
+
+// ------------------------------------------------------------ post photos ---
+
+/** The storage bucket community photos live in. Publicly readable by URL. */
+export const MEDIA_BUCKET = 'community-posts';
+
+/** One photo per post — the composer offers a single attach action. */
+export const MEDIA_MAX_BYTES = 8 * 1024 * 1024;
+
+export const MEDIA_MIME_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] as const;
+
+/**
+ * The marker every URL this app renders must carry. Reading it from the model
+ * keeps the parser and the uploader in agreement, and means a row pointing at
+ * some other site is rejected in one place.
+ */
+const MEDIA_PUBLIC_PREFIX = '/storage/v1/object/public/';
+
+/** True only for a photo stored in this project's community bucket. */
+export function isPostMediaUrl(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.includes(`${MEDIA_PUBLIC_PREFIX}${MEDIA_BUCKET}/`) &&
+    value.startsWith('/') === false &&
+    value.length <= 600
+  );
+}
+
+/**
+ * The object path inside the bucket (`<userId>/<file>`), or null when the URL
+ * is not one of ours. Used to delete the file when its post is deleted.
+ */
+export function mediaObjectPath(url: string | null): string | null {
+  if (!url) return null;
+  const marker = `${MEDIA_PUBLIC_PREFIX}${MEDIA_BUCKET}/`;
+  const at = url.indexOf(marker);
+  if (at < 0) return null;
+  const path = url.slice(at + marker.length);
+  return path.length > 0 && path.length <= 300 ? path : null;
+}
+
+/** A guessed image mime type from the file name, for the upload header. */
+export function mediaMimeType(nameOrUri: string): string {
+  const lower = nameOrUri.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return 'image/jpeg';
+}
+
 export type CreatorProfile = {
   userId: string;
   handle: string;
@@ -42,6 +108,13 @@ export type CommunityPost = {
   body: string;
   tags: string[];
   link: string | null;
+  /**
+   * Photo the author attached, as a Supabase Storage public URL. Null for a
+   * text-only post. Anything that is not one of this project's own storage
+   * objects is dropped at parse time, so a crafted row cannot make the app
+   * load an arbitrary third-party image.
+   */
+  mediaUrl: string | null;
   likeCount: number;
   commentCount: number;
   viewCount: number;
@@ -67,9 +140,10 @@ export type FollowEdge = {
   createdAt: string;
 };
 
-export type LeaderboardMetric = 'followers' | 'views' | 'trending' | 'overall';
+export type LeaderboardMetric = 'instagram' | 'followers' | 'views' | 'trending' | 'overall';
 
 export const LEADERBOARD_METRICS: LeaderboardMetric[] = [
+  'instagram',
   'followers',
   'views',
   'trending',
@@ -98,6 +172,7 @@ export const PERIOD_SENSITIVE_METRICS: LeaderboardMetric[] = [
 ];
 
 export const LEADERBOARD_METRIC_LABELS: Record<LeaderboardMetric, string> = {
+  instagram: 'Instagram Followers',
   followers: 'Most Followers',
   views: 'Most Views',
   trending: 'Trending Creators',
@@ -156,6 +231,8 @@ export type ReportTargetType = 'post' | 'comment' | 'profile';
  * these verbatim so a creator can always see *why* someone outranks them.
  */
 export const LEADERBOARD_RULES: Record<LeaderboardMetric, string> = {
+  instagram:
+    'The follower count CreatorDNA read straight from Instagram — connected accounts only, highest first.',
   followers:
     'Followers inside CreatorDNA — the number of creators who follow you in the app.',
   views: 'Distinct creators who opened one of your community posts.',
@@ -373,6 +450,7 @@ export function postFromRow(row: unknown): CommunityPost | null {
     body,
     tags: intList(row.tags).map((tag) => tag.trim()).filter(Boolean).slice(0, 6),
     link: nullableStr(row.link),
+    mediaUrl: isPostMediaUrl(row.media_url) ? row.media_url : null,
     likeCount: nonNeg(row.like_count),
     commentCount: nonNeg(row.comment_count),
     viewCount: nonNeg(row.view_count),
@@ -716,6 +794,11 @@ export function communityErrorMessage(body: unknown): string {
   }
   if (message.includes('pgrst202') || message.includes('could not find the function')) {
     return SCHEMA_NOT_DEPLOYED;
+  }
+  // The trending sort orders by the stored engagement column; a deployment
+  // that has not received it yet says so by name rather than looking broken.
+  if (message.includes('engagement_count')) {
+    return 'The trending order is not available on this deployment yet. Pull the update and retry.';
   }
   return 'Could not complete that. Please try again.';
 }
