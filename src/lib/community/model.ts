@@ -76,6 +76,27 @@ export const LEADERBOARD_METRICS: LeaderboardMetric[] = [
   'overall',
 ];
 
+/**
+ * Engagement windows. These apply only to the Trending and Overall metrics,
+ * because followers and views are lifetime totals with no history to window —
+ * the screen says so instead of implying a period changed those columns.
+ */
+export type LeaderboardPeriod = '7d' | '30d' | 'all';
+
+export const LEADERBOARD_PERIODS: LeaderboardPeriod[] = ['7d', '30d', 'all'];
+
+export const LEADERBOARD_PERIOD_LABELS: Record<LeaderboardPeriod, string> = {
+  '7d': 'Last 7 days',
+  '30d': 'Last 30 days',
+  all: 'All time',
+};
+
+/** Engagement is windowed for these metrics only; lifetime totals ignore it. */
+export const PERIOD_SENSITIVE_METRICS: LeaderboardMetric[] = [
+  'trending',
+  'overall',
+];
+
 export const LEADERBOARD_METRIC_LABELS: Record<LeaderboardMetric, string> = {
   followers: 'Most Followers',
   views: 'Most Views',
@@ -96,14 +117,39 @@ export type LeaderboardRow = {
   viewCount: number;
   likeCount: number;
   commentCount: number;
+  /** Likes + comments on the creator's posts inside the selected window. */
   engagement7d: number;
   /** -1 when the creator has never had their Instagram follower count verified. */
   instagramFollowers: number;
+  /** True when a `creator_follower_stats` row exists — i.e. Instagram read it. */
+  verified: boolean;
   topMilestone: number;
   score: number;
   value: number;
   rank: number;
 };
+
+// ------------------------------------------------------------- reporting ---
+
+export const REPORT_REASONS = [
+  'spam',
+  'harassment',
+  'misinformation',
+  'impersonation',
+  'other',
+] as const;
+
+export type ReportReason = (typeof REPORT_REASONS)[number];
+
+export const REPORT_REASON_LABELS: Record<ReportReason, string> = {
+  spam: 'Spam or misleading',
+  harassment: 'Harassment or hate',
+  misinformation: 'False information',
+  impersonation: 'Impersonation',
+  other: 'Something else',
+};
+
+export type ReportTargetType = 'post' | 'comment' | 'profile';
 
 /**
  * The ranking rules, in the exact wording the server uses. The screen prints
@@ -115,6 +161,54 @@ export const LEADERBOARD_RULES: Record<LeaderboardMetric, string> = {
   views: 'Distinct creators who opened one of your community posts.',
   trending: 'Likes and comments your posts received in the last 7 days.',
   overall: 'Followers ×3 + views ÷10 + posts ×5 + 7-day engagement ×2.',
+};
+
+/** How a window is named in a printed rule — matches the server's wording. */
+export function periodLabel(period: LeaderboardPeriod): string {
+  return period === '7d' ? '7 days' : period === '30d' ? '30 days' : 'all time';
+}
+
+/**
+ * The rule for one metric *in one window*. The engagement window is part of
+ * the formula, so printing a fixed "7 days" next to a 30-day view would be a
+ * small lie the creator has no way to check.
+ */
+export function leaderboardRule(
+  metric: LeaderboardMetric,
+  period: LeaderboardPeriod = '7d',
+): string {
+  const rule = LEADERBOARD_RULES[metric];
+  if (!PERIOD_SENSITIVE_METRICS.includes(metric)) return rule;
+  const window = periodLabel(period);
+  return rule.replace('last 7 days', `last ${window}`).replace('7-day', `${window === 'all time' ? 'all-time' : window.replace(' ', '-')}`);
+}
+
+// ------------------------------------------------------------- top ranking ---
+
+/**
+ * Who appears in the ranking. "Top" is the default and the reason the screen
+ * exists: a short, trustworthy list rather than a directory dump.
+ */
+export type LeaderboardScope = 'top' | 'all';
+
+export const LEADERBOARD_SCOPES: LeaderboardScope[] = ['top', 'all'];
+
+export const LEADERBOARD_SCOPE_LABELS: Record<LeaderboardScope, string> = {
+  top: 'Top 20',
+  all: 'Everyone',
+};
+
+/** How many creators the Top list holds — printed in the UI and in the rules. */
+export const TOP_CREATOR_LIMIT = 20;
+
+/**
+ * The pool, stated the same way on screen as it is here. The Top pool is
+ * restricted by the server, not by the client, so no device can rank itself
+ * into it.
+ */
+export const LEADERBOARD_SCOPE_RULES: Record<LeaderboardScope, string> = {
+  top: 'Pool: the top 20 creators whose Instagram CreatorDNA has actually connected and read — a real account, using the app, ranked 1 to 20.',
+  all: 'Pool: every creator with a public profile in the directory, whether or not Instagram is connected.',
 };
 
 export type AchievementMilestone = 1000 | 10000 | 50000 | 100000 | 500000 | 1000000;
@@ -138,16 +232,23 @@ export type Achievement = {
  * unlocked. The glyph set is restricted to characters every platform font
  * carries, so a badge never renders as a tofu box.
  */
+/**
+ * Artwork, names, and tints for the six milestone badges. The glyph stays on
+ * each entry as the accessible label and as a fallback wherever the SVG art
+ * is not rendered, so a badge is never an empty box.
+ */
+export type MilestoneArt = 'leaf' | 'bolt' | 'flame' | 'star' | 'crown' | 'gem';
+
 export const MILESTONE_BADGES: Record<
   AchievementMilestone,
-  { glyph: string; title: string; tint: string }
+  { glyph: string; title: string; tint: string; art: MilestoneArt }
 > = {
-  1000: { glyph: '★', title: 'Rising Creator', tint: '#12B76A' },
-  10000: { glyph: '◆', title: 'Growing Voice', tint: '#2E7BD6' },
-  50000: { glyph: '●', title: 'Established Creator', tint: '#1A56AE' },
-  100000: { glyph: '▲', title: 'Category Leader', tint: '#4C92E8' },
-  500000: { glyph: '■', title: 'Top Creator', tint: '#F59E0B' },
-  1000000: { glyph: '◉', title: 'Million Club', tint: '#EF4444' },
+  1000: { glyph: '★', title: 'Rising Creator', tint: '#12B76A', art: 'leaf' },
+  10000: { glyph: '◆', title: 'Trend Maker', tint: '#F5B301', art: 'bolt' },
+  50000: { glyph: '●', title: 'Influence Spark', tint: '#F97316', art: 'flame' },
+  100000: { glyph: '▲', title: 'Creator Star', tint: '#2E7BD6', art: 'star' },
+  500000: { glyph: '■', title: 'Creator Icon', tint: '#D4A017', art: 'crown' },
+  1000000: { glyph: '◉', title: 'Creator Legend', tint: '#8B5CF6', art: 'gem' },
 };
 
 export type FollowerStats = {
@@ -157,6 +258,48 @@ export type FollowerStats = {
   source: string;
   measuredAt: string;
 };
+
+/**
+ * What a profile page shows about someone else. `instagramFollowers` is -1
+ * when their count has never been read from Instagram, in which case no
+ * Instagram number is shown at all — the page says "not verified" instead of
+ * printing a figure nobody checked.
+ */
+export type CreatorSummary = {
+  userId: string;
+  /** -1 when Instagram has never been read for this creator. */
+  instagramFollowers: number;
+  verified: boolean;
+  measuredAt: string | null;
+  topMilestone: number;
+  followerCount: number;
+  postCount: number;
+  viewCount: number;
+  likeCount: number;
+  commentCount: number;
+};
+
+export function creatorSummaryFromJson(value: unknown): CreatorSummary | null {
+  if (!isRecord(value)) return null;
+  const userId = str(value.userId);
+  if (!userId) return null;
+  const ig =
+    typeof value.instagramFollowers === 'number' && Number.isFinite(value.instagramFollowers)
+      ? Math.round(value.instagramFollowers)
+      : -1;
+  return {
+    userId,
+    instagramFollowers: ig,
+    verified: value.verified === true || ig >= 0,
+    measuredAt: nullableStr(value.measuredAt),
+    topMilestone: nonNeg(value.topMilestone),
+    followerCount: nonNeg(value.followerCount),
+    postCount: nonNeg(value.postCount),
+    viewCount: nonNeg(value.viewCount),
+    likeCount: nonNeg(value.likeCount),
+    commentCount: nonNeg(value.commentCount),
+  };
+}
 
 // ------------------------------------------------------------- raw rows ----
 
@@ -265,13 +408,18 @@ export function leaderboardRowFromJson(value: unknown): LeaderboardRow | null {
     viewCount: nonNeg(value.viewCount),
     likeCount: nonNeg(value.likeCount),
     commentCount: nonNeg(value.commentCount),
-    engagement7d: nonNeg(value.engagement7d),
+    engagement7d: nonNeg(value.engagement7d ?? value.engagement),
     // -1 is the server's explicit "not verified" marker, so it must survive.
     instagramFollowers:
       typeof value.instagramFollowers === 'number' &&
       Number.isFinite(value.instagramFollowers)
         ? Math.round(value.instagramFollowers)
         : -1,
+    verified:
+      value.verified === true ||
+      (value.verified !== false &&
+        typeof value.instagramFollowers === 'number' &&
+        value.instagramFollowers >= 0),
     topMilestone: nonNeg(value.topMilestone),
     score: num(value.score),
     value: num(value.value),
@@ -359,6 +507,23 @@ export function validatePostBody(raw: string): ValidationResult {
   }
   if (value.length > 2000) {
     return { ok: false, error: 'Posts are limited to 2,000 characters.' };
+  }
+  return { ok: true, value };
+}
+
+/** Mirrors the server's check exactly, so a bad reason never costs a round trip. */
+export function validateReportReason(raw: string): ValidationResult {
+  const value = raw.trim();
+  if (!REPORT_REASONS.includes(value as ReportReason)) {
+    return { ok: false, error: 'Choose a reason for the report.' };
+  }
+  return { ok: true, value };
+}
+
+export function validateReportDetails(raw: string): ValidationResult {
+  const value = raw.trim();
+  if (value.length > 500) {
+    return { ok: false, error: 'Details are limited to 500 characters.' };
   }
   return { ok: true, value };
 }
@@ -507,6 +672,23 @@ export function currentUserIdFromToken(token: string | null | undefined): string
  * Turns a PostgREST error body into something a creator can act on. Anything
  * unrecognised falls back to a generic retry sentence rather than leaking SQL.
  */
+/**
+ * PostgREST's "no such function" — the deployed schema is older than the app
+ * expects. The feature is a deployment gap, not a broken connection, so it gets
+ * its own message and callers can decide whether to drop a field or fall back.
+ */
+export const SCHEMA_NOT_DEPLOYED =
+  'This part of CreatorDNA is not available on this deployment yet.';
+
+/**
+ * A narrower case of the above: the RPC that reads another creator's verified
+ * Instagram numbers is missing. The profile page still has every other field,
+ * so callers drop this one and label the profile "not connected" instead of
+ * failing the whole screen.
+ */
+export const VERIFIED_STATS_UNAVAILABLE =
+  'Verified Instagram data is not available for this profile yet.';
+
 export function communityErrorMessage(body: unknown): string {
   if (!isRecord(body)) {
     return 'Could not reach the CreatorDNA community. Check your connection and retry.';
@@ -516,12 +698,24 @@ export function communityErrorMessage(body: unknown): string {
   if (message.includes('handle_taken')) return 'That handle is already taken.';
   if (message.includes('invalid_handle')) return 'Handles use 3–30 letters, numbers or underscores.';
   if (message.includes('invalid_name')) return 'Display name must be 1–60 characters.';
-  if (message.includes('invalid_target')) return 'That creator cannot be followed.';
+  if (message.includes('invalid_target')) return 'That content is no longer available.';
   if (message.includes('profile_not_found')) return 'That creator is no longer in the community.';
   if (message.includes('post_not_found')) return 'That post is no longer available.';
   if (message.includes('invalid_comment')) return 'Comments are limited to 1,000 characters.';
   if (message.includes('not_allowed')) return 'You can only remove your own comments.';
   if (message.includes('invalid_metric')) return 'That ranking is not available.';
+  if (message.includes('invalid_period')) return 'That time range is not available.';
+  if (message.includes('invalid_reason')) return 'Choose a reason for the report.';
+  if (message.includes('rate_limited'))
+    return "You're doing that too often. Wait a moment and try again.";
   if (message.includes('permission denied')) return 'You do not have access to that.';
+  // PostgREST's "no such function" — the app still works, this one read is not
+  // available yet, so the screen can drop the field instead of failing.
+  if (message.includes('community_summary') || message.includes('community_creator_summary')) {
+    return VERIFIED_STATS_UNAVAILABLE;
+  }
+  if (message.includes('pgrst202') || message.includes('could not find the function')) {
+    return SCHEMA_NOT_DEPLOYED;
+  }
   return 'Could not complete that. Please try again.';
 }

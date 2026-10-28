@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { MilestoneBadge } from './MilestoneBadge';
 import {
   MILESTONES,
   MILESTONE_BADGES,
@@ -123,15 +124,6 @@ export function MilestonesCard({
           borderColor: c.track,
           backgroundColor: isDark ? c.darkCard2 : c.lightCard,
         },
-        glyphWrap: {
-          width: 42,
-          height: 42,
-          borderRadius: 21,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        glyph: { fontSize: 20, color: '#FFFFFF', lineHeight: 24 },
-        glyphLocked: { color: c.textDim },
         badgeValue: { ...type.tiny, letterSpacing: 0.4 },
         badgeTitle: { fontSize: 10.5, fontWeight: '600', color: c.textDim, textAlign: 'center' },
         track: {
@@ -199,14 +191,11 @@ export function MilestonesCard({
                       : `${milestone.toLocaleString('en-US')} follower milestone not earned yet`
                   }
                 >
-                  <View
-                    style={[
-                      s.glyphWrap,
-                      { backgroundColor: has ? badge.tint : isDark ? c.darkCard2 : c.lightCard },
-                    ]}
-                  >
-                    <Text style={[s.glyph, !has && s.glyphLocked]}>{badge.glyph}</Text>
-                  </View>
+                  <MilestoneBadge
+                    milestone={milestone}
+                    size={42}
+                    earned={has}
+                  />
                   <Text style={[s.badgeValue, { color: has ? c.text : c.textDim }]}>
                     {milestone.toLocaleString('en-US')}
                   </Text>

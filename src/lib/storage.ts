@@ -38,6 +38,12 @@ export const storageKeys = {
   // signed in, and re-signing-in must never replay the confetti.
   celebratedMilestones: 'creatordna.celebrated.v1',
   milestoneSyncAt: 'creatordna.milestoneSyncAt.v1',
+  // The device's anonymous Supabase session. Kept apart from the saved-login
+  // session on purpose: the saved-login key drives the account switcher and
+  // "save this account?" prompt, while a guest identity must never surface as
+  // an account the creator can pick. Without it, every reload minted a fresh
+  // anonymous user and stranded that user's posts, likes and badges.
+  guestSession: 'creatordna.guestSession.v1',
   // Discover trends are public, device-level data (like the theme): every
   // account on this install sees the same Reddit/X/HN front page, so this key
   // is deliberately NOT account-scoped.

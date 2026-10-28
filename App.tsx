@@ -108,6 +108,7 @@ import {
   signInAnonymouslyForCreatorAi,
   signInForCreatorAi,
   submitCreatorContent,
+  tokenExpiry,
 } from './src/services/creatorAi';
 import type { ChatMessageRecord, ChatMediaPayload } from './src/components/ChatMedia';
 import {
@@ -127,7 +128,8 @@ import { ChatScreen } from './src/screens/ChatScreen';
 import { SaveAccountPrompt, SavedAccountsSheet } from './src/components/AccountModals';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { ConnectedScreen } from './src/screens/ConnectedScreen';
-import { DiscoverScreen } from './src/screens/DiscoverScreen';
+import { DiscoverScreen, type DiscoverTab } from './src/screens/DiscoverScreen';
+import { CreatorProfileScreen } from './src/screens/CreatorProfileScreen';
 import { DnaScreen } from './src/screens/DnaScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { IdeasScreen } from './src/screens/IdeasScreen';
@@ -511,6 +513,10 @@ function AppShell() {
   const screenRef = useRef<Screen>(screen);
   screenRef.current = screen;
   const goBackRef = useRef<(() => boolean) | null>(null);
+  // Creator profile is opened from Discover and returns there, so the sub-tab
+  // the creator was on has to survive the round trip.
+  const discoverTabRef = useRef<DiscoverTab>('trends');
+  const [creatorProfileId, setCreatorProfileId] = useState<string>('');
 
   // Replace the current history entry instead of adding one. Used by the
   // one-time transitions on load (session restore) so Back never walks back
@@ -1627,16 +1633,79 @@ function AppShell() {
   }, [dashboard, profile, sessionToken]);
 
   // ---------- Creator AI: token, analysis, ideas, chat ----------
-  const getCreatorToken = useCallback(async (): Promise<string> => {
+  // One sign-in at a time: two screens asking together would otherwise mint
+  // two anonymous users and quietly strand one of them's data.
+  const guestTokenInFlight = useRef<Promise<string> | null>(null);
+
+  const getCreatorToken = useCallback((): Promise<string> => {
     if (supabaseAccessToken) {
-      return supabaseAccessToken;
+      return Promise.resolve(supabaseAccessToken);
     }
     if (!supabaseUrl || !supabaseAnonKey) {
-      throw new Error('Supabase is not configured for Creator AI.');
+      return Promise.reject(new Error('Supabase is not configured for Creator AI.'));
     }
-    const token = await signInAnonymouslyForCreatorAi(supabaseUrl, supabaseAnonKey);
-    setSupabaseAccessToken(token);
-    return token;
+    if (guestTokenInFlight.current) {
+      return guestTokenInFlight.current;
+    }
+
+    const pending = (async (): Promise<string> => {
+      // Reuse the device's guest identity across reloads. Without this every
+      // launch created a new anonymous user, and the posts, likes, follows and
+      // badges that user owned became unreachable the moment the tab closed.
+      const stored = readJson<{ accessToken?: unknown; refreshToken?: unknown } | null>(
+        storageKeys.guestSession,
+        null,
+      );
+      const savedToken =
+        stored && typeof stored.accessToken === 'string' && stored.accessToken.length > 20
+          ? stored.accessToken
+          : null;
+
+      if (savedToken) {
+        const expiry = tokenExpiry(savedToken);
+        // A minute of slack so a token cannot expire mid-request.
+        if (expiry !== null && expiry - Date.now() > 60_000) {
+          return savedToken;
+        }
+        if (stored && typeof stored.refreshToken === 'string' && stored.refreshToken) {
+          try {
+            const refreshed = await refreshCreatorAiSession(
+              supabaseUrl,
+              supabaseAnonKey,
+              stored.refreshToken,
+            );
+            writeJson(storageKeys.guestSession, {
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken ?? stored.refreshToken,
+            });
+            return refreshed.accessToken;
+          } catch {
+            // Revoked or expired beyond renewal: drop it and start a clean one
+            // rather than failing the screen the creator is looking at.
+            writeJson(storageKeys.guestSession, null);
+          }
+        } else {
+          writeJson(storageKeys.guestSession, null);
+        }
+      }
+
+      const session = await signInAnonymouslyForCreatorAi(supabaseUrl, supabaseAnonKey);
+      writeJson(storageKeys.guestSession, session);
+      return session.accessToken;
+    })();
+
+    guestTokenInFlight.current = pending;
+    return pending.then(
+      (token) => {
+        guestTokenInFlight.current = null;
+        setSupabaseAccessToken(token);
+        return token;
+      },
+      (error) => {
+        guestTokenInFlight.current = null;
+        throw error;
+      },
+    );
   }, [supabaseAccessToken]);
 
   // ---------- Verified follower milestones ----------
@@ -2841,7 +2910,24 @@ function AppShell() {
           onOpenNotifications={() => setScreen('notifications')}
         />
       ) : screen === 'discover' ? (
-        <DiscoverScreen getCreatorToken={getCreatorToken} onTurnToIdea={turnTrendIntoIdea} />
+        <DiscoverScreen
+          getCreatorToken={getCreatorToken}
+          onTurnToIdea={turnTrendIntoIdea}
+          initialTab={discoverTabRef.current}
+          onTabChange={(next) => {
+            discoverTabRef.current = next;
+          }}
+          onOpenCreator={(userId) => {
+            setCreatorProfileId(userId);
+            setScreen('creatorProfile');
+          }}
+        />
+      ) : screen === 'creatorProfile' ? (
+        <CreatorProfileScreen
+          userId={creatorProfileId}
+          getCreatorToken={getCreatorToken}
+          onBack={() => setScreen('discover')}
+        />
       ) : screen === 'dna' ? (
         <DnaScreen
           profile={profile}

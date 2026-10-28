@@ -1078,10 +1078,36 @@ export async function refreshCreatorAiSession(
   };
 }
 
+export type GuestSession = {
+  accessToken: string;
+  /** Kept so the identity survives a reload instead of being reminted. */
+  refreshToken: string | null;
+};
+
+/**
+ * Reads a JWT's `exp` claim without pulling in a decode dependency.
+ *
+ * Returns null when the token is not a JWT or cannot be parsed — callers then
+ * treat the token as already expired rather than trusting an unknown value.
+ */
+export function tokenExpiry(accessToken: string): number | null {
+  try {
+    const payload = accessToken.split('.')[1];
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const json: unknown = JSON.parse(atob(base64));
+    if (typeof json !== 'object' || json === null) return null;
+    const exp = (json as { exp?: unknown }).exp;
+    return typeof exp === 'number' && Number.isFinite(exp) ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function signInAnonymouslyForCreatorAi(
   supabaseUrl: string,
   anonKey: string,
-): Promise<string> {
+): Promise<GuestSession> {
   let response: Response;
   try {
     response = await fetch(`${supabaseUrl}/auth/v1/signup`, {
@@ -1101,7 +1127,13 @@ export async function signInAnonymouslyForCreatorAi(
   if (typeof body.access_token !== 'string' || body.access_token.length < 20) {
     throw new Error('Guest session setup returned an invalid session. Please try again.');
   }
-  return body.access_token;
+  return {
+    accessToken: body.access_token,
+    refreshToken:
+      typeof body.refresh_token === 'string' && body.refresh_token.length > 10
+        ? body.refresh_token
+        : null,
+  };
 }
 
 export async function submitCreatorContent(

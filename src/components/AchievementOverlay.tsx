@@ -5,6 +5,7 @@ import { Animated, Dimensions, Easing, Platform, Pressable, StyleSheet, Text, Vi
 
 import { MILESTONES, MILESTONE_BADGES, milestoneProgress, type AchievementMilestone } from '../lib/community/model';
 import { milestoneShareText } from '../services/milestones';
+import { MilestoneBadge } from './MilestoneBadge';
 import { radius, type } from '../theme';
 import { useThemeColors } from '../themeContext';
 
@@ -219,7 +220,6 @@ export function AchievementOverlay({
           borderColor: 'rgba(255,255,255,0.34)',
           overflow: 'hidden',
         },
-        badgeGlyph: { fontSize: 54, color: '#FFFFFF', lineHeight: 62 },
         badgeValue: {
           fontSize: 30,
           fontWeight: '800',
@@ -311,7 +311,7 @@ export function AchievementOverlay({
             start={{ x: 0.1, y: 0 }}
             end={{ x: 0.9, y: 1 }}
           />
-          <Text style={s.badgeGlyph}>{badge.glyph}</Text>
+          <MilestoneBadge milestone={milestone} size={92} earned />
           <Text style={s.badgeValue}>{milestone.toLocaleString('en-US')}</Text>
         </Animated.View>
 
@@ -348,7 +348,7 @@ export function AchievementOverlay({
 
         <View style={s.cardPreview}>
           <Text style={s.cardTitle}>
-            {badge.glyph} {handle ? `@${handle.replace(/^@/, '')}` : 'Creator'} ·{' '}
+            {badge.title} · {handle ? `@${handle.replace(/^@/, '')}` : 'Creator'} ·{' '}
             {milestone.toLocaleString('en-US')}
           </Text>
           <Text style={s.cardSub}>

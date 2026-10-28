@@ -1,9 +1,14 @@
 import { supabaseAnonKey, supabaseUrl } from '../lib/config';
 import {
   LEADERBOARD_METRICS,
+  LEADERBOARD_PERIODS,
+  REPORT_REASONS,
+  SCHEMA_NOT_DEPLOYED,
+  VERIFIED_STATS_UNAVAILABLE,
   achievementFromRow,
   communityErrorMessage,
   commentFromRow,
+  creatorSummaryFromJson,
   currentUserIdFromToken,
   followerStatsFromRow,
   leaderboardRowFromJson,
@@ -17,15 +22,21 @@ import {
   validatePostBody,
   validatePostTitle,
   validateBio,
+  validateReportDetails,
+  validateReportReason,
   type Achievement,
   type AchievementMilestone,
   type CommunityPost,
   type CreatorProfile,
+  type CreatorSummary,
   type FollowerStats,
   type LeaderboardMetric,
+  type LeaderboardPeriod,
   type LeaderboardRow,
   type PostComment,
   type PostKind,
+  type ReportReason,
+  type ReportTargetType,
 } from '../lib/community/model';
 
 // Talks to `public.creator_*` over PostgREST with nothing but the publishable
@@ -217,6 +228,31 @@ export async function listProfiles(
     (_data, response) => ({ ok: true as const, data: totalFrom(response) }),
   );
   return { ok: true, data: { ...result.data, total: total.ok ? total.data : null } };
+}
+
+/**
+ * The distinct niches in the public directory, for filter chips. One narrow
+ * single-column read, deduped here — the count is capped because a thousand
+ * rows of one short text column is far past the point of diminishing returns.
+ */
+export async function listNiches(
+  token: string,
+): Promise<CommunityResult<string[]>> {
+  return request(
+    {
+      method: 'GET',
+      path: '/creator_profiles?select=niche&niche=not.is.null&order=niche.asc&limit=1000',
+      token,
+    },
+    (data) => {
+      const seen = new Set<string>();
+      for (const row of array(data)) {
+        const raw = isRecord(row) && typeof row.niche === 'string' ? row.niche.trim() : '';
+        if (raw) seen.add(raw);
+      }
+      return { ok: true, data: [...seen].slice(0, 40) };
+    },
+  );
 }
 
 export async function getProfileByHandle(
@@ -608,31 +644,233 @@ export async function fetchFollowedIds(
   );
 }
 
+// ----------------------------------------------------------- discovery ----
+
+/** Everyone I follow, newest first, hydrated into full profiles. */
+export async function listFollowing(
+  token: string,
+  options: { limit?: number; offset?: number } = {},
+): Promise<CommunityResult<CreatorProfile[]>> {
+  const me = currentUserIdFromToken(token);
+  if (!me) return fail('unauthorized', 'Your session has expired. Sign in again to continue.');
+  const limit = Math.max(1, Math.min(options.limit ?? 30, 100));
+  const offset = Math.max(0, options.offset ?? 0);
+  const edges = await request(
+    {
+      method: 'GET',
+      path: `/creator_follows?select=followed_id&follower_id=eq.${me}` +
+        `&order=created_at.desc&limit=${limit}&offset=${offset}`,
+      token,
+    },
+    (data) => ({
+      ok: true as const,
+      data: array(data)
+        .map((row) => (isRecord(row) && typeof row.followed_id === 'string' ? row.followed_id : ''))
+        .filter(Boolean),
+    }),
+  );
+  if (!edges.ok) return edges;
+  if (edges.data.length === 0) return { ok: true, data: [] };
+  const profiles = await getProfilesByIds(token, edges.data);
+  if (!profiles.ok) return profiles;
+  // Preserve the follow order — "most recently followed first" is what a
+  // person expects from a Following list, not alphabetical.
+  return {
+    ok: true,
+    data: edges.data
+      .map((id) => profiles.data.get(id))
+      .filter((p): p is CreatorProfile => Boolean(p)),
+  };
+}
+
+/**
+ * Creators to discover: active in the community, not me, not already followed.
+ * "Active" (at least one post) keeps the list from filling with empty shells.
+ */
+export async function suggestCreators(
+  token: string,
+  options: { limit?: number; offset?: number; niche?: string | null; search?: string } = {},
+): Promise<CommunityResult<{ items: CreatorProfile[]; total: number | null }>> {
+  const me = currentUserIdFromToken(token);
+  const limit = Math.max(1, Math.min(options.limit ?? 30, 100));
+  const offset = Math.max(0, options.offset ?? 0);
+
+  const followed = me
+    ? await request(
+        {
+          method: 'GET',
+          path: `/creator_follows?select=followed_id&follower_id=eq.${me}&limit=500`,
+          token,
+        },
+        (data) => ({
+          ok: true as const,
+          data: new Set(
+            array(data)
+              .map((row) =>
+                isRecord(row) && typeof row.followed_id === 'string' ? row.followed_id : '',
+              )
+              .filter(Boolean),
+          ),
+        }),
+      )
+    : ({ ok: true as const, data: new Set<string>() } as const);
+  if (!followed.ok) return followed;
+
+  const excluded = [...followed.data];
+  if (me) excluded.push(me);
+
+  const result = await listProfiles(token, {
+    activeOnly: true,
+    niche: options.niche ?? undefined,
+    search: options.search,
+    // Filtering happens after the page is fetched, so ask for enough extra rows
+    // to still fill the page once mine and the ones I follow are removed.
+    limit: Math.min(100, limit + excluded.length),
+    offset,
+  });
+  if (!result.ok) return result;
+  return {
+    ok: true,
+    data: {
+      items: result.data.items.filter((p) => !excluded.includes(p.userId)),
+      total: result.data.total,
+    },
+  };
+}
+
+/**
+ * Files a report. A report only ever reaches a moderator — it never hides or
+ * removes anything by itself, so filing one is safe even if mistaken.
+ */
+export async function reportContent(
+  token: string,
+  input: { targetType: ReportTargetType; targetId: string; reason: string; details?: string },
+): Promise<CommunityResult<{ reported: boolean }>> {
+  const reason = validateReportReason(input.reason);
+  if (!reason.ok) return fail('rejected', reason.error);
+  const details = validateReportDetails(input.details ?? '');
+  if (!details.ok) return fail('rejected', details.error);
+  if (!input.targetId) return fail('rejected', 'That content is no longer available.');
+  if (!REPORT_REASONS.includes(reason.value as ReportReason)) {
+    return fail('rejected', 'Choose a reason for the report.');
+  }
+  return rpc(
+    'community_report',
+    token,
+    {
+      p_target_type: input.targetType,
+      p_target_id: input.targetId,
+      p_reason: reason.value,
+      p_details: details.value,
+    },
+    (data) => ({ ok: true, data: { reported: isRecord(data) && data.reported === true } }),
+  );
+}
+
 // ----------------------------------------------------------- leaderboard ----
+
+export type LeaderboardQuery = {
+  limit?: number;
+  offset?: number;
+  niche?: string | null;
+  period?: LeaderboardPeriod;
+  /**
+   * Restricts the pool to creators whose Instagram the server has actually
+   * read. Enforced in SQL — the client cannot rank itself into the list.
+   */
+  verifiedOnly?: boolean;
+};
 
 export async function fetchLeaderboard(
   token: string,
   metric: LeaderboardMetric,
-  limit = 25,
+  query: LeaderboardQuery | number = {},
 ): Promise<CommunityResult<LeaderboardRow[]>> {
+  // A bare number is still accepted as `limit`, so older call sites keep working.
+  const opts: LeaderboardQuery = typeof query === 'number' ? { limit: query } : query;
   if (!LEADERBOARD_METRICS.includes(metric)) {
     return fail('rejected', 'That ranking is not available.');
   }
-  const size = Math.max(1, Math.min(limit, 100));
-  return rpc(
+  const period = opts.period ?? '7d';
+  if (!LEADERBOARD_PERIODS.includes(period)) {
+    return fail('rejected', 'That time range is not available.');
+  }
+  const size = Math.max(1, Math.min(opts.limit ?? 25, 100));
+  const offset = Math.max(0, Math.min(opts.offset ?? 0, 10_000));
+  // Niche is free text on the profile, so it is trimmed and length-capped here
+  // and matched exactly (case-insensitively) by the server.
+  const niche = (opts.niche ?? '').trim().slice(0, 60);
+  const verifiedOnly = opts.verifiedOnly === true;
+  const parse = (data: unknown): CommunityResult<LeaderboardRow[]> => ({
+    ok: true,
+    data: array(data)
+      .map(leaderboardRowFromJson)
+      .filter((row): row is LeaderboardRow => row !== null),
+  });
+
+  const extended = await rpc(
     'community_leaderboard',
     token,
-    { p_metric: metric, p_limit: size },
-    (data) => ({
-      ok: true,
-      data: array(data)
-        .map(leaderboardRowFromJson)
-        .filter((row): row is LeaderboardRow => row !== null),
-    }),
+    {
+      p_metric: metric,
+      p_limit: size,
+      p_offset: offset,
+      p_niche: niche || null,
+      p_period: period,
+      p_verified_only: verifiedOnly,
+    },
+    parse,
   );
+  if (extended.ok) return extended;
+
+  // The deployed database is older than this build and has no five-argument
+  // overload. The plain first page under the default window is exactly what
+  // the old signature computed, so it is served from that; a narrowed,
+  // paginated or Instagram-only request cannot be reproduced honestly, and
+  // pretending otherwise would show a filter that does nothing.
+  if (extended.message !== SCHEMA_NOT_DEPLOYED) return extended;
+  // Only the plain first page of the whole directory is reproducible on an old
+  // schema. The Top pool cannot be faked — filtering by "Instagram connected"
+  // on a database without that column would rank creators who never connected.
+  if (verifiedOnly) {
+    return fail(
+      'rejected',
+      'The Instagram-connected Top 20 is not available on this deployment yet. Switch to Everyone to see the full ranking.',
+    );
+  }
+  if (offset > 0 || niche || period !== '7d') {
+    return fail(
+      'rejected',
+      'Ranking filters are not available on this deployment yet. Clear the filters to see the ranking.',
+    );
+  }
+  return rpc('community_leaderboard', token, { p_metric: metric, p_limit: size }, parse);
 }
 
 // -------------------------------------------------------------- rewards ----
+
+/**
+ * The verified numbers behind someone else's profile page: their Instagram
+ * follower reading (only ever read by the server), its timestamp, and their
+ * top milestone. Falls back to "not verified" when the row does not exist or
+ * the profile is not public.
+ */
+export async function fetchCreatorSummary(
+  token: string,
+  userId: string,
+): Promise<CommunityResult<CreatorSummary | null>> {
+  if (!userId) return fail('rejected', 'That content is no longer available.');
+  const result = await rpc('community_creator_summary', token, { p_user_id: userId }, (data) => ({
+    ok: true,
+    data: creatorSummaryFromJson(data),
+  }));
+  // Not yet deployed, or the profile is private: the page still has everything
+  // else it needs, so it shows "not verified" rather than an error.
+  if (!result.ok && (result.message === SCHEMA_NOT_DEPLOYED || result.message === VERIFIED_STATS_UNAVAILABLE)) {
+    return { ok: true, data: null };
+  }
+  return result;
+}
 
 export async function fetchAchievements(
   token: string,

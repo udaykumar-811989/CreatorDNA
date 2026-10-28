@@ -88,9 +88,12 @@ test('anonymous sign-in starts a guest session', async (context) => {
     globalThis.fetch = originalFetch;
   });
 
-  const token = await signInAnonymouslyForCreatorAi('https://example.supabase.co', 'anon');
+  const session = await signInAnonymouslyForCreatorAi('https://example.supabase.co', 'anon');
 
-  assert.equal(token, 'g'.repeat(32));
+  // A guest session is a session: it carries both tokens so the community can
+  // keep one identity across reloads instead of minting a new person each time.
+  assert.equal(session.accessToken, 'g'.repeat(32));
+  assert.equal(session.refreshToken, null);
   assert.equal(requestedUrl, 'https://example.supabase.co/auth/v1/signup');
   assert.deepEqual(JSON.parse(requestedBody), { data: {} });
 });

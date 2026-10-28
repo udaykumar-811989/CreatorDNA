@@ -2,16 +2,29 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  LEADERBOARD_PERIODS,
+  LEADERBOARD_PERIOD_LABELS,
   LEADERBOARD_RULES,
+  LEADERBOARD_SCOPES,
+  LEADERBOARD_SCOPE_LABELS,
+  LEADERBOARD_SCOPE_RULES,
   MILESTONES,
   MILESTONE_BADGES,
+  PERIOD_SENSITIVE_METRICS,
+  REPORT_REASONS,
+  SCHEMA_NOT_DEPLOYED,
+  TOP_CREATOR_LIMIT,
+  VERIFIED_STATS_UNAVAILABLE,
+  type MilestoneArt,
   achievementFromRow,
   communityErrorMessage,
   commentFromRow,
+  creatorSummaryFromJson,
   currentUserIdFromToken,
   followerStatsFromRow,
   highestEarned,
   leaderboardRowFromJson,
+  leaderboardRule,
   milestoneLabel,
   milestoneProgress,
   nextMilestone,
@@ -26,6 +39,8 @@ import {
   validateNiche,
   validatePostBody,
   validatePostTitle,
+  validateReportDetails,
+  validateReportReason,
 } from './model';
 
 // --------------------------------------------------------------- fixtures ---
@@ -312,7 +327,7 @@ test('communityErrorMessage maps every server rejection the RPCs can raise', () 
     ['handle_taken', /already taken/i],
     ['invalid_handle', /3–30/i],
     ['invalid_name', /1–60/i],
-    ['invalid_target', /cannot be followed/i],
+    ['invalid_target', /content is no longer available/i],
     ['profile_not_found', /no longer/i],
     ['post_not_found', /no longer available/i],
     ['invalid_comment', /1,000/i],
@@ -345,6 +360,14 @@ test('every milestone has a badge, and no two badges look alike', () => {
   // unlocked, so uniqueness is part of the contract, not a nicety.
   assert.equal(new Set(Object.values(MILESTONE_BADGES).map((b) => b.glyph)).size, MILESTONES.length);
   assert.equal(new Set(Object.values(MILESTONE_BADGES).map((b) => b.title)).size, MILESTONES.length);
+  // The SVG badge art keys off `art`, so every badge must name one of the six
+  // published artworks and no two badges may share one — otherwise two rungs
+  // on the shelf would draw the identical picture.
+  const arts: MilestoneArt[] = ['leaf', 'bolt', 'flame', 'star', 'crown', 'gem'];
+  for (const badge of Object.values(MILESTONE_BADGES)) {
+    assert.ok(arts.includes(badge.art), `unknown art: ${badge.art}`);
+  }
+  assert.equal(new Set(Object.values(MILESTONE_BADGES).map((b) => b.art)).size, MILESTONES.length);
   // The glyphs are deliberately restricted to Geometric Shapes plus one Misc
   // Symbol (U+25A0–U+2606) — the range every platform font ships — so a badge
   // never renders as a missing-glyph box.
@@ -354,5 +377,139 @@ test('every milestone has a badge, and no two badges look alike', () => {
       code >= 0x25a0 && code <= 0x2606,
       `glyph out of safe range: ${badge.glyph} (U+${code.toString(16).toUpperCase()})`,
     );
+  }
+});
+
+// ------------------------------------------------------- discovery filters ---
+
+test('every leaderboard window has a label, and only engagement is windowed', () => {
+  assert.deepEqual([...LEADERBOARD_PERIODS], ['7d', '30d', 'all']);
+  for (const period of LEADERBOARD_PERIODS) {
+    assert.ok(LEADERBOARD_PERIOD_LABELS[period]?.trim().length > 0, `no label for ${period}`);
+  }
+  // Followers and views are lifetime totals with no history behind them, so
+  // claiming a period applies to those columns would be a lie on screen.
+  assert.deepEqual([...PERIOD_SENSITIVE_METRICS].sort(), ['overall', 'trending']);
+  for (const metric of Object.keys(LEADERBOARD_RULES)) {
+    assert.ok(LEADERBOARD_RULES[metric as keyof typeof LEADERBOARD_RULES].length > 20);
+  }
+});
+
+test('reports reject an unknown reason and oversized detail before the round trip', () => {
+  assert.deepEqual([...REPORT_REASONS], [
+    'spam',
+    'harassment',
+    'misinformation',
+    'impersonation',
+    'other',
+  ]);
+  assert.equal(validateReportReason(' spam ').ok, true);
+  assert.equal(validateReportReason('anything else').ok, false);
+  assert.equal(validateReportReason('').ok, false);
+  assert.equal(validateReportDetails('   ').ok, true);
+  const tooLong = validateReportDetails('x'.repeat(501));
+  assert.equal(tooLong.ok, false);
+  assert.match(tooLong.ok ? '' : tooLong.error, /500/);
+});
+
+test('a creator summary keeps the unverified marker instead of inventing a number', () => {
+  const verified = creatorSummaryFromJson({
+    userId: 'u1',
+    instagramFollowers: 1234.6,
+    verified: true,
+    measuredAt: '2026-01-02T00:00:00Z',
+    topMilestone: 1000,
+    followerCount: 10,
+    postCount: 3,
+    viewCount: 40,
+    likeCount: 5,
+    commentCount: 2,
+  });
+  assert.ok(verified);
+  assert.equal(verified.instagramFollowers, 1235);
+  assert.equal(verified.verified, true);
+  assert.equal(verified.topMilestone, 1000);
+
+  // -1 is the server's "never read from Instagram" answer and must survive.
+  const unverified = creatorSummaryFromJson({
+    userId: 'u2',
+    instagramFollowers: -1,
+    verified: false,
+    measuredAt: null,
+    topMilestone: 0,
+  });
+  assert.ok(unverified);
+  assert.equal(unverified.instagramFollowers, -1);
+  assert.equal(unverified.verified, false);
+  assert.equal(unverified.measuredAt, null);
+
+  assert.equal(creatorSummaryFromJson(null), null);
+  assert.equal(creatorSummaryFromJson({}), null);
+});
+
+test('a leaderboard row carries its verified flag and windowed engagement', () => {
+  const row = leaderboardRowFromJson({
+    userId: 'u1',
+    handle: 'ada',
+    verified: true,
+    engagement: 7,
+    instagramFollowers: 5000,
+    rank: 1,
+    value: 42,
+  });
+  assert.ok(row);
+  assert.equal(row.verified, true);
+  // `engagement` is the server's current key and `engagement7d` the alias the
+  // older client read — either one has to land in the same field.
+  assert.equal(row.engagement7d, 7);
+  assert.equal(leaderboardRowFromJson({ userId: 'u1', handle: 'ada', engagement: 'x' })?.engagement7d, 0);
+});
+
+test('server-side throttles and a not-yet-deployed read get readable messages', () => {
+  assert.match(communityErrorMessage({ message: 'rate_limited' }), /too often/i);
+  assert.match(communityErrorMessage({ message: 'invalid_period' }), /time range/i);
+  assert.match(communityErrorMessage({ message: 'invalid_reason' }), /reason/i);
+  // Missing-function (PGRST202) is a deployment gap, not a broken app: the
+  // profile screen drops the field rather than showing an error.
+  assert.equal(
+    communityErrorMessage({ message: 'Could not find the function public.community_summary(uuid)' }),
+    VERIFIED_STATS_UNAVAILABLE,
+  );
+  // Any *other* missing RPC is the generic deployment gap, so a new function
+  // added later still gets a usable message without a code change.
+  assert.equal(
+    communityErrorMessage({ message: 'Could not find the function public.something_else()' }),
+    SCHEMA_NOT_DEPLOYED,
+  );
+});
+
+test('the Top 20 pool is stated the way the server enforces it', () => {
+  // "Top" is the default view, so it has to be first and hold exactly twenty.
+  assert.equal(LEADERBOARD_SCOPES[0], 'top');
+  assert.equal(TOP_CREATOR_LIMIT, 20);
+  assert.equal(LEADERBOARD_SCOPE_LABELS.top, 'Top 20');
+  assert.equal(LEADERBOARD_SCOPES.length, Object.keys(LEADERBOARD_SCOPE_LABELS).length);
+  // The printed rule has to promise only what the SQL filter delivers: a real
+  // account, connected through the app, ranked 1 to 20.
+  assert.match(LEADERBOARD_SCOPE_RULES.top, /top 20/i);
+  assert.match(LEADERBOARD_SCOPE_RULES.top, /instagram/i);
+  assert.match(LEADERBOARD_SCOPE_RULES.top, /connected/i);
+  assert.match(LEADERBOARD_SCOPE_RULES.top, /1 to 20/);
+  // The wide scope must not claim verification it does not filter on.
+  assert.match(LEADERBOARD_SCOPE_RULES.all, /whether or not instagram is connected/i);
+  assert.equal(Object.keys(LEADERBOARD_SCOPE_RULES).length, LEADERBOARD_SCOPES.length);
+});
+
+test('a printed ranking rule follows the selected window', () => {
+  // Engagement is windowed, so its rule has to name the window actually shown.
+  assert.match(leaderboardRule('trending', '30d'), /30 days/);
+  assert.doesNotMatch(leaderboardRule('trending', '30d'), /7 days/);
+  assert.match(leaderboardRule('overall', 'all'), /all time|all-time/);
+  // Lifetime totals have no history to window — their rule must not move.
+  assert.equal(leaderboardRule('followers', '30d'), LEADERBOARD_RULES.followers);
+  assert.equal(leaderboardRule('views', '7d'), LEADERBOARD_RULES.views);
+  // Every metric still has a rule at the default window.
+  for (const metric of ['followers', 'views', 'trending', 'overall'] as const) {
+    assert.ok(leaderboardRule(metric, '7d').length > 0);
   }
 });

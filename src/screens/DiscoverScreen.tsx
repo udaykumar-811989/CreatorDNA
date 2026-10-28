@@ -21,6 +21,7 @@ import {
   RefreshIcon,
   SendIcon,
   SparkIcon,
+  TrashIcon,
 } from '../components/icons';
 import {
   Avatar,
@@ -31,14 +32,24 @@ import {
   PillTabs,
   ScreenHeader,
   Skeleton,
+  Toggle,
 } from '../components/ui';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { ReportSheet } from '../components/ReportSheet';
 import {
   LEADERBOARD_METRICS,
   LEADERBOARD_METRIC_LABELS,
-  LEADERBOARD_RULES,
+  LEADERBOARD_PERIODS,
+  LEADERBOARD_PERIOD_LABELS,
+  LEADERBOARD_SCOPE_LABELS,
+  LEADERBOARD_SCOPES,
+  LEADERBOARD_SCOPE_RULES,
+  PERIOD_SENSITIVE_METRICS,
   POST_KINDS,
   POST_KIND_LABELS,
+  TOP_CREATOR_LIMIT,
   currentUserIdFromToken,
+  leaderboardRule,
   validateBio,
   validateComment,
   validateDisplayName,
@@ -48,9 +59,12 @@ import {
   type CommunityPost,
   type CreatorProfile,
   type LeaderboardMetric,
+  type LeaderboardPeriod,
   type LeaderboardRow,
+  type LeaderboardScope,
   type PostComment,
   type PostKind,
+  type ReportReason,
 } from '../lib/community/model';
 import {
   DEFAULT_CATEGORIES,
@@ -81,7 +95,9 @@ import { useThemeColors, useTheme } from '../themeContext';
 // Nothing here is seeded or invented. A source without a configured credential
 // says so by name; an empty feed says so plainly; a ranking shows its formula.
 
-type Tab = 'trends' | 'feed' | 'creators' | 'leaderboard';
+export type DiscoverTab = 'trends' | 'feed' | 'creators' | 'leaderboard';
+
+type Tab = DiscoverTab;
 
 const TAB_ORDER: Tab[] = ['trends', 'feed', 'creators', 'leaderboard'];
 
@@ -269,10 +285,18 @@ function ErrorBanner({
 export function DiscoverScreen({
   getCreatorToken,
   onTurnToIdea,
+  initialTab,
+  onTabChange,
+  onOpenCreator,
 }: {
   getCreatorToken: () => Promise<string>;
   /** Hands a trend's subject to the Ideas tab so AI can build a post from it. */
   onTurnToIdea: (topic: string) => void;
+  /** Sub-tab to restore — the shell keeps it while a profile is open. */
+  initialTab?: DiscoverTab;
+  onTabChange?: (tab: DiscoverTab) => void;
+  /** Opens a creator's profile screen. */
+  onOpenCreator: (userId: string) => void;
 }) {
   const c = useThemeColors();
   const { mode } = useTheme();
@@ -286,9 +310,14 @@ export function DiscoverScreen({
     };
   }, []);
 
-  const [tab, setTab] = useState<Tab>('trends');
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'trends');
   const [meId, setMeId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // The shell stores the sub-tab so returning from a profile lands back here.
+  useEffect(() => {
+    onTabChange?.(tab);
+  }, [tab, onTabChange]);
 
   const recordId = useCallback((token: string) => {
     const id = currentUserIdFromToken(token);
@@ -639,6 +668,23 @@ export function DiscoverScreen({
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
 
+  // Editing, deleting, reporting, and the directory-visibility switch.
+  const [editPost, setEditPost] = useState<CommunityPost | null>(null);
+  const [editBody, setEditBody] = useState('');
+  const [editKind, setEditKind] = useState<PostKind>('update');
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<CommunityPost | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteCommentTarget, setDeleteCommentTarget] = useState<PostComment | null>(null);
+  const [deleteCommentBusy, setDeleteCommentBusy] = useState(false);
+  const [reportTarget, setReportTarget] = useState<{
+    type: 'post' | 'comment' | 'profile';
+    id: string;
+    label: string;
+  } | null>(null);
+  const [listedBusy, setListedBusy] = useState(false);
+
   const loadFeed = useCallback(
     async (options: { kind?: PostKind | 'all' } = {}) => {
       const kind = options.kind ?? feedKind;
@@ -892,65 +938,312 @@ export function DiscoverScreen({
     }
   }, [profileDraft, getCreatorToken]);
 
+  // ------------------------------------------------- edit / delete / report
+
+  const startEdit = useCallback((post: CommunityPost) => {
+    setEditPost(post);
+    setEditBody(post.body);
+    setEditKind(post.kind);
+    setEditError(null);
+  }, []);
+
+  const submitEdit = useCallback(async () => {
+    if (!editPost) return;
+    const body = validatePostBody(editBody);
+    if (!body.ok) {
+      setEditError(body.error);
+      return;
+    }
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const token = await getCreatorToken();
+      const result = await community.updatePost(token, editPost.id, {
+        kind: editKind,
+        body: body.value,
+      });
+      if (!alive.current) return;
+      if (!result.ok) {
+        setEditError(result.message);
+        return;
+      }
+      setPosts((prev) =>
+        prev.map((entry) =>
+          entry.id === editPost.id
+            ? { ...entry, ...result.data, author: entry.author, likedByMe: entry.likedByMe }
+            : entry,
+        ),
+      );
+      setEditPost(null);
+      setNotice('Your update was saved.');
+    } catch {
+      if (alive.current) setEditError('Your update could not be saved. Please retry.');
+    } finally {
+      if (alive.current) setEditSaving(false);
+    }
+  }, [editPost, editBody, editKind, getCreatorToken]);
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    try {
+      const token = await getCreatorToken();
+      const result = await community.deletePost(token, deleteTarget.id);
+      if (!alive.current) return;
+      if (!result.ok) {
+        setNotice(result.message);
+        setDeleteTarget(null);
+        return;
+      }
+      const id = deleteTarget.id;
+      setPosts((prev) => prev.filter((entry) => entry.id !== id));
+      setPostsTotal((total) => (total === null ? null : Math.max(0, total - 1)));
+      if (openPostId === id) {
+        setOpenPostId(null);
+        setComments([]);
+      }
+      setDeleteTarget(null);
+      setNotice('Your update was deleted.');
+    } catch {
+      if (alive.current) setNotice('That update could not be deleted. Please retry.');
+    } finally {
+      if (alive.current) setDeleteBusy(false);
+    }
+  }, [deleteTarget, openPostId, getCreatorToken]);
+
+  const confirmDeleteComment = useCallback(async () => {
+    if (!deleteCommentTarget || !openPostId) return;
+    setDeleteCommentBusy(true);
+    try {
+      const token = await getCreatorToken();
+      const result = await community.deleteComment(token, deleteCommentTarget.id);
+      if (!alive.current) return;
+      if (!result.ok) {
+        setCommentsError(result.message);
+        setDeleteCommentTarget(null);
+        return;
+      }
+      const id = deleteCommentTarget.id;
+      setComments((prev) => prev.filter((entry) => entry.id !== id));
+      setPosts((prev) =>
+        prev.map((entry) =>
+          entry.id === openPostId
+            ? { ...entry, commentCount: Math.max(0, entry.commentCount - 1) }
+            : entry,
+        ),
+      );
+      setDeleteCommentTarget(null);
+    } catch {
+      if (alive.current) setCommentsError('That comment could not be removed. Please retry.');
+    } finally {
+      if (alive.current) setDeleteCommentBusy(false);
+    }
+  }, [deleteCommentTarget, openPostId, getCreatorToken]);
+
+  const submitReport = useCallback(
+    async (reason: ReportReason, details: string): Promise<string | null> => {
+      if (!reportTarget) return null;
+      try {
+        const token = await getCreatorToken();
+        const result = await community.reportContent(token, {
+          targetType: reportTarget.type,
+          targetId: reportTarget.id,
+          reason,
+          details,
+        });
+        if (!alive.current) return null;
+        if (!result.ok) return result.message;
+        setReportTarget(null);
+        setNotice('Thanks — your report was sent to the moderators.');
+        return null;
+      } catch {
+        return 'Your report could not be sent. Please retry.';
+      }
+    },
+    [reportTarget, getCreatorToken],
+  );
+
+  /**
+   * Directory visibility. The profile row is saved whole, with only this one
+   * flag flipped, so nothing else the creator typed can be lost by toggling it.
+   */
+  const toggleListed = useCallback(async () => {
+    if (!myProfile || listedBusy) return;
+    const next = !myProfile.isListed;
+    const previous = myProfile;
+    setListedBusy(true);
+    setMyProfile({ ...previous, isListed: next });
+    try {
+      const token = await getCreatorToken();
+      const result = await community.saveProfile(token, {
+        handle: previous.handle,
+        displayName: previous.displayName,
+        bio: previous.bio,
+        niche: previous.niche,
+        goals: previous.goals,
+        avatarUrl: previous.avatarUrl,
+        website: previous.website,
+        location: previous.location,
+        isListed: next,
+      });
+      if (!alive.current) return;
+      if (!result.ok) {
+        setMyProfile(previous);
+        setNotice(result.message);
+        return;
+      }
+      setMyProfile(result.data);
+      setNotice(
+        next
+          ? 'Your profile is now visible in the directory and on the leaderboard.'
+          : 'Your profile is hidden from the directory and the leaderboard.',
+      );
+    } catch {
+      if (!alive.current) return;
+      setMyProfile(previous);
+      setNotice('That change could not be saved. Please retry.');
+    } finally {
+      if (alive.current) setListedBusy(false);
+    }
+  }, [myProfile, listedBusy, getCreatorToken]);
+
   // ============================================================ CREATORS ====
 
+  const CREATOR_PAGE = 20;
+
+  const [creatorScope, setCreatorScope] = useState<'suggested' | 'all' | 'following'>(
+    'suggested',
+  );
   const [creators, setCreators] = useState<CreatorProfile[]>([]);
   const [creatorsTotal, setCreatorsTotal] = useState<number | null>(null);
   const [creatorQuery, setCreatorQuery] = useState('');
+  const [creatorNiche, setCreatorNiche] = useState<string | null>(null);
+  const [niches, setNiches] = useState<string[]>([]);
   const [creatorsLoading, setCreatorsLoading] = useState(false);
+  const [creatorsLoadingMore, setCreatorsLoadingMore] = useState(false);
   const [creatorsError, setCreatorsError] = useState<string | null>(null);
   const [followed, setFollowed] = useState<Set<string>>(new Set());
   const [followBusy, setFollowBusy] = useState<string | null>(null);
   const creatorsKeyRef = useRef<string | null>(null);
   const creatorsBootedRef = useRef(false);
 
-  const loadCreators = useCallback(async () => {
-    creatorsKeyRef.current = creatorQuery.trim().toLowerCase();
-    setCreatorsLoading(true);
-    setCreatorsError(null);
+  /** Niche chips are a convenience — without them the directory still works. */
+  const loadNiches = useCallback(async () => {
     try {
       const token = await getCreatorToken();
-      const me = recordId(token);
-      const result = await community.listProfiles(token, {
-        search: creatorQuery,
-        limit: 30,
-      });
-      if (!alive.current) return;
-      if (!result.ok) {
-        setCreatorsError(result.message);
-        setCreators([]);
-        setCreatorsTotal(null);
-        return;
-      }
-      const others = result.data.items.filter((entry) => entry.userId !== me);
-      setCreators(others);
-      setCreatorsTotal(result.data.total);
-      const followedResult = await community.fetchFollowedIds(
-        token,
-        others.map((entry) => entry.userId),
-      );
-      if (!alive.current) return;
-      if (followedResult.ok) setFollowed(followedResult.data);
+      const result = await community.listNiches(token);
+      if (alive.current && result.ok && result.data.length > 0) setNiches(result.data);
     } catch {
-      if (alive.current) {
-        setCreatorsError('Creators could not be loaded. Check your connection and retry.');
-      }
-    } finally {
-      if (alive.current) setCreatorsLoading(false);
+      /* ignore */
     }
-  }, [creatorQuery, getCreatorToken, recordId]);
+  }, [getCreatorToken]);
 
-  const creatorRequestKey = creatorQuery.trim().toLowerCase();
+  const loadCreators = useCallback(
+    async (options: { append?: boolean } = {}) => {
+      const key = `${creatorScope}|${creatorQuery.trim().toLowerCase()}|${creatorNiche ?? ''}`;
+      creatorsKeyRef.current = key;
+      const offset = options.append ? creators.length : 0;
+      if (options.append) setCreatorsLoadingMore(true);
+      else setCreatorsLoading(true);
+      setCreatorsError(null);
+      try {
+        const token = await getCreatorToken();
+        const me = recordId(token);
+        let items: CreatorProfile[] = [];
+        let total: number | null = null;
+
+        if (creatorScope === 'following') {
+          const result = await community.listFollowing(token, { limit: CREATOR_PAGE, offset });
+          if (!result.ok) {
+            setCreatorsError(result.message);
+            if (!options.append) setCreators([]);
+            return;
+          }
+          // Search and niche are applied here because a follow edge is a
+          // relationship, not a searchable row.
+          const term = creatorQuery.trim().toLowerCase();
+          items = result.data.filter(
+            (entry) =>
+              entry.userId !== me &&
+              (!creatorNiche || entry.niche.toLowerCase() === creatorNiche.toLowerCase()) &&
+              (!term ||
+                entry.handle.toLowerCase().includes(term) ||
+                entry.displayName.toLowerCase().includes(term)),
+          );
+        } else if (creatorScope === 'suggested') {
+          const result = await community.suggestCreators(token, {
+            limit: CREATOR_PAGE,
+            offset,
+            niche: creatorNiche,
+            search: creatorQuery,
+          });
+          if (!result.ok) {
+            setCreatorsError(result.message);
+            if (!options.append) setCreators([]);
+            return;
+          }
+          items = result.data.items.filter((entry) => entry.userId !== me);
+          total = result.data.total;
+        } else {
+          const result = await community.listProfiles(token, {
+            search: creatorQuery,
+            niche: creatorNiche ?? undefined,
+            limit: CREATOR_PAGE,
+            offset,
+          });
+          if (!result.ok) {
+            setCreatorsError(result.message);
+            if (!options.append) setCreators([]);
+            return;
+          }
+          items = result.data.items.filter((entry) => entry.userId !== me);
+          total = result.data.total;
+        }
+
+        if (!alive.current) return;
+        setCreators((prev) => (options.append ? [...prev, ...items] : items));
+        setCreatorsTotal(total);
+
+        const followedResult = await community.fetchFollowedIds(
+          token,
+          items.map((entry) => entry.userId),
+        );
+        if (!alive.current) return;
+        if (followedResult.ok) {
+          setFollowed((prev) => {
+            const next = new Set(prev);
+            for (const id of followedResult.data) next.add(id);
+            return next;
+          });
+        }
+      } catch {
+        if (alive.current) {
+          setCreatorsError('Creators could not be loaded. Check your connection and retry.');
+        }
+      } finally {
+        if (alive.current) {
+          setCreatorsLoading(false);
+          setCreatorsLoadingMore(false);
+        }
+      }
+    },
+    [creatorScope, creatorQuery, creatorNiche, creators.length, getCreatorToken, recordId],
+  );
+
+  const creatorRequestKey = `${creatorScope}|${creatorQuery.trim().toLowerCase()}|${creatorNiche ?? ''}`;
   useEffect(() => {
     if (!creatorsBootedRef.current) {
       creatorsBootedRef.current = true;
+      void loadNiches();
       void loadCreators();
       return undefined;
     }
     if (creatorsKeyRef.current === creatorRequestKey) return undefined;
-    const timer = setTimeout(() => void loadCreators(), 450);
+    // Typing debounces; a scope or niche chip is a deliberate tap and loads at once.
+    const isTyping = creatorsKeyRef.current?.split('|')[1] !== creatorRequestKey.split('|')[1];
+    const timer = setTimeout(() => void loadCreators(), isTyping ? 450 : 0);
     return () => clearTimeout(timer);
-  }, [creatorRequestKey, loadCreators]);
+  }, [creatorRequestKey, loadCreators, loadNiches]);
 
   const toggleFollow = useCallback(
     async (creator: CreatorProfile) => {
@@ -1026,33 +1319,76 @@ export function DiscoverScreen({
 
   // =========================================================== LEADERBOARD ===
 
+  const BOARD_PAGE = 25;
+
+  // The screen opens on the Top list: a short, server-verified pool a creator
+  // can actually believe, with the whole directory one tap away.
+  const [scope, setScope] = useState<LeaderboardScope>('top');
   const [metric, setMetric] = useState<LeaderboardMetric>('overall');
+  const [period, setPeriod] = useState<LeaderboardPeriod>('7d');
+  const [boardNiche, setBoardNiche] = useState<string | null>(null);
   const [board, setBoard] = useState<LeaderboardRow[]>([]);
   const [boardLoading, setBoardLoading] = useState(false);
+  const [boardLoadingMore, setBoardLoadingMore] = useState(false);
   const [boardError, setBoardError] = useState<string | null>(null);
 
-  const loadBoard = useCallback(async () => {
-    setBoardLoading(true);
-    setBoardError(null);
-    try {
-      const token = await getCreatorToken();
-      recordId(token);
-      const result = await community.fetchLeaderboard(token, metric, 25);
-      if (!alive.current) return;
-      if (!result.ok) {
-        setBoardError(result.message);
-        setBoard([]);
-        return;
+  const periodApplies = PERIOD_SENSITIVE_METRICS.includes(metric);
+  const boardLimit = scope === 'top' ? TOP_CREATOR_LIMIT : BOARD_PAGE;
+  const isTopScope = scope === 'top';
+
+  const loadBoard = useCallback(
+    async (options: { append?: boolean } = {}) => {
+      const offset = options.append ? board.length : 0;
+      if (options.append) setBoardLoadingMore(true);
+      else setBoardLoading(true);
+      setBoardError(null);
+      try {
+        const token = await getCreatorToken();
+        recordId(token);
+        const result = await community.fetchLeaderboard(token, metric, {
+          limit: boardLimit,
+          offset,
+          niche: boardNiche,
+          // A window that does not affect this column would still change the
+          // rows behind it, so it is passed through either way.
+          period,
+          // The Top pool is chosen by the server from creators whose Instagram
+          // it has read — nothing on this device can widen it.
+          verifiedOnly: isTopScope,
+        });
+        if (!alive.current) return;
+        if (!result.ok) {
+          setBoardError(result.message);
+          if (!options.append) setBoard([]);
+          return;
+        }
+        setBoard((prev) => (options.append ? [...prev, ...result.data] : result.data));
+      } catch {
+        if (alive.current) {
+          setBoardError('The ranking could not be loaded. Check your connection and retry.');
+        }
+      } finally {
+        if (alive.current) {
+          setBoardLoading(false);
+          setBoardLoadingMore(false);
+        }
       }
-      setBoard(result.data);
-    } catch {
-      if (alive.current) {
-        setBoardError('The ranking could not be loaded. Check your connection and retry.');
-      }
-    } finally {
-      if (alive.current) setBoardLoading(false);
+    },
+    [metric, period, boardNiche, scope, board.length, getCreatorToken, recordId],
+  );
+
+  // Scope, metric, window and niche are single deliberate taps — reload now.
+  const boardKey = `${scope}|${metric}|${period}|${boardNiche ?? ''}`;
+  const boardKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (boardKeyRef.current === null) {
+      boardKeyRef.current = boardKey;
+      return;
     }
-  }, [metric, getCreatorToken, recordId]);
+    if (boardKeyRef.current === boardKey) return;
+    boardKeyRef.current = boardKey;
+    void loadBoard();
+  }, [boardKey, loadBoard]);
 
   // Each tab loads the first time it is opened and refreshes on demand; the
   // data it already fetched stays on screen while the creator switches back.
@@ -1332,6 +1668,67 @@ export function DiscoverScreen({
         )}
       </Card>
 
+      {profileLoaded && myProfile ? (
+        <Card tone={tone} style={s.card}>
+          <View style={s.composerHead}>
+            <Text style={s.composerTitle}>Directory visibility</Text>
+            <Toggle
+              value={myProfile.isListed}
+              onChange={() => void toggleListed()}
+              disabled={listedBusy}
+              label="Show my profile in the directory"
+            />
+          </View>
+          <Text style={s.excerpt}>
+            {listedBusy
+              ? 'Saving…'
+              : myProfile.isListed
+                ? 'Your profile appears in the Creators list and on the leaderboard, and other creators can follow you.'
+                : 'Your profile is hidden from the Creators list and the leaderboard. Your posts still show your handle in the feed.'}
+          </Text>
+        </Card>
+      ) : null}
+
+      {editPost ? (
+        <Card tone={tone} style={s.composer}>
+          <View style={s.composerHead}>
+            <Text style={s.composerTitle}>Edit your update</Text>
+            <Pressable
+              onPress={() => setEditPost(null)}
+              style={s.refresh}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel editing"
+            >
+              <Text style={s.refreshLabel}>Cancel</Text>
+            </Pressable>
+          </View>
+          <ChipRow
+            options={POST_KINDS.map((kind) => ({ key: kind, label: POST_KIND_LABELS[kind] }))}
+            value={editKind}
+            onChange={(key) => setEditKind(key as PostKind)}
+            label="Update type"
+          />
+          <TextInput
+            value={editBody}
+            onChangeText={setEditBody}
+            placeholder="What are you working on?"
+            placeholderTextColor={c.onDarkDim}
+            multiline
+            maxLength={2000}
+            style={[s.input, { minHeight: 110, textAlignVertical: 'top' }]}
+            accessibilityLabel="Edit update text"
+          />
+          {editError ? <Text style={s.fieldError}>{editError}</Text> : null}
+          <GradientButton
+            label={editSaving ? 'Saving…' : 'Save changes'}
+            onPress={() => void submitEdit()}
+            loading={editSaving}
+            disabled={editSaving}
+            style={{ flexGrow: 1 }}
+          />
+        </Card>
+      ) : null}
+
       <View style={s.toolbar}>
         <ChipRow
           options={[
@@ -1415,7 +1812,16 @@ export function DiscoverScreen({
               onToggleLike={() => void toggleLike(post)}
               onToggleComments={() => toggleComments(post)}
               onSendComment={() => void submitComment()}
-              onOpenProfile={(handle) => setNotice(`@${handle} is on the Creators tab.`)}
+              onOpenProfile={(userId) => onOpenCreator(userId)}
+              onEdit={() => startEdit(post)}
+              onDelete={() => setDeleteTarget(post)}
+              onDeleteComment={(commentId) =>
+                setDeleteCommentTarget(comments.find((entry) => entry.id === commentId) ?? null)
+              }
+              onReport={(targetType, targetId, label) =>
+                setReportTarget({ type: targetType, id: targetId, label })
+              }
+              myId={meId}
               tone={tone}
             />
           ))}
@@ -1424,21 +1830,63 @@ export function DiscoverScreen({
     </>
   );
 
+  const scopeFilters = useMemo(
+    () =>
+      [
+        { key: 'suggested', label: 'Suggested' },
+        { key: 'all', label: 'All' },
+        { key: 'following', label: 'Following' },
+      ] as { key: string; label: string }[],
+    [],
+  );
+
+  const nicheFilters = useMemo(
+    () =>
+      [
+        { key: '', label: 'All niches' },
+        ...niches.map((entry) => ({ key: entry, label: entry })),
+      ] as { key: string; label: string }[],
+    [niches],
+  );
+
+  // A page is "finished" when the server sent fewer rows than were asked for,
+  // or when the directory's own count says there is nothing left.
+  const creatorsHaveMore =
+    creatorsTotal !== null
+      ? creators.length < creatorsTotal
+      : creators.length % CREATOR_PAGE === 0 && creators.length > 0;
+
   const renderCreators = () => (
     <>
+      <ChipRow
+        options={scopeFilters}
+        value={creatorScope}
+        onChange={(key) => setCreatorScope(key as 'suggested' | 'all' | 'following')}
+        label="Creator lists"
+      />
       <SearchField
         value={creatorQuery}
         onChange={setCreatorQuery}
         placeholder="Search creators, niches, handles"
         label="Search creators"
       />
+      {niches.length > 0 ? (
+        <ChipRow
+          options={nicheFilters}
+          value={creatorNiche ?? ''}
+          onChange={(key) => setCreatorNiche(key || null)}
+          label="Filter by niche"
+        />
+      ) : null}
       <View style={s.toolbar}>
         <Text style={s.stamp}>
           {creatorsLoading
             ? 'Searching…'
-            : creatorsTotal !== null && !creatorQuery
-              ? `${creatorsTotal} creator${creatorsTotal === 1 ? '' : 's'} in the directory`
-              : `${creators.length} result${creators.length === 1 ? '' : 's'}`}
+            : creatorScope === 'following'
+              ? `Following ${creators.length}`
+              : creatorsTotal !== null && !creatorQuery && !creatorNiche
+                ? `${creatorsTotal} creator${creatorsTotal === 1 ? '' : 's'} in the directory`
+                : `${creators.length} result${creators.length === 1 ? '' : 's'}`}
         </Text>
         <Pressable
           onPress={() => void loadCreators()}
@@ -1471,14 +1919,37 @@ export function DiscoverScreen({
         <EmptyState
           tone={tone}
           glyph="◍"
-          title={creatorQuery ? 'No creators match that search' : 'The directory is empty'}
-          hint={
-            creatorQuery
-              ? 'Try a shorter term, or clear the search to see everyone.'
-              : 'Create your handle on the Feed tab — creators who join will appear here.'
+          title={
+            creatorScope === 'following'
+              ? 'You are not following anyone yet'
+              : creatorQuery || creatorNiche
+                ? 'No creators match those filters'
+                : 'The directory is empty'
           }
-          actionLabel={creatorQuery ? 'Clear search' : undefined}
-          onAction={creatorQuery ? () => setCreatorQuery('') : undefined}
+          hint={
+            creatorScope === 'following'
+              ? 'Follow a creator from Suggested or All and they will show up here.'
+              : creatorQuery || creatorNiche
+                ? 'Try a shorter term, or clear the search and niche filter to see everyone.'
+                : 'Create your handle on the Feed tab — creators who join will appear here.'
+          }
+          actionLabel={
+            creatorScope === 'following'
+              ? 'See suggested'
+              : creatorQuery || creatorNiche
+                ? 'Clear filters'
+                : undefined
+          }
+          onAction={
+            creatorScope === 'following'
+              ? () => setCreatorScope('suggested')
+              : creatorQuery || creatorNiche
+                ? () => {
+                    setCreatorQuery('');
+                    setCreatorNiche(null);
+                  }
+                : undefined
+          }
         />
       ) : (
         <View style={{ gap: 12 }}>
@@ -1532,16 +2003,62 @@ export function DiscoverScreen({
                   {formatCount(creator.followerCount)} followers ·{' '}
                   {formatCount(creator.postCount)} posts · {formatCount(creator.viewCount)} views
                 </Text>
+                <View style={s.actions}>
+                  <Pressable
+                    onPress={() => onOpenCreator(creator.userId)}
+                    style={s.link}
+                    accessibilityRole="button"
+                    accessibilityLabel={`View ${creator.displayName}'s profile`}
+                  >
+                    <Text style={s.linkLabel}>View profile</Text>
+                    <ChevronRightIcon size={14} color={c.primary} />
+                  </Pressable>
+                </View>
               </Card>
             );
           })}
         </View>
       )}
+
+      {creatorsHaveMore && creators.length > 0 ? (
+        <Pressable
+          onPress={() => void loadCreators({ append: true })}
+          disabled={creatorsLoadingMore}
+          style={s.refresh}
+          accessibilityRole="button"
+          accessibilityLabel="Load more creators"
+        >
+          {creatorsLoadingMore ? (
+            <ActivityIndicator size="small" color={c.primary} />
+          ) : null}
+          <Text style={s.refreshLabel}>
+            {creatorsLoadingMore ? 'Loading…' : 'Load more creators'}
+          </Text>
+        </Pressable>
+      ) : null}
     </>
   );
 
+  const boardCaptionFor = (): string => {
+    if (metric === 'followers') return 'followers';
+    if (metric === 'views') return 'views';
+    if (metric === 'trending') return `${LEADERBOARD_PERIOD_LABELS[period].toLowerCase()} engagement`;
+    return 'points';
+  };
+
+  const boardHasMore = !isTopScope && board.length > 0 && board.length % BOARD_PAGE === 0;
+
   const renderLeaderboard = () => (
     <>
+      <ChipRow
+        options={LEADERBOARD_SCOPES.map((entry) => ({
+          key: entry,
+          label: LEADERBOARD_SCOPE_LABELS[entry],
+        }))}
+        value={scope}
+        onChange={(key) => setScope(key as LeaderboardScope)}
+        label="Who appears in the ranking"
+      />
       <PillTabs
         options={LEADERBOARD_METRICS.map((entry) => LEADERBOARD_METRIC_LABELS[entry])}
         value={LEADERBOARD_METRIC_LABELS[metric]}
@@ -1554,11 +2071,45 @@ export function DiscoverScreen({
         variant={mode === 'dark' ? 'dark' : 'light'}
       />
       <Text style={s.rules}>
-        How this ranking is decided: {LEADERBOARD_RULES[metric]}
+        Who is listed: {LEADERBOARD_SCOPE_RULES[scope]}
       </Text>
+      <Text style={s.rules}>
+        How this ranking is decided: {leaderboardRule(metric, period)}
+      </Text>
+
+      {niches.length > 0 ? (
+        <ChipRow
+          options={nicheFilters}
+          value={boardNiche ?? ''}
+          onChange={(key) => setBoardNiche(key || null)}
+          label="Filter the ranking by niche"
+        />
+      ) : null}
+
+      <ChipRow
+        options={LEADERBOARD_PERIODS.map((entry) => ({
+          key: entry,
+          label: LEADERBOARD_PERIOD_LABELS[entry],
+        }))}
+        value={period}
+        onChange={(key) => setPeriod(key as LeaderboardPeriod)}
+        label="Ranking time window"
+      />
+      <Text style={s.stamp}>
+        {periodApplies
+          ? `Engagement columns count the ${LEADERBOARD_PERIOD_LABELS[period].toLowerCase()}.`
+          : 'Follower and view totals are lifetime numbers — no history exists to window, so the time range does not change these columns.'}
+      </Text>
+
       <View style={s.toolbar}>
         <Text style={s.stamp}>
-          {boardLoading ? 'Ranking…' : `${board.length} ranked creator${board.length === 1 ? '' : 's'}`}
+          {boardLoading
+            ? 'Ranking…'
+            : isTopScope
+              ? board.length === 0
+                ? 'Top 20 · ranked 1–20'
+                : `Top ${board.length} of ${TOP_CREATOR_LIMIT} · ranked 1–${board.length}`
+              : `${board.length} ranked creator${board.length === 1 ? '' : 's'}`}
         </Text>
         <Pressable
           onPress={() => void loadBoard()}
@@ -1579,6 +2130,7 @@ export function DiscoverScreen({
       {boardError ? (
         <ErrorBanner message={boardError} onRetry={() => void loadBoard()} s={s} />
       ) : null}
+      {notice ? <Text style={s.notice}>{notice}</Text> : null}
 
       {boardLoading && board.length === 0 ? (
         <View style={{ gap: 12 }}>
@@ -1590,13 +2142,37 @@ export function DiscoverScreen({
         <EmptyState
           tone={tone}
           glyph="#"
-          title="No ranking yet"
-          hint="Creators appear once they have a profile and at least one measured metric."
-          actionLabel="Open the directory"
-          onAction={() => {
-            loadedTabs.current.add('creators');
-            setTab('creators');
-          }}
+          title={
+            boardNiche
+              ? `No ranked creators in ${boardNiche}`
+              : isTopScope
+                ? 'No Instagram-connected creators yet'
+                : 'No ranking yet'
+          }
+          hint={
+            boardNiche
+              ? 'No listed creator works in that niche yet — clear the filter to see the whole ranking.'
+              : isTopScope
+                ? 'The Top list is only filled by creators who opened this app, connected Instagram, and let CreatorDNA read their real follower count. Connect yours to be ranked.'
+                : 'Creators appear once they have a profile and at least one measured metric.'
+          }
+          actionLabel={
+            boardNiche
+              ? 'Clear niche filter'
+              : isTopScope
+                ? 'See everyone'
+                : 'Open the directory'
+          }
+          onAction={
+            boardNiche
+              ? () => setBoardNiche(null)
+              : isTopScope
+                ? () => setScope('all')
+                : () => {
+                    loadedTabs.current.add('creators');
+                    setTab('creators');
+                  }
+          }
         />
       ) : (
         <View style={{ gap: 10 }}>
@@ -1614,29 +2190,57 @@ export function DiscoverScreen({
                 </Text>
                 <Text style={s.postHandle} numberOfLines={1}>
                   @{row.handle}
-                  {row.instagramFollowers >= 0
-                    ? ` · ${formatCount(row.instagramFollowers)} on Instagram`
-                    : ''}
                 </Text>
+                <View style={s.metaRow}>
+                  {row.instagramFollowers >= 0 ? (
+                    <Badge
+                      label={`${formatCount(row.instagramFollowers)} IG followers`}
+                      tone="green"
+                    />
+                  ) : (
+                    <Badge label="Instagram not connected" tone="gray" />
+                  )}
+                  {metric === 'trending' || metric === 'overall' ? (
+                    <Badge label={`${formatCount(row.engagement7d)} engagement`} tone="blue" />
+                  ) : null}
+                </View>
               </View>
               <View style={s.boardValue}>
                 <Text style={s.boardNumber}>{formatCount(row.value)}</Text>
-                <Text style={s.boardCaption}>
-                  {metric === 'followers'
-                    ? 'followers'
-                    : metric === 'views'
-                      ? 'views'
-                      : metric === 'trending'
-                        ? '7-day engagement'
-                        : 'points'}
-                </Text>
+                <Text style={s.boardCaption}>{boardCaptionFor()}</Text>
+                <Pressable
+                  onPress={() => onOpenCreator(row.userId)}
+                  style={s.link}
+                  accessibilityRole="button"
+                  accessibilityLabel={`View ${row.displayName}'s profile`}
+                >
+                  <Text style={s.linkLabel}>Profile</Text>
+                </Pressable>
               </View>
             </Card>
           ))}
         </View>
       )}
+
+      {boardHasMore && !boardLoading ? (
+        <Pressable
+          onPress={() => void loadBoard({ append: true })}
+          disabled={boardLoadingMore}
+          style={s.refresh}
+          accessibilityRole="button"
+          accessibilityLabel="Load more ranked creators"
+        >
+          {boardLoadingMore ? <ActivityIndicator size="small" color={c.primary} /> : null}
+          <Text style={s.refreshLabel}>
+            {boardLoadingMore ? 'Loading…' : 'Load more'}
+          </Text>
+        </Pressable>
+      ) : null}
+
       <Text style={s.rules}>
-        Instagram follower counts are shown as a verified badge only — they never change a rank.
+        {isTopScope
+          ? 'Instagram follower counts come from the app reading the account itself — they are shown as a verified badge and never change a rank. Ranks are 1–20 across the whole Top pool.'
+          : 'Instagram follower counts are shown as a verified badge only — they never change a rank. Ranks are global across the whole directory and do not restart on later pages.'}
       </Text>
     </>
   );
@@ -1670,6 +2274,37 @@ export function DiscoverScreen({
         {tab === 'creators' ? renderCreators() : null}
         {tab === 'leaderboard' ? renderLeaderboard() : null}
       </ScrollView>
+
+      <ConfirmDialog
+        visible={deleteTarget !== null}
+        title="Delete this update?"
+        message={`${
+          deleteTarget ? `“${deleteTarget.body.slice(0, 110)}${deleteTarget.body.length > 110 ? '…' : ''}”` : 'This update'
+        } and its comments will be removed for everyone. This cannot be undone.`}
+        confirmLabel="Delete update"
+        destructive
+        busy={deleteBusy}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => void confirmDelete()}
+      />
+
+      <ConfirmDialog
+        visible={deleteCommentTarget !== null}
+        title="Delete this comment?"
+        message="Your comment will be removed from the conversation. This cannot be undone."
+        confirmLabel="Delete comment"
+        destructive
+        busy={deleteCommentBusy}
+        onCancel={() => setDeleteCommentTarget(null)}
+        onConfirm={() => void confirmDeleteComment()}
+      />
+
+      <ReportSheet
+        visible={reportTarget !== null}
+        targetLabel={reportTarget?.label ?? 'this content'}
+        onCancel={() => setReportTarget(null)}
+        onSubmit={submitReport}
+      />
     </View>
   );
 }
@@ -1749,6 +2384,11 @@ function PostCard({
   onToggleComments,
   onSendComment,
   onOpenProfile,
+  onEdit,
+  onDelete,
+  onDeleteComment,
+  onReport,
+  myId,
   tone,
 }: {
   post: CommunityPost;
@@ -1765,15 +2405,28 @@ function PostCard({
   onToggleLike: () => void;
   onToggleComments: () => void;
   onSendComment: () => void;
-  onOpenProfile: (handle: string) => void;
+  /** Opens the author's profile — the author id, not the handle. */
+  onOpenProfile: (userId: string) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onDeleteComment: (commentId: string) => void;
+  onReport: (type: 'post' | 'comment', id: string, label: string) => void;
+  /** The signed-in creator's id — decides which row actions are offered. */
+  myId: string | null;
 }) {
   const c = useThemeColors();
   const author = post.author;
+  const isMine = myId !== null && post.userId === myId;
   return (
     <Card tone={tone} style={s.card}>
       <View style={s.postHead}>
         <Avatar uri={author?.avatarUrl ?? null} name={author?.displayName ?? '?'} size={40} />
-        <Pressable style={s.postWho} onPress={() => author && onOpenProfile(author.handle)}>
+        <Pressable
+          style={s.postWho}
+          onPress={() => author && onOpenProfile(author.userId)}
+          accessibilityRole="button"
+          accessibilityLabel={`Open ${author?.displayName ?? 'creator'}'s profile`}
+        >
           <Text style={s.postName} numberOfLines={1}>
             {author?.displayName ?? 'Creator'}
           </Text>
@@ -1830,6 +2483,39 @@ function PostCard({
         <Text style={s.statText}>{formatCount(post.viewCount)} views</Text>
       </View>
 
+      <View style={s.actions}>
+        {isMine ? (
+          <>
+            <Pressable
+              onPress={onEdit}
+              style={s.link}
+              accessibilityRole="button"
+              accessibilityLabel="Edit this update"
+            >
+              <Text style={s.linkLabel}>Edit</Text>
+            </Pressable>
+            <Pressable
+              onPress={onDelete}
+              style={s.link}
+              accessibilityRole="button"
+              accessibilityLabel="Delete this update"
+            >
+              <TrashIcon size={14} color={c.red} />
+              <Text style={[s.linkLabel, { color: c.red }]}>Delete</Text>
+            </Pressable>
+          </>
+        ) : (
+          <Pressable
+            onPress={() => onReport('post', post.id, 'this update')}
+            style={s.link}
+            accessibilityRole="button"
+            accessibilityLabel="Report this update"
+          >
+            <Text style={s.linkLabel}>Report</Text>
+          </Pressable>
+        )}
+      </View>
+
       {expanded ? (
         <>
           <View style={s.divider} />
@@ -1850,6 +2536,27 @@ function PostCard({
                     <Text style={s.commentTime}>{relativeTime(comment.createdAt)} ago</Text>
                   </View>
                   <Text style={s.commentBody}>{comment.body}</Text>
+                  <View style={s.actions}>
+                    {myId !== null && comment.userId === myId ? (
+                      <Pressable
+                        onPress={() => onDeleteComment(comment.id)}
+                        style={s.link}
+                        accessibilityRole="button"
+                        accessibilityLabel="Delete this comment"
+                      >
+                        <Text style={[s.linkLabel, { color: c.red }]}>Delete</Text>
+                      </Pressable>
+                    ) : (
+                      <Pressable
+                        onPress={() => onReport('comment', comment.id, 'this comment')}
+                        style={s.link}
+                        accessibilityRole="button"
+                        accessibilityLabel="Report this comment"
+                      >
+                        <Text style={s.linkLabel}>Report</Text>
+                      </Pressable>
+                    )}
+                  </View>
                 </View>
               ))
             )}
