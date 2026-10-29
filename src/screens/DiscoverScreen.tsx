@@ -5,6 +5,7 @@ import {
   Linking,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -15,11 +16,11 @@ import {
   type ViewStyle,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { setStringAsync } from 'expo-clipboard';
 
 import {
   ImageIcon,
   LinkOutIcon,
-  PlusIcon,
   QuoteIcon,
   RefreshIcon,
   SendIcon,
@@ -35,16 +36,12 @@ import {
   PillTabs,
   ScreenHeader,
   Skeleton,
-  Toggle,
 } from '../components/ui';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ReportSheet } from '../components/ReportSheet';
 import {
   FEED_SORTS,
   FEED_SORT_LABELS,
-  FEED_SORT_RULES,
-  LEADERBOARD_RULES,
-  LEADERBOARD_SCOPE_RULES,
   MEDIA_MAX_BYTES,
   POST_KINDS,
   POST_KIND_LABELS,
@@ -82,13 +79,14 @@ import { useThemeColors, useTheme } from '../themeContext';
 //
 // Three tabs, each honest about where its numbers come from:
 //   Trends       real Reddit / X / Hacker News posts, each linking to its source
-//   Community    the in-app feed: photo posts, likes and comments, in a Latest
-//                or Trending order whose rule is printed on screen
-//   Top Creators the connected Instagram accounts, ranked 1..20 by the follower
-//                count this app read from Instagram itself
+//   Community    the shared Instagram-style feed: real signed-in creators, photo
+//                posts, real likes and comments, Latest or Trending
+//   Top Creators real CreatorDNA creators ranked 1..20 by their CreatorDNA
+//                Performance Score — a calculated score, never a follower race
 //
 // Nothing here is seeded or invented. A source without a configured credential
-// says so by name; an empty feed says so plainly; the ranking prints its rule.
+// says so by name; an empty feed says so plainly; the leaderboard shows exactly
+// the creators the database returns and never pads the list.
 
 export type DiscoverTab = 'trends' | 'community' | 'topCreators';
 
@@ -523,6 +521,8 @@ export function DiscoverScreen({
         composerHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
         composerTitle: { ...type.h4, color: c.onDark },
         composerActions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+        composerPrompt: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+        composerPlaceholder: { ...type.body, color: c.onDarkDim, flex: 1 },
         photoPreview: { gap: 8 },
         photoImage: {
           width: '100%',
@@ -542,7 +542,9 @@ export function DiscoverScreen({
         },
 
         rank: { ...type.h4, color: c.onDarkDim, width: 30, textAlign: 'center' },
-        rankTop: { color: c.primary },
+        // #1–#3 get one quiet, professional distinction: the accent bar and a
+        // primary-tinted rank. No medals, no badges — the number is the honour.
+        rankTop: { color: c.primary, fontWeight: '900' },
         boardRow: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -550,20 +552,15 @@ export function DiscoverScreen({
           padding: 13,
           overflow: 'hidden',
         },
+        boardTop: {
+          backgroundColor: c.primarySoft,
+          borderLeftWidth: 3,
+          borderLeftColor: c.primary,
+        },
         boardWho: { flex: 1 },
         boardValue: { alignItems: 'flex-end' },
         boardNumber: { ...type.h4, color: c.onDark },
         boardCaption: { ...type.tiny, color: c.onDarkDim, letterSpacing: 0.3 },
-        rules: {
-          ...type.small,
-          color: c.onDarkSub,
-          backgroundColor: c.darkCard2,
-          borderRadius: radius.sm,
-          borderWidth: 1,
-          borderColor: c.darkBorder,
-          padding: 12,
-          lineHeight: 19,
-        },
       }),
     [c],
   );
@@ -657,7 +654,6 @@ export function DiscoverScreen({
   // ============================================================== FEED =======
 
   const [myProfile, setMyProfile] = useState<CreatorProfile | null>(null);
-  const [profileLoaded, setProfileLoaded] = useState(false);
   // Whether *this* creator has connected Instagram. Posting is limited to
   // connected accounts (the DB insert policy enforces it too), so the
   // composer reads this before offering a text box. null = still checking.
@@ -689,7 +685,7 @@ export function DiscoverScreen({
   const [reactionBusy, setReactionBusy] = useState<string | null>(null);
 
 
-  // Editing, deleting, reporting, and the directory-visibility switch.
+  // Editing, deleting, and reporting.
   const [editPost, setEditPost] = useState<CommunityPost | null>(null);
   const [editBody, setEditBody] = useState('');
   const [editKind, setEditKind] = useState<PostKind>('update');
@@ -704,7 +700,6 @@ export function DiscoverScreen({
     id: string;
     label: string;
   } | null>(null);
-  const [listedBusy, setListedBusy] = useState(false);
 
   const loadFeed = useCallback(
     async (options: { kind?: PostKind | 'all'; sort?: FeedSort } = {}) => {
@@ -721,10 +716,7 @@ export function DiscoverScreen({
           community.fetchFollowerStats(token),
         ]);
         if (!alive.current) return;
-        if (profileResult.ok) {
-          setMyProfile(profileResult.data.items[0] ?? null);
-          setProfileLoaded(true);
-        }
+        if (profileResult.ok) setMyProfile(profileResult.data.items[0] ?? null);
         // A follower-stats row only exists once the app has really read this
         // creator's Instagram, so its absence means "not connected" — and a
         // failed read must not masquerade as connected.
@@ -862,6 +854,31 @@ export function DiscoverScreen({
     },
     [reactionBusy, getCreatorToken],
   );
+
+  /**
+   * Shares a post the way the platform allows it: the native share sheet on
+   * device, `navigator.share` on the web, and the clipboard when neither
+   * exists. Only the public text of the post travels — never an attachment
+   * or anything private.
+   */
+  const sharePost = useCallback(async (post: CommunityPost) => {
+    const author = post.author;
+    const text = `${author?.displayName ?? 'A CreatorDNA creator'}${
+      author?.handle ? ` (@${author.handle})` : ''
+    } on CreatorDNA:\n\n${post.body}`;
+    try {
+      await Share.share({ message: text });
+      return;
+    } catch {
+      /* dismissed or unavailable on this platform — fall through to clipboard */
+    }
+    try {
+      await setStringAsync(text);
+      setNotice('Post text copied to clipboard.');
+    } catch {
+      setNotice('This post could not be shared right now.');
+    }
+  }, [setNotice]);
 
   const submitPost = useCallback(async () => {
     // Belt and braces: the composer is hidden for unconnected accounts, but
@@ -1117,56 +1134,12 @@ export function DiscoverScreen({
     [reportTarget, getCreatorToken],
   );
 
-  /**
-   * Directory visibility. The profile row is saved whole, with only this one
-   * flag flipped, so nothing else the creator typed can be lost by toggling it.
-   */
-  const toggleListed = useCallback(async () => {
-    if (!myProfile || listedBusy) return;
-    const next = !myProfile.isListed;
-    const previous = myProfile;
-    setListedBusy(true);
-    setMyProfile({ ...previous, isListed: next });
-    try {
-      const token = await getCreatorToken();
-      const result = await community.saveProfile(token, {
-        handle: previous.handle,
-        displayName: previous.displayName,
-        bio: previous.bio,
-        niche: previous.niche,
-        goals: previous.goals,
-        avatarUrl: previous.avatarUrl,
-        website: previous.website,
-        location: previous.location,
-        isListed: next,
-      });
-      if (!alive.current) return;
-      if (!result.ok) {
-        setMyProfile(previous);
-        setNotice(result.message);
-        return;
-      }
-      setMyProfile(result.data);
-      setNotice(
-        next
-          ? 'Your profile is now visible in the directory and on the leaderboard.'
-          : 'Your profile is hidden from the directory and the leaderboard.',
-      );
-    } catch {
-      if (!alive.current) return;
-      setMyProfile(previous);
-      setNotice('That change could not be saved. Please retry.');
-    } finally {
-      if (alive.current) setListedBusy(false);
-    }
-  }, [myProfile, listedBusy, getCreatorToken]);
-
   // ======================================================== TOP CREATORS ====
   //
-  // One list, one rule: the accounts whose Instagram this app has actually
-  // read, ordered by that follower count, ranked 1..20. No metric, window or
-  // niche controls here — each of those would answer a different question
-  // than the one this tab asks, and the rule is printed under the title.
+  // One list, one rule: real CreatorDNA creators, ranked by their CreatorDNA
+  // Performance Score (a calculated score over real metrics — never by follower
+  // count), capped at 20. No metric, window or niche controls here — each of
+  // those would answer a different question than the one this tab asks.
 
   const [top, setTop] = useState<LeaderboardRow[]>([]);
   const [topLoading, setTopLoading] = useState(false);
@@ -1178,12 +1151,12 @@ export function DiscoverScreen({
     try {
       const token = await getCreatorToken();
       recordId(token);
-      // `instagram` names both the column and the pool: the server ranks only
-      // creators it has a verified reading for, so nothing on this device can
-      // widen the list or move a rank.
-      const result = await community.fetchLeaderboard(token, 'instagram', {
+      // `overall` is the server's Performance Score: followers ×3 + views ÷10 +
+      // posts ×5 + engagement ×2, computed over each creator's real rows. The
+      // server ranks and caps the list; nothing on this device can move a rank.
+      const result = await community.fetchLeaderboard(token, 'overall', {
         limit: TOP_CREATOR_LIMIT,
-        verifiedOnly: true,
+        period: 'all',
       });
       if (!alive.current) return;
       if (!result.ok) {
@@ -1370,40 +1343,34 @@ export function DiscoverScreen({
     <>
 
       <Card tone={tone} style={s.composer}>
-        <View style={s.composerHead}>
-          <Text style={s.composerTitle}>
-            {igConnected === false ? 'Connect Instagram to post' : 'Share a post'}
-          </Text>
-          {igConnected === false ? null : (
+        {igConnected === false ? (
+          // The insert policy in the database enforces this same rule, so this
+          // one-line prompt is the honest front door rather than the only lock.
+          // A creator who already connected never sees it.
+          <View style={s.composerHead}>
+            <Text style={s.composerTitle}>Connect Instagram to post</Text>
             <Pressable
-              onPress={() => setComposerOpen((open) => !open)}
+              onPress={onConnect}
               style={s.refresh}
               accessibilityRole="button"
-              accessibilityLabel={composerOpen ? 'Close composer' : 'Open composer'}
+              accessibilityLabel="Connect Instagram"
             >
-              <PlusIcon size={15} color={c.primary} />
-              <Text style={s.refreshLabel}>{composerOpen ? 'Cancel' : 'Post'}</Text>
+              <Text style={s.refreshLabel}>Connect</Text>
             </Pressable>
-          )}
-        </View>
-        {igConnected === false ? (
-          // Only creators whose Instagram this app has actually read may post.
-          // The insert policy in the database enforces the same rule, so this
-          // card is the honest front door rather than the only lock.
-          <>
-            <Text style={s.excerpt}>
-              Community posting is open to creators who connect their Instagram account to
-              CreatorDNA. Once connected, your posts appear under your real handle with your
-              verified follower count.
-            </Text>
-            <GradientButton
-              label="Connect Instagram"
-              onPress={onConnect}
-              style={{ alignSelf: 'flex-start' }}
-            />
-          </>
+          </View>
         ) : composerOpen ? (
           <>
+            <View style={s.composerHead}>
+              <Text style={s.composerTitle}>New post</Text>
+              <Pressable
+                onPress={() => setComposerOpen(false)}
+                style={s.refresh}
+                accessibilityRole="button"
+                accessibilityLabel="Close composer"
+              >
+                <Text style={s.refreshLabel}>Cancel</Text>
+              </Pressable>
+            </View>
             <ChipRow
               options={POST_KINDS.map((kind) => ({ key: kind, label: POST_KIND_LABELS[kind] }))}
               value={composerKind}
@@ -1413,7 +1380,7 @@ export function DiscoverScreen({
             <TextInput
               value={composerBody}
               onChangeText={setComposerBody}
-              placeholder="What are you working on? Add a caption for your photo. Max 1000 characters."
+              placeholder="What's on your creator mind?"
               placeholderTextColor={c.onDarkDim}
               multiline
               maxLength={1000}
@@ -1454,11 +1421,11 @@ export function DiscoverScreen({
                   <ImageIcon size={16} color={c.primary} />
                 )}
                 <Text style={s.refreshLabel}>
-                  {photoBusy ? 'Opening…' : composerPhoto ? 'Change photo' : 'Add photo'}
+                  {photoBusy ? 'Opening…' : composerPhoto ? 'Change photo' : 'Photo'}
                 </Text>
               </Pressable>
               <GradientButton
-                label={composerSending ? 'Sharing…' : 'Share a post'}
+                label={composerSending ? 'Posting…' : 'Post'}
                 onPress={() => void submitPost()}
                 loading={composerSending}
                 disabled={composerSending}
@@ -1466,35 +1433,54 @@ export function DiscoverScreen({
               />
             </View>
           </>
+        ) : myProfile ? (
+          // Instagram-style entry: one tap opens the real composer. The post
+          // itself is created by the database-checked `submitPost` above.
+          <View style={{ gap: 10 }}>
+            <Pressable
+              onPress={() => setComposerOpen(true)}
+              style={s.composerPrompt}
+              accessibilityRole="button"
+              accessibilityLabel="Create a new post"
+            >
+              <Avatar
+                uri={myProfile.avatarUrl}
+                name={myProfile.displayName}
+                size={36}
+              />
+              <Text style={s.composerPlaceholder} numberOfLines={1}>
+                What's on your creator mind?
+              </Text>
+            </Pressable>
+            <View style={s.composerActions}>
+              <Pressable
+                onPress={() => {
+                  setComposerOpen(true);
+                  void pickPhoto();
+                }}
+                disabled={photoBusy}
+                style={s.attach}
+                accessibilityRole="button"
+                accessibilityLabel="Add a photo to a new post"
+              >
+                {photoBusy ? (
+                  <ActivityIndicator size="small" color={c.primary} />
+                ) : (
+                  <ImageIcon size={16} color={c.primary} />
+                )}
+                <Text style={s.refreshLabel}>{photoBusy ? 'Opening…' : 'Photo'}</Text>
+              </Pressable>
+              <GradientButton
+                label="Post"
+                onPress={() => setComposerOpen(true)}
+                style={{ flexGrow: 1 }}
+              />
+            </View>
+          </View>
         ) : (
-          <Text style={s.excerpt}>
-            {myProfile
-              ? 'Share a photo or an update — every signed-in creator can see, like and comment on it.'
-              : 'Set your handle in Profile to post.'}
-          </Text>
+          <Text style={s.excerpt}>Set your handle in Profile to post.</Text>
         )}
       </Card>
-
-      {profileLoaded && myProfile ? (
-        <Card tone={tone} style={s.card}>
-          <View style={s.composerHead}>
-            <Text style={s.composerTitle}>Directory visibility</Text>
-            <Toggle
-              value={myProfile.isListed}
-              onChange={() => void toggleListed()}
-              disabled={listedBusy}
-              label="Show my profile in the directory"
-            />
-          </View>
-          <Text style={s.excerpt}>
-            {listedBusy
-              ? 'Saving…'
-              : myProfile.isListed
-                ? 'Your profile appears on Top Creators if your Instagram is connected, and other creators can follow you.'
-                : 'Your profile is hidden from Top Creators. Your posts still show your handle in the community.'}
-          </Text>
-        </Card>
-      ) : null}
 
       {editPost ? (
         <Card tone={tone} style={s.composer}>
@@ -1549,7 +1535,6 @@ export function DiscoverScreen({
           label="Order the community feed"
         />
       </View>
-      <Text style={s.stamp}>{FEED_SORT_RULES[feedSort]}</Text>
 
       <View style={s.toolbar}>
         <ChipRow
@@ -1647,6 +1632,7 @@ export function DiscoverScreen({
               onToggleLike={() => void toggleLike(post)}
               onToggleComments={() => toggleComments(post)}
               onSendComment={() => void submitComment()}
+              onShare={() => void sharePost(post)}
               onOpenProfile={(userId) => onOpenCreator(userId)}
               onEdit={() => startEdit(post)}
               onDelete={() => setDeleteTarget(post)}
@@ -1666,30 +1652,19 @@ export function DiscoverScreen({
   );
 
   /**
-   * The single number this tab ranks on. `-1` from the RPC means no reading
-   * exists, and it is shown as unavailable rather than as a confident zero —
-   * a pool member always has a real count, so this is belt and braces.
+   * The follower count each row shows. `-1` from the RPC means no reading
+   * exists, and it is labelled unavailable rather than shown as a confident
+   * zero — a number this app never read is never presented as if it had.
    */
-  const igFollowerCaption = (row: LeaderboardRow): string =>
+  const followerCaption = (row: LeaderboardRow): string =>
     row.instagramFollowers >= 0
-      ? formatCount(row.instagramFollowers)
-      : 'Unavailable';
+      ? `${formatCount(row.instagramFollowers)} IG followers`
+      : 'Followers unavailable';
 
   const renderTopCreators = () => (
     <>
-      {/* The rules are printed, not buried: who qualifies and how they are
-          ordered is the whole contract of this tab. */}
-      <Text style={s.rules}>{LEADERBOARD_SCOPE_RULES.top}</Text>
-      <Text style={s.rules}>{LEADERBOARD_RULES.instagram}</Text>
-
       <View style={s.toolbar}>
-        <Text style={s.stamp}>
-          {topLoading
-            ? 'Ranking…'
-            : top.length === 0
-              ? `Top ${TOP_CREATOR_LIMIT} · ranked 1–${TOP_CREATOR_LIMIT}`
-              : `Top ${top.length} of ${TOP_CREATOR_LIMIT} · ranked 1–${top.length}`}
-        </Text>
+        <Text style={s.stamp}>{topLoading ? 'Ranking…' : ''}</Text>
         <Pressable
           onPress={() => void loadTop()}
           style={s.refresh}
@@ -1719,8 +1694,8 @@ export function DiscoverScreen({
         <EmptyState
           tone={tone}
           glyph="#"
-          title="No Instagram-connected creators yet"
-          hint="This list fills itself: a creator appears once they open CreatorDNA, connect Instagram, and let the app read their real follower count. Connect yours to be ranked."
+          title="No CreatorDNA creators yet"
+          hint="Connect Instagram and start using CreatorDNA to appear here."
           actionLabel="Refresh"
           onAction={() => void loadTop()}
         />
@@ -1730,10 +1705,18 @@ export function DiscoverScreen({
             <Card
               key={row.userId}
               tone={tone}
-              style={[s.boardRow, row.rank <= 3 && { backgroundColor: c.primarySoft }]}
+              style={[s.boardRow, row.rank <= 3 && s.boardTop]}
             >
-              <Text style={[s.rank, row.rank <= 3 && s.rankTop]}>{row.rank}</Text>
-              <Avatar uri={row.avatarUrl} name={row.displayName} size={40} />
+              <Text style={[s.rank, { width: 38 }, row.rank <= 3 && s.rankTop]}>
+                {`#${row.rank}`}
+              </Text>
+              <Pressable
+                onPress={() => onOpenCreator(row.userId)}
+                accessibilityRole="button"
+                accessibilityLabel={`View ${row.displayName}'s profile`}
+              >
+                <Avatar uri={row.avatarUrl} name={row.displayName} size={40} />
+              </Pressable>
               <View style={s.boardWho}>
                 <Text style={s.postName} numberOfLines={1}>
                   {row.displayName}
@@ -1742,32 +1725,20 @@ export function DiscoverScreen({
                   @{row.handle}
                 </Text>
                 <View style={s.metaRow}>
-                  <Badge label={`${igFollowerCaption(row)} IG followers`} tone="green" />
-                  {row.verified ? <Badge label="Verified" tone="blue" /> : null}
+                  <Text style={s.meta}>{followerCaption(row)}</Text>
+                  {row.verified ? <Badge label="Instagram connected" tone="green" /> : null}
                 </View>
               </View>
               <View style={s.boardValue}>
-                <Text style={s.boardNumber}>{igFollowerCaption(row)}</Text>
-                <Text style={s.boardCaption}>Instagram followers</Text>
-                <Pressable
-                  onPress={() => onOpenCreator(row.userId)}
-                  style={s.link}
-                  accessibilityRole="button"
-                  accessibilityLabel={`View ${row.displayName}'s profile`}
-                >
-                  <Text style={s.linkLabel}>Profile</Text>
-                </Pressable>
+                <Text style={[s.boardNumber, row.rank <= 3 && s.rankTop]}>
+                  {formatCount(row.score)}
+                </Text>
+                <Text style={s.boardCaption}>Performance Score</Text>
               </View>
             </Card>
           ))}
         </View>
       )}
-
-      <Text style={s.rules}>
-        Every row above is a connected account and every number is the follower count this app
-        read from Instagram. Ranks are 1–{TOP_CREATOR_LIMIT}, do not restart on a later page, and
-        never come from an estimate or a guess.
-      </Text>
     </>
   );
 
@@ -1908,6 +1879,7 @@ function PostCard({
   onToggleLike,
   onToggleComments,
   onSendComment,
+  onShare,
   onOpenProfile,
   onEdit,
   onDelete,
@@ -1930,6 +1902,8 @@ function PostCard({
   onToggleLike: () => void;
   onToggleComments: () => void;
   onSendComment: () => void;
+  /** Shares the public text of this post through the platform's share sheet. */
+  onShare: () => void;
   /** Opens the author's profile — the author id, not the handle. */
   onOpenProfile: (userId: string) => void;
   onEdit: () => void;
@@ -2021,6 +1995,14 @@ function PostCard({
         >
           <QuoteIcon size={15} color={c.onDarkSub} />
           <Text style={s.statText}> {post.commentCount}</Text>
+        </Pressable>
+        <Pressable
+          onPress={onShare}
+          style={s.statBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Share this update"
+        >
+          <Text style={s.statText}>↗ Share</Text>
         </Pressable>
         <Text style={s.statText}>{formatCount(post.viewCount)} views</Text>
       </View>

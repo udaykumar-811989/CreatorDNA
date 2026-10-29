@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { GradientButton } from './ui';
+import { GradientButton, Toggle } from './ui';
 import { useThemeColors, useStyles } from '../themeContext';
 import { radius, type } from '../theme';
 import {
@@ -48,6 +48,7 @@ export function CommunityHandleCard({
   const [draft, setDraft] = useState({ handle: '', name: '', niche: '' });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [listingBusy, setListingBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -99,6 +100,10 @@ export function CommunityHandleCard({
         handle: handle.value,
         displayName: name.value,
         niche: niche.value,
+        // `saveProfile` treats an omitted flag as "list me", so the current
+        // value is always sent — saving a handle can never silently change
+        // where this profile appears.
+        isListed: existing?.isListed,
       });
       if (!alive.current) return;
       if (!result.ok) {
@@ -113,7 +118,52 @@ export function CommunityHandleCard({
     } finally {
       if (alive.current) setSaving(false);
     }
-  }, [draft, getCreatorToken, onSaved]);
+  }, [draft, existing, getCreatorToken, onSaved]);
+
+  /**
+   * Directory visibility. The profile row is saved whole, with only this one
+   * flag flipped, so nothing else the creator typed can be lost by toggling it.
+   * This control lives here rather than in the Community feed — the feed is for
+   * reading and posting, visibility is set once, here.
+   */
+  const toggleListing = useCallback(
+    async (next: boolean) => {
+      if (!existing || listingBusy) return;
+      const previous = existing;
+      setListingBusy(true);
+      setError(null);
+      setExisting({ ...previous, isListed: next });
+      try {
+        const token = await getCreatorToken();
+        const result = await community.saveProfile(token, {
+          handle: previous.handle,
+          displayName: previous.displayName,
+          bio: previous.bio,
+          niche: previous.niche,
+          goals: previous.goals,
+          avatarUrl: previous.avatarUrl,
+          website: previous.website,
+          location: previous.location,
+          isListed: next,
+        });
+        if (!alive.current) return;
+        if (!result.ok) {
+          setExisting(previous);
+          setError(result.message);
+          return;
+        }
+        setExisting(result.data);
+        onSaved?.(result.data);
+      } catch {
+        if (!alive.current) return;
+        setExisting(previous);
+        setError('That change could not be saved. Please retry.');
+      } finally {
+        if (alive.current) setListingBusy(false);
+      }
+    },
+    [existing, listingBusy, getCreatorToken, onSaved],
+  );
 
   if (!loaded) {
     return (
@@ -130,8 +180,29 @@ export function CommunityHandleCard({
         <Text style={s.title}>Community handle</Text>
         <Text style={s.value}>@{existing.handle}</Text>
         <Text style={s.hint}>
-          Shown on your posts in Community{existing.isListed ? ' and on Top Creators if your Instagram is connected' : ''}.
+          Shown on your posts in Community{existing.isListed ? ' and on the Top Creators leaderboard' : ''}.
         </Text>
+
+        <View style={s.listing}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.label}>Directory listing</Text>
+            <Text style={s.hint}>
+              {listingBusy
+                ? 'Saving…'
+                : existing.isListed
+                  ? 'Your profile appears on Top Creators and other creators can follow you.'
+                  : 'Your profile is hidden from Top Creators. Your posts still show your handle.'}
+            </Text>
+          </View>
+          <Toggle
+            value={existing.isListed}
+            onChange={(next) => void toggleListing(next)}
+            disabled={listingBusy}
+            label="Show my profile on Top Creators and in the directory"
+          />
+        </View>
+        {error ? <Text style={s.error}>{error}</Text> : null}
+
         <Pressable
           onPress={() => {
             setError(null);
@@ -243,6 +314,7 @@ const makeStyles = (c: ReturnType<typeof useThemeColors>) =>
       fontSize: 15,
     },
     error: { ...type.small, color: c.red, lineHeight: 18 },
+    listing: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
     actions: { flexDirection: 'row', gap: 8, alignItems: 'center', marginTop: 4 },
     edit: {
       alignSelf: 'flex-start',
