@@ -1478,7 +1478,7 @@ export function DiscoverScreen({
             </View>
           </View>
         ) : (
-          <Text style={s.excerpt}>Set your handle in Profile to post.</Text>
+          <Text style={s.excerpt}>Posting isn't available for this account yet.</Text>
         )}
       </Card>
 
