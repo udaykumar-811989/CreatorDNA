@@ -722,9 +722,20 @@ export function LandingScreen({
               <Pressable accessibilityRole="link" onPress={() => jump('features')}>
                 <Text style={s.footLink}>Features</Text>
               </Pressable>
-              <Pressable accessibilityRole="link" onPress={onOpenPrivacy}>
-                <Text style={s.footLink}>Privacy</Text>
-              </Pressable>
+              {/* A real anchor (web) so the policy is linkable/crawlable, but
+                  the click stays in the SPA: preventDefault stops the browser
+                  from doing a full page load after onPress has routed us. */}
+              <Text
+                accessibilityRole="link"
+                {...(Platform.OS === 'web' ? { href: '/privacy-policy' } : null)}
+                onPress={(event) => {
+                  event.preventDefault?.();
+                  onOpenPrivacy();
+                }}
+                style={s.footLink}
+              >
+                Privacy Policy
+              </Text>
               <Pressable accessibilityRole="link" onPress={onOpenHelp}>
                 <Text style={s.footLink}>Help</Text>
               </Pressable>

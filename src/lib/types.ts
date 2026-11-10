@@ -83,15 +83,23 @@ export const NAV_SCREENS: ReadonlySet<Screen> = new Set<Screen>([
 
 /**
  * Screens with their own web route, so a store listing or a support reply can
- * link straight to `https://…/privacy` or `https://…/help`. The app shell keeps
- * the address bar in sync with these (see App.tsx).
+ * link straight to `https://…/privacy-policy` or `https://…/help`. The app
+ * shell keeps the address bar in sync with these (see App.tsx).
  */
 export const SCREEN_PATHS: Readonly<Partial<Record<Screen, string>>> = {
   // The public front door: "/" is the marketing home, never a signed-in
   // screen, so a store listing can point at the site root.
   landing: '/',
-  privacy: '/privacy',
+  privacy: '/privacy-policy',
   help: '/help',
+};
+
+/**
+ * Older spellings that must keep resolving to the same screen, so links
+ * already handed out (`/privacy`) never 404 or land somewhere else.
+ */
+const LEGACY_PATHS: Readonly<Record<string, Screen>> = {
+  '/privacy': 'privacy',
 };
 
 export function screenForPath(pathname: string | null | undefined): Screen | null {
@@ -102,7 +110,7 @@ export function screenForPath(pathname: string | null | undefined): Screen | nul
   const match = (Object.keys(SCREEN_PATHS) as Screen[]).find(
     (screen) => SCREEN_PATHS[screen] === path,
   );
-  return match ?? null;
+  return match ?? LEGACY_PATHS[path] ?? null;
 }
 
 export function pathForScreen(screen: Screen): string | null {

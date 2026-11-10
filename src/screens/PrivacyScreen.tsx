@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Linking from 'expo-linking';
 import { useMemo } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { ListRow, ScreenHeader } from '../components/ui';
 import { DocIcon, MailIcon } from '../components/icons';
@@ -10,26 +10,38 @@ import { PRIVACY_EFFECTIVE_DATE, PRIVACY_SECTIONS } from '../lib/privacyContent'
 import { useTheme, useThemeColors } from '../themeContext';
 import { FAB_CLEARANCE, radius, type } from '../theme';
 
+// Above this width the policy stops stretching edge-to-edge: the column is
+// capped and centred so line lengths stay readable on desktop, and the
+// padding grows with the viewport instead of staying phone-sized.
+const READER_MAX_WIDTH = 780;
+const WIDE_BREAKPOINT = 700;
+
 /**
  * Privacy Policy. Rendered from `src/lib/privacyContent.ts` so the same text
- * ships in the app and can be linked from a store listing at `/privacy`.
+ * ships in the app and can be linked from a store listing at `/privacy-policy`
+ * (`/privacy` resolves here too).
  */
 export function PrivacyScreen({ onBack }: { onBack: () => void }) {
   const { mode } = useTheme();
   const c = useThemeColors();
+  const { width } = useWindowDimensions();
   const isDark = mode === 'dark';
   const tone = isDark ? ('dark' as const) : ('light' as const);
   const iconColor = c.primary;
+  const wide = width > WIDE_BREAKPOINT;
 
   const styles = useMemo(
     () =>
       StyleSheet.create({
         screen: { flex: 1, backgroundColor: c.darkBg },
         content: {
-          paddingHorizontal: 18,
+          paddingHorizontal: wide ? 32 : 18,
           paddingTop: 8,
           paddingBottom: FAB_CLEARANCE,
           gap: 8,
+          maxWidth: READER_MAX_WIDTH,
+          width: '100%',
+          alignSelf: 'center',
         },
         introCard: {
           backgroundColor: c.darkCard,
@@ -70,7 +82,7 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
         },
         divider: { height: StyleSheet.hairlineWidth, backgroundColor: c.darkBorder },
       }),
-    [c],
+    [c, wide],
   );
 
   return (

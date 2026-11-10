@@ -1,6 +1,6 @@
 import { SUPPORT_EMAIL } from './helpContent';
 
-export const PRIVACY_EFFECTIVE_DATE = 'October 25, 2026';
+export const PRIVACY_EFFECTIVE_DATE = 'November 10, 2026';
 
 export type PrivacyBlock =
   | { kind: 'p'; text: string }
@@ -34,9 +34,11 @@ export const PRIVACY_SECTIONS: PrivacySection[] = [
     blocks: [
       p('We collect only what the App needs to work:'),
       ul(
-        'Sign-in details — your email address and password when you choose to sign in. Supabase Auth stores the credential; we keep your access token in memory for the session, and a refresh token in this device’s browser storage so you stay signed in. Saved ("remembered") accounts live on your device only.',
+        'Sign-in details — your email address and password when you choose to sign in. Supabase Auth stores the credential. Your session (access token, refresh token, and email) is kept in this browser’s localStorage so a refresh keeps you signed in; it is cleared when you log out. Up to five "remembered" accounts may be saved on your device for one-tap sign-in — those records live on your device only.',
         'Instagram connection data — after you connect a professional account through Instagram Login we receive your Instagram user ID, username, account type, profile picture, follower count, and the 30-day insights and recent media engagement you see on the dashboard. The long-lived Instagram access token is stored on our server, encrypted.',
         'Content you submit for analysis — titles, transcripts, captions, and any metrics you enter, plus any image, audio, or video file you deliberately attach. Audio recordings are limited to 30 seconds and are transcribed for that analysis.',
+        'Community content — if you post in Community: your public profile (display name, handle, bio, avatar), your posts and their photos, likes, and comments. Community profiles and posts marked as listed are visible to other signed-in creators; your photos are stored in a bucket that is readable by anyone with the link. Your likes and comments are visible to signed-in creators.',
+        'Notifications — app notifications are generated and stored on your device, and are also mirrored to a server table so they survive a new device. Only your own rows are ever readable by you.',
         'Local app data — your analyses, generated and saved ideas, chat history, theme preference, and saved logins are stored on your device (browser localStorage or AsyncStorage on native), not in a central profile.',
         'Service logs — Supabase Edge Function logs hold timestamps, request routes, and error codes so we can debug failures. They do not contain your Instagram token or your AI provider key.',
         'Support correspondence — anything you send us by email, including a conversation you choose to share from the Help screen.',
@@ -91,7 +93,7 @@ export const PRIVACY_SECTIONS: PrivacySection[] = [
     blocks: [
       ul(
         'Instagram access tokens are encrypted at rest with AES-256-GCM; for connection sessions we store only a hash, never the token itself.',
-        'Database tables use row-level security: the app itself has no table access, and only the Edge Function’s service role can read or write connection and analysis rows.',
+        'Database tables use row-level security. Community, notification, and profile tables enforce per-user access at the database: your rows are yours, listed profiles are public to signed-in creators, and the Instagram connection tables are readable only by the Edge Function’s service role — never by the app directly.',
         'All traffic travels over HTTPS.',
         'Analyses, ideas, and chat are stored on your device, so they disappear if you clear site data, erase the app, or use Settings → Erase data on this device.',
       ),
@@ -106,13 +108,12 @@ export const PRIVACY_SECTIONS: PrivacySection[] = [
     blocks: [
       p('We share data only with the service providers that run the App:'),
       ul(
-        'Supabase — hosting, authentication, database, and Edge Functions.',
+        'Supabase — hosting, authentication, database, Edge Functions, and the storage bucket serving Community photos.',
         'Our AI provider — the content of the analysis request you submit.',
         'Instagram / Meta — when you authorize the connection.',
-        'Our email provider — only if you contact us.',
       ),
       p(
-        'We never sell or rent your personal information. We may disclose data if legally required, or to protect the rights and safety of our users.',
+        'Support email is sent by you, from your own email app, to our support address — we do not run an email marketing or mailing system. We never sell or rent your personal information. We may disclose data if legally required, or to protect the rights and safety of our users.',
       ),
     ],
   },
@@ -122,9 +123,16 @@ export const PRIVACY_SECTIONS: PrivacySection[] = [
     blocks: [
       ul(
         'Device data — kept until you clear it: Settings → Erase data on this device, clearing site data, or deleting the app.',
+        'Community content — you can delete your own posts and comments in the app at any time; deleting a post also removes its photo from public access. Your profile listing can be changed from your profile.',
         'Account data — kept while your account exists; ask us to delete it at any time.',
         'Instagram connection — kept until you disconnect or ask us to delete it.',
+        'Notifications — mirrored rows are deleted when you remove the notification or your account.',
         'Logs — kept only as long as needed for debugging and security.',
+      ),
+      p(
+        'To delete everything associated with your account (including the Instagram connection and any Community content), email ' +
+          SUPPORT_EMAIL +
+          ' from the address you signed in with. We will act within the timeframe your local law requires.',
       ),
     ],
   },
@@ -145,7 +153,7 @@ export const PRIVACY_SECTIONS: PrivacySection[] = [
     heading: '10. Cookies and local storage',
     blocks: [
       p(
-        'The web app uses no advertising or cross-site tracking cookies. It uses strictly necessary browser storage: session state for this tab, your sign-in refresh token, your saved logins, your theme choice, and your analyses and ideas. Blocking storage means the App cannot remember you between visits.',
+        'The web app uses no advertising or cross-site tracking cookies. It uses strictly necessary browser storage: your sign-in session, your saved logins, your connection session, your theme choice, and your analyses and ideas. Blocking storage means the App cannot remember you between visits.',
       ),
     ],
   },

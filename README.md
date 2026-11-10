@@ -247,8 +247,10 @@ yet.` No sample recommendations or synthetic metrics are generated.
 Settings → Help & legal links to two screens that also have their own public
 web routes, so a store listing or a support reply can link to them directly:
 
-- `https://<your-app-origin>/privacy` — the Privacy Policy
-  (`src/lib/privacyContent.ts`).
+- `https://<your-app-origin>/privacy-policy` — the Privacy Policy
+  (`src/lib/privacyContent.ts`). The site footer links here. The older
+  `/privacy` path resolves to the same screen, so links already handed out
+  keep working.
 - `https://<your-app-origin>/help` — the Help Centre
   (`src/lib/helpContent.ts`).
 
