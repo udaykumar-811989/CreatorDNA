@@ -1,0 +1,9 @@
+# CreatorDNA — https://creatordna.in
+# Public marketing/legal pages are open; the app dashboard is client-side
+# and requires sign-in, so its screens are not linked from here.
+
+User-agent: *
+Allow: /
+Disallow: /instagram-connected
+
+Sitemap: https://creatordna.in/sitemap.xml
