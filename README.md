@@ -136,9 +136,12 @@ The flow signs in through Meta's Unified Login
 (`facebook.com/dialog/oauth` with the configuration ID) and rejects a
 connection if either granted permission (`instagram_basic`,
 `instagram_manage_insights`) is missing when Meta reports a permissions list.
-The login dialog uses `prompt=login` so an already signed-in personal
-Instagram web session does not silently get reused instead of the
-professional account the creator intends to connect.
+The login dialog omits `prompt` on a plain Connect, so an already signed-in
+Meta session is approved silently and the dialog returns straight to the
+app instead of stopping on a login page. Only an explicit "connect a
+different account" swap sends `prompt=login`, which forces the account
+picker so a different professional account can be chosen rather than the
+current session being reused.
 
 The Edge Function calls these official Meta/Instagram API endpoints (Unified
 Login tokens are read on `graph.facebook.com`):

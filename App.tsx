@@ -1403,7 +1403,11 @@ function AppShell() {
     }
   }, [handleInstagramReturn, incomingUrl]);
 
-  const connectInstagram = useCallback(async () => {
+  // `reselect` forces Meta's login step so the account picker appears — only
+  // the explicit "connect a different account" swap asks for it. A plain
+  // Connect omits `prompt`, letting an existing Meta session approve silently
+  // and bounce straight back to the app instead of stopping on a login page.
+  const connectInstagram = useCallback(async (reselect = false) => {
     setConnectionState('connecting');
     setConnectionError(null);
     setConnectionErrorDetail(null);
@@ -1425,7 +1429,7 @@ function AppShell() {
           Authorization: `Bearer ${supabaseAnonKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ platform, returnUri }),
+        body: JSON.stringify({ platform, returnUri, reselect }),
       });
       if (!response.ok) {
         let errorCode = 'connection_setup_failed';
@@ -3106,7 +3110,9 @@ function AppShell() {
           onConnectDifferent={() => {
             // Fresh OAuth replaces the connection on success; nothing is
             // cleared up front, so cancelling keeps the current account.
-            void connectInstagram();
+            // reselect forces the account picker so a different account can
+            // actually be chosen rather than reusing the current session.
+            void connectInstagram(true);
           }}
           onShowAccounts={() => setAccountSwitcherOpen(true)}
           onContinueWithoutInstagram={continueWithoutInstagram}
