@@ -807,6 +807,16 @@ async function exchangeAuthorizationCode(
   const data = firstRecord(body);
   const accessToken = requiredString(data?.access_token);
   if (!response.ok || !accessToken) {
+    // Meta's OAuth error message (never the credentials) is the only way to
+    // tell a wrong App Secret from an expired or mismatched code in the logs.
+    const metaError = record(record(body)?.error);
+    const message = requiredString(metaError?.message);
+    const metaCode = metaError?.code;
+    console.error(
+      `Instagram token exchange rejected: http=${response.status}` +
+        `${message ? ` message=${message}` : ''}` +
+        `${typeof metaCode !== 'undefined' ? ` meta_code=${metaCode}` : ''}`,
+    );
     throw new InstagramFlowError('invalid_authorization_code');
   }
   // The system-user token response carries no permissions list (the config_id
