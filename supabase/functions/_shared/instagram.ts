@@ -1,9 +1,18 @@
 export const REQUIRED_SCOPES = [
-  'instagram_business_basic',
-  'instagram_business_manage_insights',
+  'instagram_basic',
+  'instagram_manage_insights',
 ] as const;
 
-export type AccountType = 'Business' | 'Media_Creator';
+// 'Professional' is the honest fallback when Meta does not return
+// `account_type` (the field is documented only for graph.instagram.com, not
+// for the graph.facebook.com host Unified Login uses).
+export type AccountType = 'Business' | 'Media_Creator' | 'Professional';
+
+// Unified Login issues a system-user token whose expiration Meta stores as
+// "Never". The connections table requires a non-null expiry, so a far-future
+// sentinel is stored instead; the session RPCs already clamp it with
+// least(token_expires_at, now() + 30 days).
+const NON_EXPIRING_TOKEN_EXPIRES_AT = new Date('2100-01-01T00:00:00Z');
 
 export type InstagramProfile = {
   instagramUserId: string;
@@ -154,19 +163,36 @@ function requiredString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+// graph.facebook.com identifies the IG User with `id`; the profile normalizer
+// reads `user_id` (the graph.instagram.com spelling), so bridge the two
+// spellings without loosening the normalizer's validation.
+function withNormalizerUserId(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  if (data.user_id === undefined && typeof data.id === 'string') {
+    return { ...data, user_id: data.id };
+  }
+  return data;
+}
+
 export function buildInstagramAuthorizationUrl(
   clientId: string,
+  configId: string,
   redirectUri: string,
   state: string,
 ): string {
-  const url = new URL('https://www.instagram.com/oauth/authorize');
+  // Meta retired instagram.com/oauth/authorize for newer apps: login now runs
+  // through Unified Login, where the configuration (config_id) fixes the
+  // permission set instead of a `scope` parameter, and `prompt=login` keeps
+  // the account picker showing on every attempt (the old force_reauth).
+  const url = new URL('https://www.facebook.com/dialog/oauth');
   url.searchParams.set('client_id', clientId);
+  url.searchParams.set('config_id', configId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', REQUIRED_SCOPES.join(','));
+  url.searchParams.set('display', 'popup');
+  url.searchParams.set('prompt', 'login');
   url.searchParams.set('state', state);
-  url.searchParams.set('enable_fb_login', 'false');
-  url.searchParams.set('force_reauth', 'true');
   return url.toString();
 }
 
@@ -186,6 +212,13 @@ export function parseGrantedPermissions(value: unknown): Set<string> {
 
 export function assertRequiredPermissions(value: unknown): string[] {
   const granted = parseGrantedPermissions(value);
+  if (granted.size === 0) {
+    // Unified Login's system-user token exchange returns no permissions list
+    // at all (the config_id fixed the grant), so "nothing to check" is the
+    // expected shape — the profile read immediately after is what proves
+    // instagram_basic actually works. A non-empty list is still enforced.
+    return [];
+  }
   const missing = REQUIRED_SCOPES.filter((permission) => !granted.has(permission));
   if (missing.length > 0) {
     throw new InstagramFlowError('missing_permissions');
@@ -207,6 +240,9 @@ function normalizeAccountType(value: unknown): AccountType | null {
   if (label === 'creator' || label === 'mediacreator') {
     return 'Media_Creator';
   }
+  if (label === 'professional') {
+    return 'Professional';
+  }
   return null;
 }
 
@@ -216,24 +252,27 @@ export function normalizeInstagramProfile(value: unknown): InstagramProfile {
   const username = requiredString(data?.username);
   const accountTypeValue = data?.account_type;
   const accountType = normalizeAccountType(accountTypeValue);
-  const hasExplicitUnsupportedAccountType =
-    instagramUserId !== null &&
-    username !== null &&
+  if (!instagramUserId || !username) {
+    throw new InstagramFlowError('invalid_profile');
+  }
+  const hasExplicitAccountType =
     accountTypeValue !== undefined &&
     accountTypeValue !== null &&
     !(typeof accountTypeValue === 'string' && accountTypeValue.trim() === '');
-  if (!instagramUserId || !username || !accountType) {
-    if (hasExplicitUnsupportedAccountType) {
-      // Carry the raw value to the app ("Instagram reports: …") so a stuck
-      // conversion or wrong-account login is visible instead of a dead end.
-      const reported = String(accountTypeValue).slice(0, 40);
-      console.error(
-        `Instagram rejected account_type=${JSON.stringify(reported)} for @${username || 'unknown'}`,
-      );
-      throw new InstagramFlowError('unsupported_account', reported);
-    }
-    throw new InstagramFlowError('invalid_profile');
+  if (hasExplicitAccountType && !accountType) {
+    // Carry the raw value to the app ("Instagram reports: …") so a stuck
+    // conversion or wrong-account login is visible instead of a dead end.
+    const reported = String(accountTypeValue).slice(0, 40);
+    console.error(
+      `Instagram rejected account_type=${JSON.stringify(reported)} for @${username}`,
+    );
+    throw new InstagramFlowError('unsupported_account', reported);
   }
+  // Unified Login on graph.facebook.com can omit account_type entirely (the
+  // field is documented only for graph.instagram.com). Every account that can
+  // authorize here is professional — a personal one cannot — so an absent
+  // value gets the honest 'Professional' label instead of failing the connect.
+  const resolvedType: AccountType = accountType ?? 'Professional';
 
   const picture = requiredString(data?.profile_picture_url);
   let profilePictureUrl: string | null = null;
@@ -248,7 +287,12 @@ export function normalizeInstagramProfile(value: unknown): InstagramProfile {
     }
   }
 
-  return { instagramUserId, username, accountType, profilePictureUrl };
+  return {
+    instagramUserId,
+    username,
+    accountType: resolvedType,
+    profilePictureUrl,
+  };
 }
 
 export async function encryptAccessToken(
@@ -457,7 +501,9 @@ async function instagramApiGet(
 }
 
 function instagramGraphUrl(path: string): URL {
-  return new URL(`https://graph.instagram.com/v25.0/${path}`);
+  // Unified Login tokens are read on graph.facebook.com (the Instagram hosts
+  // are retired for newer apps); the IG User node is addressed by its own id.
+  return new URL(`https://graph.facebook.com/v27.0/${path}`);
 }
 
 export async function fetchInstagramDashboard(
@@ -466,20 +512,41 @@ export async function fetchInstagramDashboard(
 ): Promise<InstagramDashboard> {
   // Ask for the exact fields we consume: without them Meta returns only the
   // defaults, the profile normalizer rejects the account, and the dashboard
-  // dies as "reconnect required" with null stats.
-  const profileUrl = instagramGraphUrl('me');
+  // dies as "reconnect required" with null stats. The IG User node (not
+  // `/me`, which would be the system user on this host) reports `id`, which
+  // the normalizer bridges to `user_id`.
+  const profileUrl = instagramGraphUrl(instagramUserId);
   profileUrl.searchParams.set(
     'fields',
-    'user_id,username,account_type,profile_picture_url,followers_count,media_count',
+    'id,username,account_type,profile_picture_url,followers_count,media_count',
   );
-  const profileResponse = await instagramApiGet(profileUrl, accessToken);
+  let profileResponse: unknown;
+  try {
+    profileResponse = await instagramApiGet(profileUrl, accessToken);
+  } catch (error) {
+    if (
+      error instanceof InstagramApiError &&
+      error.code === 'reconnect_required'
+    ) {
+      throw error;
+    }
+    // `account_type` is documented only for graph.instagram.com; if Meta
+    // rejects the field set on this host (error 100), retry without it — the
+    // normalizer then labels the account Professional instead of killing the
+    // dashboard.
+    profileUrl.searchParams.set(
+      'fields',
+      'id,username,profile_picture_url,followers_count,media_count',
+    );
+    profileResponse = await instagramApiGet(profileUrl, accessToken);
+  }
   const profileData = firstRecord(profileResponse);
   if (!profileData) {
     throw new InstagramApiError('instagram_api_error');
   }
   let profile: InstagramProfile;
   try {
-    profile = normalizeInstagramProfile(profileData);
+    profile = normalizeInstagramProfile(withNormalizerUserId(profileData));
   } catch {
     throw new InstagramApiError('reconnect_required');
   }
@@ -489,7 +556,7 @@ export async function fetchInstagramDashboard(
 
   const followersCount = optionalCount(profileData.followers_count);
   const mediaCount = optionalCount(profileData.media_count);
-  const mediaUrl = instagramGraphUrl('me/media');
+  const mediaUrl = instagramGraphUrl(`${instagramUserId}/media`);
   mediaUrl.searchParams.set(
     'fields',
     'id,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count,caption',
@@ -715,20 +782,18 @@ async function exchangeAuthorizationCode(
   code: string,
   config: InstagramConfig,
 ): Promise<{ accessToken: string; permissions: unknown }> {
-  const form = new FormData();
-  form.append('client_id', config.instagramAppId);
-  form.append('client_secret', config.instagramAppSecret);
-  form.append('grant_type', 'authorization_code');
-  form.append('redirect_uri', config.instagramRedirectUri);
-  form.append('code', code);
+  // Unified Login exchanges the code on graph.facebook.com with a plain GET
+  // (api.instagram.com is retired for newer apps).
+  const url = new URL('https://graph.facebook.com/v27.0/oauth/access_token');
+  url.searchParams.set('grant_type', 'authorization_code');
+  url.searchParams.set('client_id', config.instagramAppId);
+  url.searchParams.set('client_secret', config.instagramAppSecret);
+  url.searchParams.set('redirect_uri', config.instagramRedirectUri);
+  url.searchParams.set('code', code);
 
   let response: Response;
   try {
-    response = await fetch('https://api.instagram.com/oauth/access_token', {
-      method: 'POST',
-      body: form,
-      signal: AbortSignal.timeout(15_000),
-    });
+    response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   } catch {
     throw new InstagramFlowError('instagram_api_error');
   }
@@ -744,56 +809,94 @@ async function exchangeAuthorizationCode(
   if (!response.ok || !accessToken) {
     throw new InstagramFlowError('invalid_authorization_code');
   }
+  // The system-user token response carries no permissions list (the config_id
+  // fixed the grant); assertRequiredPermissions treats that as expected and
+  // still enforces a list when Meta does return one.
   return { accessToken, permissions: data?.permissions };
 }
 
-async function exchangeLongLivedToken(
-  shortLivedToken: string,
-  config: InstagramConfig,
-): Promise<{ accessToken: string; expiresAt: Date }> {
-  const url = new URL('https://graph.instagram.com/access_token');
-  url.searchParams.set('grant_type', 'ig_exchange_token');
-  url.searchParams.set('client_secret', config.instagramAppSecret);
-  url.searchParams.set('access_token', shortLivedToken);
-
+async function graphNodeGet(url: URL): Promise<Record<string, unknown>> {
   let response: Response;
   try {
     response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   } catch {
     throw new InstagramFlowError('instagram_api_error');
   }
-
-  const data = await readResponse(response);
-  const accessToken = requiredString(data.access_token);
-  const expiresIn = Number(data.expires_in);
-  if (!accessToken || !Number.isFinite(expiresIn) || expiresIn <= 0) {
-    throw new InstagramFlowError('instagram_api_error');
-  }
-
-  return {
-    accessToken,
-    expiresAt: new Date(Date.now() + expiresIn * 1000),
-  };
+  return readResponse(response);
 }
 
 async function fetchInstagramProfile(
   accessToken: string,
 ): Promise<InstagramProfile> {
-  const url = new URL('https://graph.instagram.com/v25.0/me');
-  url.searchParams.set(
-    'fields',
-    'user_id,username,account_type,profile_picture_url',
-  );
-  url.searchParams.set('access_token', accessToken);
-
-  let response: Response;
+  // Unified Login hands out a system-user token: `me` is not the Instagram
+  // account, so Meta publishes the assigned professional accounts on this
+  // edge. Multiple assigned accounts connect the first (a picker is a later
+  // step).
+  const assignedUrl = instagramGraphUrl('me/assigned_instagram_accounts');
+  assignedUrl.searchParams.set('fields', 'id,username');
+  assignedUrl.searchParams.set('access_token', accessToken);
+  let assignedResponse: Response;
   try {
-    response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    assignedResponse = await fetch(assignedUrl, {
+      signal: AbortSignal.timeout(15_000),
+    });
   } catch {
     throw new InstagramFlowError('instagram_api_error');
   }
+  let assignedBody: unknown;
+  try {
+    assignedBody = await assignedResponse.json();
+  } catch {
+    throw new InstagramFlowError('instagram_api_error');
+  }
+  const assigned = assignedResponse.ok ? firstRecord(assignedBody) : null;
+  const accountId = requiredString(assigned?.id);
+  const accountUsername = requiredString(assigned?.username);
+  if (!accountId || !accountUsername) {
+    if (!assignedResponse.ok) {
+      throw new InstagramFlowError('instagram_api_error');
+    }
+    // Meta accepted the request but found no rows: this login has no
+    // professional Instagram attached (a personal account cannot be
+    // assigned to the configuration).
+    throw new InstagramFlowError(
+      'unsupported_account',
+      'no professional Instagram is attached to this login',
+    );
+  }
 
-  return normalizeInstagramProfile(await readResponse(response));
+  const nodeUrl = instagramGraphUrl(accountId);
+  nodeUrl.searchParams.set(
+    'fields',
+    'id,username,account_type,profile_picture_url',
+  );
+  nodeUrl.searchParams.set('access_token', accessToken);
+  let node: Record<string, unknown>;
+  try {
+    node = await graphNodeGet(nodeUrl);
+  } catch (error) {
+    // `account_type` is documented only for graph.instagram.com; if Meta
+    // rejects it on this host (error 100), retry without the field — the
+    // normalizer then falls back to the honest 'Professional' label.
+    if (
+      !(error instanceof InstagramFlowError &&
+        error.code === 'instagram_api_error')
+    ) {
+      throw error;
+    }
+    nodeUrl.searchParams.set('fields', 'id,username,profile_picture_url');
+    node = await graphNodeGet(nodeUrl);
+  }
+  return normalizeInstagramProfile(
+    withNormalizerUserId({
+      ...node,
+      id: typeof node.id === 'string' && node.id ? node.id : accountId,
+      username:
+        typeof node.username === 'string' && node.username
+          ? node.username
+          : accountUsername,
+    }),
+  );
 }
 
 export async function completeInstagramConnection(
@@ -805,21 +908,20 @@ export async function completeInstagramConnection(
   tokenExpiresAt: Date;
   grantedPermissions: string[];
 }> {
-  const shortLived = await exchangeAuthorizationCode(code, config);
-  const grantedPermissions = assertRequiredPermissions(shortLived.permissions);
-  const longLived = await exchangeLongLivedToken(
-    shortLived.accessToken,
-    config,
-  );
-  const profile = await fetchInstagramProfile(longLived.accessToken);
+  const exchanged = await exchangeAuthorizationCode(code, config);
+  const grantedPermissions = assertRequiredPermissions(exchanged.permissions);
+  const profile = await fetchInstagramProfile(exchanged.accessToken);
 
   return {
     profile,
     encryptedToken: await encryptAccessToken(
-      longLived.accessToken,
+      exchanged.accessToken,
       config.tokenEncryptionKey,
     ),
-    tokenExpiresAt: longLived.expiresAt,
+    // Unified Login's system-user token never expires (Meta stores "Never"),
+    // so the far-future sentinel stands in for a real expiry — the session
+    // RPCs already clamp it to 30 days.
+    tokenExpiresAt: new Date(NON_EXPIRING_TOKEN_EXPIRES_AT),
     grantedPermissions,
   };
 }

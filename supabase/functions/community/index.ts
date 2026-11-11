@@ -1,21 +1,26 @@
+import { decryptAccessToken } from '../_shared/instagram.ts';
 import type { AchievementMilestone } from '../_shared/milestones.ts';
 import { nextMilestone } from '../_shared/milestones.ts';
 import { parseAllowedOrigins } from '../_shared/origins.ts';
 
 // Verified follower sync — the only path that can award a milestone.
 //
-// The client never supplies a follower count. It sends the Instagram access
-// token it already holds from the OAuth connect, this function asks Instagram
-// itself for the number, and only that answer reaches
-// `community_sync_followers`, which is service-role only. So a milestone can
-// only ever be granted on a count Instagram actually returned.
+// The client never supplies a follower count. It sends only its opaque
+// Instagram connection session token; this function resolves the encrypted
+// Instagram token behind it server-side (`get_instagram_dashboard_connection`,
+// service-role only), decrypts it in memory, asks Instagram itself for the
+// number, and only that answer reaches `community_sync_followers`, which is
+// service-role only. So a milestone can only ever be granted on a count
+// Instagram actually returned.
 //
-// No service-role key is exposed to the browser and the token is never logged.
+// No service-role key or Instagram token is exposed to the browser, and
+// neither is ever logged.
 
 type FunctionConfig = {
   supabaseUrl: string;
   anonKey: string;
   serviceRoleKey: string;
+  tokenEncryptionKey: Uint8Array;
   appWebOrigins: string[];
 };
 
@@ -23,12 +28,27 @@ const UPSTREAM_TIMEOUT_MS = 12_000;
 // Instagram's own ceiling is far below this; the clamp exists only because the
 // column is an integer and a malformed upstream value must never overflow it.
 const MAX_FOLLOWERS = 2_000_000_000;
-const GRAPH_VERSION = 'v21.0';
+const GRAPH_VERSION = 'v27.0';
 
 function required(name: string): string {
   const value = Deno.env.get(name)?.trim();
   if (!value) throw new Error(`${name} is not set.`);
   return value;
+}
+
+function decodeKey(value: string): Uint8Array {
+  let decoded: Uint8Array;
+  try {
+    decoded = Uint8Array.from(atob(value), (character) =>
+      character.charCodeAt(0)
+    );
+  } catch {
+    throw new Error('TOKEN_ENCRYPTION_KEY must be valid base64.');
+  }
+  if (decoded.length !== 32) {
+    throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
+  }
+  return decoded;
 }
 
 function getConfig(): FunctionConfig {
@@ -47,6 +67,7 @@ function getConfig(): FunctionConfig {
     supabaseUrl,
     anonKey: required('SUPABASE_ANON_KEY'),
     serviceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY'),
+    tokenEncryptionKey: decodeKey(required('TOKEN_ENCRYPTION_KEY')),
     appWebOrigins,
   };
 }
@@ -98,6 +119,16 @@ function isUuid(value: unknown): value is string {
   );
 }
 
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('');
+}
+
 async function getAuthenticatedUser(
   request: Request,
   config: FunctionConfig,
@@ -128,7 +159,10 @@ async function getAuthenticatedUser(
 // -------------------------------------------------------------- Instagram ---
 
 class InstagramError extends Error {
-  constructor(readonly kind: 'rejected' | 'unreachable', message: string) {
+  constructor(
+    readonly kind: 'not_connected' | 'rejected' | 'unreachable',
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -175,23 +209,36 @@ async function graphGet(path: string, token: string): Promise<Record<string, unk
 /**
  * Asks Instagram — not the app — how many followers this account has.
  *
- * Two hops on purpose: `/me` identifies the account, then the user node is
- * read for `followers_count`, which is the field Instagram documents for
- * business and creator accounts.
+ * The connection is resolved server-side from the session token: it looks up
+ * the encrypted Instagram token (`get_instagram_dashboard_connection`,
+ * service-role only), decrypts it in memory, and reads `followers_count`
+ * straight off the IG User node — no `/me` hop and no Instagram token in the
+ * request body.
  */
 async function readInstagramFollowers(
-  token: string,
+  config: FunctionConfig,
+  sessionToken: string,
 ): Promise<{ instagramUserId: string; username: string; followers: number }> {
-  const identity = await graphGet('me?fields=id,username', token);
-  const instagramUserId = typeof identity.id === 'string' ? identity.id : '';
-  if (!instagramUserId) {
+  const connection = await getDashboardConnection(config, sessionToken);
+  if (!connection) {
     throw new InstagramError(
-      'rejected',
-      'Instagram did not identify this connection. Reconnect Instagram, then try again.',
+      'not_connected',
+      'Connect Instagram first — a milestone needs a verified follower count.',
     );
   }
+  const accessToken = await decryptAccessToken(
+    {
+      ciphertext: connection.encryptedAccessToken,
+      iv: connection.tokenIv,
+      authTag: connection.tokenAuthTag,
+    },
+    config.tokenEncryptionKey,
+  );
 
-  const node = await graphGet(`${instagramUserId}?fields=followers_count`, token);
+  const node = await graphGet(
+    `${connection.instagramUserId}?fields=followers_count`,
+    accessToken,
+  );
   const raw = Number(node.followers_count);
   if (!Number.isFinite(raw) || raw < 0) {
     // The account exists but Instagram refused the number (permissions or an
@@ -204,13 +251,81 @@ async function readInstagramFollowers(
   }
 
   return {
-    instagramUserId,
-    username: typeof identity.username === 'string' ? identity.username : '',
+    instagramUserId: connection.instagramUserId,
+    username: connection.username,
     followers: Math.min(MAX_FOLLOWERS, Math.round(raw)),
   };
 }
 
 // ------------------------------------------------------------ Supabase ------
+
+/**
+ * Resolves the live Instagram connection behind a dashboard session token.
+ *
+ * The RPC is service-role only and keyed by the SHA-256 of the token, so the
+ * browser never sees the table and the raw token never touches a log.
+ */
+async function getDashboardConnection(
+  config: FunctionConfig,
+  sessionToken: string,
+): Promise<{
+  instagramUserId: string;
+  username: string;
+  encryptedAccessToken: string;
+  tokenIv: string;
+  tokenAuthTag: string;
+} | null> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${config.supabaseUrl}/rest/v1/rpc/get_instagram_dashboard_connection`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: config.serviceRoleKey,
+          Authorization: `Bearer ${config.serviceRoleKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ p_session_hash: await sha256(sessionToken) }),
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      },
+    );
+  } catch {
+    throw new InstagramError(
+      'unreachable',
+      'Instagram could not be reached just now. Please retry.',
+    );
+  }
+  if (!response.ok) {
+    throw new InstagramError(
+      'unreachable',
+      'Instagram could not be reached just now. Please retry.',
+    );
+  }
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  // The RPC returns nothing for an unknown or expired session, and for a
+  // connection whose token is past its clamped 30-day validity — both mean
+  // "no usable connection" to this client.
+  if (!isRecord(body) || typeof body.instagramUserId !== 'string') {
+    return null;
+  }
+  return {
+    instagramUserId: body.instagramUserId,
+    username: typeof body.username === 'string' ? body.username : '',
+    encryptedAccessToken:
+      typeof body.encryptedAccessToken === 'string'
+        ? body.encryptedAccessToken
+        : '',
+    tokenIv: typeof body.tokenIv === 'string' ? body.tokenIv : '',
+    tokenAuthTag:
+      typeof body.tokenAuthTag === 'string' ? body.tokenAuthTag : '',
+  };
+}
 
 async function awardMilestones(
   config: FunctionConfig,
@@ -276,8 +391,9 @@ async function handleFollowers(
     isRecord(body) && typeof body.instagramAccessToken === 'string'
       ? body.instagramAccessToken.trim()
       : '';
-  // Anything that is not shaped like a token fails inside Instagram, so there
-  // is no reason to hit the network with an empty one.
+  // The body carries the connection session token (never an Instagram token);
+  // anything not shaped like one cannot resolve a connection, so there is no
+  // reason to hit the network with it.
   if (!token || token.length > 2048 || /[\r\n]/.test(token)) {
     return jsonResponse(
       {
@@ -291,15 +407,21 @@ async function handleFollowers(
 
   let verified: { instagramUserId: string; username: string; followers: number };
   try {
-    verified = await readInstagramFollowers(token);
+    verified = await readInstagramFollowers(config, token);
   } catch (error) {
     if (error instanceof InstagramError) {
+      const clientError =
+        error.kind === 'not_connected'
+          ? 'instagram_not_connected'
+          : error.kind === 'rejected'
+            ? 'instagram_rejected'
+            : 'instagram_unreachable';
       return jsonResponse(
         {
-          error: error.kind === 'rejected' ? 'instagram_rejected' : 'instagram_unreachable',
+          error: clientError,
           message: error.message,
         },
-        error.kind === 'rejected' ? 400 : 503,
+        error.kind === 'unreachable' ? 503 : 400,
         headers,
       );
     }

@@ -37,7 +37,12 @@ export function ConnectedScreen({
           <View style={{ flex: 1 }}>
             <Text style={styles.username}>@{profile.username}</Text>
             <Text style={styles.accountType}>
-              {profile.accountType === 'Media_Creator' ? 'Creator' : 'Business'} account
+              {profile.accountType === 'Media_Creator'
+                ? 'Creator'
+                : profile.accountType === 'Professional'
+                  ? 'Professional'
+                  : 'Business'}{' '}
+              account
             </Text>
           </View>
           <View style={styles.linkPill}>

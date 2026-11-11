@@ -3,10 +3,11 @@ import { MILESTONES, type AchievementMilestone } from '../lib/community/model';
 
 // Verified follower sync.
 //
-// The follower count is never supplied by the app. This posts the Instagram
-// token the creator already holds to the `community` edge function, which asks
-// Instagram for the number and awards milestones server-side. Only Instagram's
-// answer can come back, so nothing here can be used to claim a reward.
+// The follower count is never supplied by the app. This posts the opaque
+// Instagram connection session token to the `community` edge function, which
+// resolves the real Instagram token server-side, asks Instagram for the
+// number, and awards milestones server-side. Only Instagram's answer can come
+// back, so nothing here can be used to claim a reward.
 
 const FUNCTION_URL = `${supabaseUrl}/functions/v1/community/followers`;
 const TIMEOUT_MS = 30_000;

@@ -13,39 +13,59 @@ import {
   REQUIRED_SCOPES,
 } from './instagram';
 
-test('authorization URL uses Instagram Login and only the requested scopes', () => {
+test('authorization URL uses Meta Unified Login with the configuration ID', () => {
   const state = createOpaqueToken();
   const url = new URL(
     buildInstagramAuthorizationUrl(
       '123456789',
+      '987654321',
       'https://api.example.test/api/instagram/callback',
       state,
     ),
   );
 
-  assert.equal(url.origin, 'https://www.instagram.com');
-  assert.equal(url.pathname, '/oauth/authorize');
+  assert.equal(url.origin, 'https://www.facebook.com');
+  assert.equal(url.pathname, '/dialog/oauth');
+  assert.equal(url.searchParams.get('client_id'), '123456789');
+  assert.equal(url.searchParams.get('config_id'), '987654321');
+  assert.equal(
+    url.searchParams.get('redirect_uri'),
+    'https://api.example.test/api/instagram/callback',
+  );
   assert.equal(url.searchParams.get('response_type'), 'code');
-  assert.equal(url.searchParams.get('enable_fb_login'), 'false');
-  assert.equal(url.searchParams.get('force_reauth'), 'true');
+  assert.equal(url.searchParams.get('display'), 'popup');
+  // prompt=login replaces the retired force_reauth: the account picker shows
+  // on every attempt instead of silently reusing a web session.
+  assert.equal(url.searchParams.get('prompt'), 'login');
   assert.equal(url.searchParams.get('state'), state);
-  assert.deepEqual(url.searchParams.get('scope')?.split(','), [
-    ...REQUIRED_SCOPES,
-  ]);
+  // Unified Login fixes the grant via config_id — no scope list, and the
+  // retired instagram.com host must stay gone.
+  assert.equal(url.searchParams.get('scope'), null);
+  assert.equal(url.searchParams.get('force_reauth'), null);
+  assert.equal(url.searchParams.get('enable_fb_login'), null);
 });
 
 test('required Instagram permissions must both be granted', () => {
+  assert.deepEqual([...REQUIRED_SCOPES], [
+    'instagram_basic',
+    'instagram_manage_insights',
+  ]);
   assert.deepEqual(
     assertRequiredPermissions(REQUIRED_SCOPES.join(',')),
     [...REQUIRED_SCOPES],
   );
   assert.throws(
-    () => assertRequiredPermissions('instagram_business_basic'),
+    () => assertRequiredPermissions('instagram_basic'),
     /missing_permissions/,
   );
+  // Unified Login's system-user token exchange returns no permissions list
+  // (the config_id fixed the grant), so an absent list is expected — the live
+  // profile read right after is what proves instagram_basic works.
+  assert.deepEqual(assertRequiredPermissions(undefined), []);
+  assert.deepEqual(assertRequiredPermissions(null), []);
 });
 
-test('profile parser accepts professional Creator and Business accounts only', () => {
+test('profile parser accepts professional accounts and labels missing types honestly', () => {
   assert.deepEqual(
     normalizeInstagramProfile({
       user_id: '17840000000000000',
@@ -78,6 +98,24 @@ test('profile parser accepts professional Creator and Business accounts only', (
     }).accountType,
     'Media_Creator',
   );
+  // Unified Login on graph.facebook.com can omit account_type entirely (the
+  // field is documented only for graph.instagram.com); an account that could
+  // authorize at all is professional, so label it honestly instead of failing.
+  assert.equal(
+    normalizeInstagramProfile({
+      user_id: '17840000000000003',
+      username: 'creatordna_creator_4',
+    }).accountType,
+    'Professional',
+  );
+  assert.equal(
+    normalizeInstagramProfile({
+      user_id: '17840000000000004',
+      username: 'creatordna_creator_5',
+      account_type: null,
+    }).accountType,
+    'Professional',
+  );
   assert.throws(
     () =>
       normalizeInstagramProfile({
@@ -93,12 +131,12 @@ test('profile parser accepts professional Creator and Business accounts only', (
       // what Instagram reported.
       (error as { detail?: unknown }).detail === 'Personal',
   );
+  // A missing identity is still an invalid profile, never a fallback.
   assert.throws(
     () =>
       normalizeInstagramProfile({
-        user_id: '123',
-        username: 'personal',
-        account_type: null,
+        username: 'no_id',
+        account_type: 'Business',
       }),
     /invalid_profile/,
   );
@@ -195,19 +233,19 @@ test('dashboard reads only returned profile, media and insight data', async () =
   globalThis.fetch = async (input) => {
     const url = new URL(String(input));
     requestedUrls.push(url);
-    if (url.pathname.endsWith('/me')) {
+    if (url.pathname.endsWith('/17840000000000000')) {
+      // The IG User node on graph.facebook.com reports `id` (not the
+      // graph.instagram.com `user_id` spelling).
       return Response.json({
-        data: [{
-          user_id: '17840000000000000',
-          username: 'creatordna_creator',
-          account_type: 'Media_Creator',
-          profile_picture_url: 'https://cdn.example.test/profile.jpg',
-          followers_count: 321,
-          media_count: 48,
-        }],
+        id: '17840000000000000',
+        username: 'creatordna_creator',
+        account_type: 'Media_Creator',
+        profile_picture_url: 'https://cdn.example.test/profile.jpg',
+        followers_count: 321,
+        media_count: 48,
       });
     }
-    if (url.pathname.endsWith('/me/media')) {
+    if (url.pathname.endsWith('/17840000000000000/media')) {
       return Response.json({
         data: [{
           id: 'media-1',
@@ -261,21 +299,32 @@ test('dashboard reads only returned profile, media and insight data', async () =
     assert.equal(dashboard.profile.username, 'creatordna_creator');
     assert.equal(dashboard.media[0]?.id, 'media-1');
     assert.equal(dashboard.media[0]?.likes, 16);
-    // The /me call must request the fields it consumes — Meta returns only
-    // defaults otherwise, which the normalizer then rejects.
-    const meUrl = requestedUrls.find((url) => url.pathname.endsWith('/me'));
-    const meFields = meUrl?.searchParams.get('fields') ?? '';
+    // Every dashboard read must run on graph.facebook.com — the Instagram
+    // hosts are retired for Unified Login apps.
+    for (const url of requestedUrls) {
+      assert.equal(url.origin, 'https://graph.facebook.com');
+    }
+    // The profile call must hit the IG User node and request the fields it
+    // consumes — Meta returns only defaults otherwise, which the normalizer
+    // then rejects.
+    const nodeUrl = requestedUrls.find((url) =>
+      url.pathname.endsWith('/17840000000000000'),
+    );
+    const nodeFields = nodeUrl?.searchParams.get('fields') ?? '';
     for (const field of [
-      'user_id',
+      'id',
       'account_type',
       'followers_count',
       'media_count',
     ]) {
       assert.ok(
-        meFields.includes(field),
-        `dashboard /me fields missing ${field}: ${meFields}`,
+        nodeFields.includes(field),
+        `dashboard profile fields missing ${field}: ${nodeFields}`,
       );
     }
+    // The node's `id` must bridge to the normalizer's `user_id`.
+    assert.equal(dashboard.profile.instagramUserId, '17840000000000000');
+    assert.equal(dashboard.profile.accountType, 'Media_Creator');
     // 7 current-window + 3 previous-window + 9 day-series chunks (3 metrics
     // × 3 chunks) + 3 seven-day + 3 ninety-day window fetches.
     assert.equal(

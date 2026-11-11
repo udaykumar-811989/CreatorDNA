@@ -64,7 +64,7 @@ export const PRIVACY_SECTIONS: PrivacySection[] = [
     heading: '4. Instagram and Meta data',
     blocks: [
       p(
-        'Connecting an account uses Instagram Login and requests exactly two permissions: instagram_business_basic (profile) and instagram_business_manage_insights (30-day insights). Instagram authorization runs with force_reauth so a personal Instagram web session is never silently reused instead of the professional account you meant to connect.',
+        'Connecting an account uses Instagram Login (Meta Unified Login) and requests exactly two permissions: instagram_basic (profile) and instagram_manage_insights (30-day insights). The login dialog always asks which account to use, so a personal Instagram web session is never silently reused instead of the professional account you meant to connect.',
       ),
       ul(
         'Your Instagram token never reaches the app — authorization, token exchange, and profile lookup all happen server-side, and the token is encrypted with AES-256-GCM before it is stored.',

@@ -1020,7 +1020,8 @@ function AppShell() {
         !connectedProfile ||
         typeof connectedProfile.username !== 'string' ||
         (connectedProfile.accountType !== 'Business' &&
-          connectedProfile.accountType !== 'Media_Creator') ||
+          connectedProfile.accountType !== 'Media_Creator' &&
+          connectedProfile.accountType !== 'Professional') ||
         typeof connectedProfile.sessionToken !== 'string'
       ) {
         throw new Error('The Instagram profile response was invalid.');
@@ -1723,8 +1724,8 @@ function AppShell() {
   const milestoneSyncInFlight = useRef(false);
 
   const syncMilestones = useCallback(async () => {
-    // `sessionToken` is the Instagram token, so a signed-in account that never
-    // connected Instagram has nothing to verify.
+    // `sessionToken` is the Instagram connection session token, so a
+    // signed-in account that never connected Instagram has nothing to verify.
     if (!sessionToken || milestoneSyncInFlight.current) return;
     const last = readJson<number>(storageKeys.milestoneSyncAt, 0);
     if (Date.now() - last < MILESTONE_SYNC_INTERVAL_MS) return;

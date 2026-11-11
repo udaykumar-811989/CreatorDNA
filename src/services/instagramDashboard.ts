@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 
 export type InstagramProfile = {
   username: string;
-  accountType: 'Business' | 'Media_Creator';
+  accountType: 'Business' | 'Media_Creator' | 'Professional';
   profilePictureUrl: string | null;
 };
 
@@ -157,7 +157,8 @@ function parseDashboard(value: unknown): InstagramDashboard {
   if (
     typeof profile.username !== 'string' ||
     (profile.accountType !== 'Business' &&
-      profile.accountType !== 'Media_Creator') ||
+      profile.accountType !== 'Media_Creator' &&
+      profile.accountType !== 'Professional') ||
     !Array.isArray(value.media)
   ) {
     throw new DashboardRequestError('try_again');

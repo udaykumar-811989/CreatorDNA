@@ -113,7 +113,12 @@ export function ConnectScreen({
               <View style={{ flex: 1 }}>
                 <Text style={styles.connectedUsername}>@{profile.username}</Text>
                 <Text style={styles.connectedType}>
-                  {profile.accountType === 'Media_Creator' ? 'Creator' : 'Business'} account · Tap to switch
+                  {profile.accountType === 'Media_Creator'
+                    ? 'Creator'
+                    : profile.accountType === 'Professional'
+                      ? 'Professional'
+                      : 'Business'}{' '}
+                  account · Tap to switch
                 </Text>
               </View>
               <ChevronRightIcon size={20} color={colors.textDim} />

@@ -141,7 +141,7 @@ export const TROUBLESHOOTING: HelpArticle[] = [
     id: 'instagram-login-fails',
     question: 'Instagram login fails or loops back to the start',
     answer:
-      'Instagram signs in with force_reauth, so it asks which account to use every time — pick the professional account, not a personal one. If it still fails, close the browser window, open Settings → Reconnect Instagram, and start again. On localhost, Meta callbacks only work through an HTTPS tunnel.',
+      'Instagram login always asks which account to use, so pick the professional account, not a personal one. If it still fails, close the browser window, open Settings → Reconnect Instagram, and start again. On localhost, Meta callbacks only work through an HTTPS tunnel.',
   },
   {
     id: 'session-expired',

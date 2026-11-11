@@ -110,7 +110,13 @@ export function DnaScreen({
             {accountType ? (
               <View style={{ marginTop: 6 }}>
                 <Badge
-                  label={accountType === 'Media_Creator' ? 'Creator account' : 'Business account'}
+                  label={
+                    accountType === 'Media_Creator'
+                      ? 'Creator account'
+                      : accountType === 'Professional'
+                        ? 'Professional account'
+                        : 'Business account'
+                  }
                   tone="purple"
                 />
               </View>

@@ -6,17 +6,13 @@ import {
   fetchInstagramDashboard,
   InstagramApiError,
   InstagramFlowError,
+  REQUIRED_SCOPES,
 } from '../_shared/instagram.ts';
 import { parseAllowedOrigins } from '../_shared/origins.ts';
 
-const requiredScopes = [
-  'instagram_business_basic',
-  'instagram_business_manage_insights',
-];
-
 type ProfileRecord = {
   username: string;
-  accountType: 'Business' | 'Media_Creator';
+  accountType: 'Business' | 'Media_Creator' | 'Professional';
   profilePictureUrl: string | null;
 };
 
@@ -57,6 +53,13 @@ function getConfig() {
     throw new Error('INSTAGRAM_APP_ID must contain only digits.');
   }
 
+  // Unified Login configuration: it fixes the permission set (instagram_basic,
+  // instagram_manage_insights) that the login dialog grants.
+  const configId = required('INSTAGRAM_CONFIG_ID');
+  if (!/^\d+$/.test(configId)) {
+    throw new Error('INSTAGRAM_CONFIG_ID must contain only digits.');
+  }
+
   const redirectUri = required('INSTAGRAM_REDIRECT_URI');
   const redirectUrl = new URL(redirectUri);
   if (
@@ -88,6 +91,7 @@ function getConfig() {
 
   return {
     appId,
+    configId,
     appSecret: required('INSTAGRAM_APP_SECRET'),
     redirectUri,
     tokenEncryptionKey: decodeKey(required('TOKEN_ENCRYPTION_KEY')),
@@ -281,11 +285,12 @@ async function handleStart(
     {
       authorizationUrl: buildInstagramAuthorizationUrl(
         config.appId,
+        config.configId,
         config.redirectUri,
         state,
       ),
       state,
-      permissions: requiredScopes,
+      permissions: REQUIRED_SCOPES,
     },
     200,
     headers,

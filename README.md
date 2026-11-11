@@ -50,6 +50,8 @@ distinguish Reels from other videos.
    - `INSTAGRAM_APP_ID`: the Instagram App ID from Instagram API setup with
      Instagram Login
    - `INSTAGRAM_APP_SECRET`: a newly rotated Instagram App Secret
+   - `INSTAGRAM_CONFIG_ID`: the Configuration ID of the app's Unified Login
+     configuration (public; shown on the Unified Login API Setup page)
    - `INSTAGRAM_REDIRECT_URI`: the exact callback URL shown below
    - `TOKEN_ENCRYPTION_KEY`: base64 encoding of a fresh, random 32-byte key
    - `APP_WEB_ORIGIN`: the exact origin serving the web app, e.g.
@@ -67,9 +69,9 @@ distinguish Reels from other videos.
 
 5. In Meta Developer Dashboard → Instagram → API setup with Instagram Login →
    Business login settings → OAuth redirect URIs, add the callback URL exactly.
-   Request the `instagram_business_basic` and
-   `instagram_business_manage_insights` permissions in the app's Instagram
-   Login configuration.
+   The Unified Login configuration (its Configuration ID is the
+   `INSTAGRAM_CONFIG_ID` Edge Function secret) grants the `instagram_basic`
+   and `instagram_manage_insights` permissions.
 6. Set your Instagram Login product's App ID and newly rotated App Secret in
    the Supabase Edge Function secrets. Restart/rebuild Expo after changing the
    client `.env`.
@@ -130,20 +132,26 @@ does not yet have user sign-in, saved connections are keyed by Instagram
 professional-account ID; add CreatorDNA user ownership before implementing
 persistent connection-management screens.
 
-The flow requests `instagram_business_basic` and
-`instagram_business_manage_insights`, the permissions listed in Meta's
-Instagram Insights guide for Instagram Login, and rejects a connection if
-either permission is not granted.
-Instagram authorization uses `force_reauth=true` so an already signed-in
-personal Instagram web session does not silently get reused instead of the
+The flow signs in through Meta's Unified Login
+(`facebook.com/dialog/oauth` with the configuration ID) and rejects a
+connection if either granted permission (`instagram_basic`,
+`instagram_manage_insights`) is missing when Meta reports a permissions list.
+The login dialog uses `prompt=login` so an already signed-in personal
+Instagram web session does not silently get reused instead of the
 professional account the creator intends to connect.
 
-The Edge Function calls these official Instagram Login API endpoints:
+The Edge Function calls these official Meta/Instagram API endpoints (Unified
+Login tokens are read on `graph.facebook.com`):
 
-- `GET /v25.0/me` for the connected profile and follower count
-- `GET /v25.0/me/media` for the ten most recent media items and available
-  per-item likes/comments
-- `GET /v25.0/{instagram-user-id}/insights` for views, likes, and comments
+- `GET /v27.0/oauth/access_token` to exchange the login code for the
+  system-user token
+- `GET /v27.0/me/assigned_instagram_accounts` for the professional account
+  linked to the login
+- `GET /v27.0/{instagram-user-id}` for the connected profile (username,
+  account type, avatar, follower and media counts)
+- `GET /v27.0/{instagram-user-id}/media` for the ten most recent media items
+  and available per-item likes/comments
+- `GET /v27.0/{instagram-user-id}/insights` for views, likes, and comments
   over the last 30 days
 
 Supabase email/password sign-in is available from the sign-in screen shown

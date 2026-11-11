@@ -56,7 +56,13 @@ export function MediaKitScreen({
   // Instagram returns 'Media_Creator'; a person reading a media kit should
   // see the words they'd actually use.
   const accountLabel =
-    rawType === 'Media_Creator' ? 'Creator account' : rawType === 'Business' ? 'Business account' : 'Instagram account';
+    rawType === 'Media_Creator'
+      ? 'Creator account'
+      : rawType === 'Professional'
+        ? 'Professional account'
+        : rawType === 'Business'
+          ? 'Business account'
+          : 'Instagram account';
   const rate = engagementRate(stats);
   const avgViews = averageDailyViews(dashboard);
   const totalPosts = dashboard?.profile.mediaCount ?? null;
