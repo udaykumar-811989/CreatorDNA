@@ -180,7 +180,6 @@ export function buildInstagramAuthorizationUrl(
   configId: string,
   redirectUri: string,
   state: string,
-  options: { reselect?: boolean } = {},
 ): string {
   // Meta retired instagram.com/oauth/authorize for newer apps: login now runs
   // through Unified Login, where the configuration (config_id) fixes the
@@ -191,15 +190,10 @@ export function buildInstagramAuthorizationUrl(
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('display', 'popup');
-  // A plain Connect sends no `prompt` at all — that is the only way Meta
-  // will skip its consent/asset screen once access is already granted and
-  // redirect straight back to the app instead of stopping on a page.
-  // `prompt=login` is the old force_reauth: only an explicit "connect a
-  // different account" swap needs it, so the picker cannot silently reuse
-  // the current session.
-  if (options.reselect) {
-    url.searchParams.set('prompt', 'login');
-  }
+  // `prompt=login` is the login step a creator expects: Meta shows the
+  // account picker and password, and once the sign-in succeeds it records
+  // the grant and redirects straight back to the app.
+  url.searchParams.set('prompt', 'login');
   url.searchParams.set('state', state);
   return url.toString();
 }

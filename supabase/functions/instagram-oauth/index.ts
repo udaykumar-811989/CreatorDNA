@@ -288,7 +288,6 @@ async function handleStart(
         config.configId,
         config.redirectUri,
         state,
-        { reselect: body.reselect === true },
       ),
       state,
       permissions: REQUIRED_SCOPES,

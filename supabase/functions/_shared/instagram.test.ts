@@ -34,34 +34,15 @@ test('authorization URL uses Meta Unified Login with the configuration ID', () =
   );
   assert.equal(url.searchParams.get('response_type'), 'code');
   assert.equal(url.searchParams.get('display'), 'popup');
-  // No `prompt` on a plain Connect: Meta then skips its consent/asset
-  // screen once access is granted and redirects straight back to the app.
-  assert.equal(url.searchParams.get('prompt'), null);
+  // `prompt=login` is the login step a creator expects: Meta shows the
+  // account picker and password, then redirects straight back to the app.
+  assert.equal(url.searchParams.get('prompt'), 'login');
   assert.equal(url.searchParams.get('state'), state);
   // Unified Login fixes the grant via config_id — no scope list, and the
   // retired instagram.com host must stay gone.
   assert.equal(url.searchParams.get('scope'), null);
   assert.equal(url.searchParams.get('force_reauth'), null);
   assert.equal(url.searchParams.get('enable_fb_login'), null);
-});
-
-test('only a reselect forces the account picker', () => {
-  const url = new URL(
-    buildInstagramAuthorizationUrl(
-      '123456789',
-      '987654321',
-      'https://api.example.test/api/instagram/callback',
-      'state-for-reselect',
-      { reselect: true },
-    ),
-  );
-
-  // prompt=login replaces the retired force_reauth, and only a swap asks for
-  // it: the picker must show so a different account can be chosen.
-  assert.equal(url.searchParams.get('prompt'), 'login');
-  assert.equal(url.searchParams.get('state'), 'state-for-reselect');
-  assert.equal(url.searchParams.get('response_type'), 'code');
-  assert.equal(url.searchParams.get('scope'), null);
 });
 
 test('required Instagram permissions must both be granted', () => {
