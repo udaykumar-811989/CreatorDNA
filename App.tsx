@@ -1481,6 +1481,9 @@ function AppShell() {
         setConnectionError(null);
       } else {
         clearPendingOAuthState();
+        // The Connect screen was skipped on the way out, so bring it back
+        // now — it is where a cancelled login is reported.
+        setScreen('connect');
         setConnectionError('login_cancelled');
         setConnectionState('failed');
       }
@@ -1490,6 +1493,7 @@ function AppShell() {
         setConnectionState('connected');
         setConnectionError(null);
       } else {
+        setScreen('connect');
         setConnectionError(
           error instanceof Error && /^[a-z_]+$/.test(error.message)
             ? error.message
@@ -1588,8 +1592,10 @@ function AppShell() {
     }
     setConnectionState('idle');
     setConnectionError(null);
-    setScreen('connect');
-  }, [profile, sessionToken]);
+    // Tapping Connect goes straight to the browser; the Connect screen only
+    // appears when the flow returns, to present Connected or an error.
+    void connectInstagram();
+  }, [connectInstagram, profile, sessionToken]);
 
   const logout = useCallback(() => {
     // Invalidate any dashboard request still in flight — its late response
@@ -2873,7 +2879,7 @@ function AppShell() {
           }}
           authLoading={authLoading}
           authError={authError}
-          onConnectInstagram={() => setScreen('connect')}
+          onConnectInstagram={handleConnectEntry}
           onContinueWithoutInstagram={continueWithoutInstagram}
           savedAccounts={savedAccounts.map((account) => ({
             email: account.email,

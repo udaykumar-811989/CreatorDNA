@@ -191,12 +191,16 @@ export function buildInstagramAuthorizationUrl(
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('display', 'popup');
-  // `prompt=login` is the old force_reauth: it forces Meta's login step on
-  // every attempt, which is the account picker a swap needs — but it also
-  // means a creator tapping Connect never gets the silent approval that
-  // returns straight to the app. So only an explicit reselect asks for it.
+  // `prompt` decides which Meta screen stops the flow. `consent` reuses the
+  // browser's existing Facebook session — no login page — and always lands
+  // on the business-asset selection screen, the only page a creator should
+  // see before Continue returns them to the app. `login` is the old
+  // force_reauth: only an explicit "connect a different account" swap needs
+  // it, so the picker cannot silently reuse the current session.
   if (options.reselect) {
     url.searchParams.set('prompt', 'login');
+  } else {
+    url.searchParams.set('prompt', 'consent');
   }
   url.searchParams.set('state', state);
   return url.toString();
