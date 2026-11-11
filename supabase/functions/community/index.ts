@@ -1,5 +1,6 @@
 import type { AchievementMilestone } from '../_shared/milestones.ts';
 import { nextMilestone } from '../_shared/milestones.ts';
+import { parseAllowedOrigins } from '../_shared/origins.ts';
 
 // Verified follower sync — the only path that can award a milestone.
 //
@@ -15,7 +16,7 @@ type FunctionConfig = {
   supabaseUrl: string;
   anonKey: string;
   serviceRoleKey: string;
-  appWebOrigin: string;
+  appWebOrigins: string[];
 };
 
 const UPSTREAM_TIMEOUT_MS = 12_000;
@@ -37,20 +38,16 @@ function getConfig(): FunctionConfig {
     throw new Error('SUPABASE_URL must use HTTPS.');
   }
 
-  const appWebOrigin = required('APP_WEB_ORIGIN');
-  const appUrl = new URL(appWebOrigin);
-  if (
-    appUrl.origin !== appWebOrigin.replace(/\/$/, '') ||
-    (appUrl.protocol !== 'https:' && appUrl.hostname !== 'localhost')
-  ) {
-    throw new Error('APP_WEB_ORIGIN must be an HTTPS origin or localhost.');
-  }
+  const appWebOrigins = parseAllowedOrigins(
+    'APP_WEB_ORIGIN',
+    required('APP_WEB_ORIGIN'),
+  );
 
   return {
     supabaseUrl,
     anonKey: required('SUPABASE_ANON_KEY'),
     serviceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY'),
-    appWebOrigin: appUrl.origin,
+    appWebOrigins,
   };
 }
 
@@ -366,7 +363,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
   }
 
   const origin = request.headers.get('origin');
-  const allowed = [config.appWebOrigin];
+  const allowed = config.appWebOrigins;
   const headers = responseHeaders(origin, allowed);
   if (origin && !isAllowedOrigin(origin, allowed)) {
     return jsonResponse({ error: 'origin_not_allowed' }, 403, headers);

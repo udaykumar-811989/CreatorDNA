@@ -7,6 +7,7 @@ import {
   InstagramApiError,
   InstagramFlowError,
 } from '../_shared/instagram.ts';
+import { parseAllowedOrigins } from '../_shared/origins.ts';
 
 const requiredScopes = [
   'instagram_business_basic',
@@ -71,18 +72,10 @@ function getConfig() {
     );
   }
 
-  const appWebOriginValue = required('APP_WEB_ORIGIN');
-  const appWebUrl = new URL(appWebOriginValue);
-  if (
-    (appWebUrl.protocol !== 'https:' &&
-      appWebUrl.hostname !== 'localhost') ||
-    appWebUrl.origin !== appWebOriginValue.replace(/\/$/, '')
-  ) {
-    throw new Error(
-      'APP_WEB_ORIGIN must be an HTTPS origin, or localhost in development, without a path.',
-    );
-  }
-  const appWebOrigin = appWebUrl.origin;
+  const appWebOrigins = parseAllowedOrigins(
+    'APP_WEB_ORIGIN',
+    required('APP_WEB_ORIGIN'),
+  );
   const nativeRedirectUri = required('APP_NATIVE_REDIRECT_URI');
   if (nativeRedirectUri !== 'creatordna://instagram/callback') {
     throw new Error(
@@ -98,7 +91,7 @@ function getConfig() {
     appSecret: required('INSTAGRAM_APP_SECRET'),
     redirectUri,
     tokenEncryptionKey: decodeKey(required('TOKEN_ENCRYPTION_KEY')),
-    appWebOrigin,
+    appWebOrigins,
     nativeRedirectUri,
     allowExpoGoRedirects: Deno.env.get('ALLOW_EXPO_GO_REDIRECTS') === 'true',
     supabaseUrl,
@@ -134,7 +127,7 @@ function isAllowedReturnUri(
     try {
       const uri = new URL(value);
       return (
-        uri.origin === config.appWebOrigin &&
+        config.appWebOrigins.includes(uri.origin) &&
         uri.pathname === '/instagram-connected' &&
         !uri.search &&
         !uri.hash &&
@@ -177,14 +170,14 @@ function isAllowedReturnUri(
   }
 }
 
-function baseHeaders(origin: string | null, appWebOrigin: string) {
+function baseHeaders(origin: string | null, appWebOrigins: string[]) {
   const headers = new Headers({
     'Cache-Control': 'no-store',
     'Referrer-Policy': 'no-referrer',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
   });
-  if (origin === appWebOrigin) {
+  if (origin && appWebOrigins.includes(origin)) {
     headers.set('Access-Control-Allow-Origin', origin);
     headers.set('Vary', 'Origin');
   }
@@ -508,10 +501,10 @@ Deno.serve(async (request: Request): Promise<Response> => {
   }
 
   const origin = request.headers.get('origin');
-  const headers = baseHeaders(origin, config.appWebOrigin);
+  const headers = baseHeaders(origin, config.appWebOrigins);
   const path = new URL(request.url).pathname;
   const isCallback = path.endsWith('/callback');
-  if (origin && origin !== config.appWebOrigin && !isCallback) {
+  if (origin && !config.appWebOrigins.includes(origin) && !isCallback) {
     return jsonResponse({ error: 'origin_not_allowed' }, 403, headers);
   }
   if (request.method === 'OPTIONS') {

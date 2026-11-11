@@ -13,13 +13,14 @@ import {
   parseUploadInitRequest,
   validateContentAnalysis,
 } from '../_shared/creatorAi.ts';
+import { parseAllowedOrigins } from '../_shared/origins.ts';
 
 type FunctionConfig = {
   supabaseUrl: string;
   anonKey: string;
   serviceRoleKey: string;
-  appWebOrigin: string;
-  aiWebOrigin: string | null;
+  appWebOrigins: string[];
+  aiWebOrigins: string[];
   aiEndpoint: string | null;
   aiApiKey: string | null;
   aiModel: string | null;
@@ -76,27 +77,15 @@ function getConfig(): FunctionConfig {
     throw new Error('SUPABASE_URL must use HTTPS.');
   }
 
-  const appWebOrigin = required('APP_WEB_ORIGIN');
-  const appUrl = new URL(appWebOrigin);
-  if (
-    appUrl.origin !== appWebOrigin.replace(/\/$/, '') ||
-    (appUrl.protocol !== 'https:' && appUrl.hostname !== 'localhost')
-  ) {
-    throw new Error('APP_WEB_ORIGIN must be an HTTPS origin or localhost.');
-  }
+  const appWebOrigins = parseAllowedOrigins(
+    'APP_WEB_ORIGIN',
+    required('APP_WEB_ORIGIN'),
+  );
 
   const aiWebOriginValue = optional('AI_WEB_ORIGIN');
-  let aiWebOrigin: string | null = null;
-  if (aiWebOriginValue) {
-    const aiWebUrl = new URL(aiWebOriginValue);
-    if (
-      aiWebUrl.origin !== aiWebOriginValue.replace(/\/$/, '') ||
-      (aiWebUrl.protocol !== 'https:' && aiWebUrl.hostname !== 'localhost')
-    ) {
-      throw new Error('AI_WEB_ORIGIN must be an HTTPS origin or localhost.');
-    }
-    aiWebOrigin = aiWebUrl.origin;
-  }
+  const aiWebOrigins = aiWebOriginValue
+    ? parseAllowedOrigins('AI_WEB_ORIGIN', aiWebOriginValue)
+    : [];
 
   const aiEndpoint = optional('AI_API_URL');
   if (aiEndpoint) {
@@ -114,8 +103,8 @@ function getConfig(): FunctionConfig {
     supabaseUrl,
     anonKey: required('SUPABASE_ANON_KEY'),
     serviceRoleKey: required('SUPABASE_SERVICE_ROLE_KEY'),
-    appWebOrigin: appUrl.origin,
-    aiWebOrigin,
+    appWebOrigins,
+    aiWebOrigins,
     aiEndpoint,
     aiApiKey: optional('AI_API_KEY'),
     aiModel: optional('AI_MODEL_FAST'),
@@ -1894,10 +1883,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
   }
 
   const origin = request.headers.get('origin');
-  const allowedOrigins = [
-    config.appWebOrigin,
-    ...(config.aiWebOrigin ? [config.aiWebOrigin] : []),
-  ];
+  const allowedOrigins = [...config.appWebOrigins, ...config.aiWebOrigins];
   const headers = responseHeaders(origin, allowedOrigins);
   if (origin && !isAllowedOrigin(origin, allowedOrigins)) {
     return jsonResponse({ error: 'origin_not_allowed' }, 403, headers);

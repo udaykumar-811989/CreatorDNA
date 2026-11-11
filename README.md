@@ -53,7 +53,10 @@ distinguish Reels from other videos.
    - `INSTAGRAM_REDIRECT_URI`: the exact callback URL shown below
    - `TOKEN_ENCRYPTION_KEY`: base64 encoding of a fresh, random 32-byte key
    - `APP_WEB_ORIGIN`: the exact origin serving the web app, e.g.
-     `https://your-creatordna-domain.example`
+     `https://your-creatordna-domain.example`. Several origins may be given
+     as a comma-separated list (production, the legacy Vercel domain, and
+     `http://localhost:8081` for local development), and every one of them
+     must be a bare origin with no path.
    - `APP_NATIVE_REDIRECT_URI`: `creatordna://instagram/callback`
    - `ALLOW_EXPO_GO_REDIRECTS`: `true` only while testing with Expo Go; remove
      or set to `false` for production
@@ -95,10 +98,13 @@ https://kwsigghvjgyxrwvnrfqg.supabase.co/functions/v1/instagram-oauth/callback
 Use this exact same URL as the `INSTAGRAM_REDIRECT_URI` Edge Function secret.
 No separate API server or externally hosted Postgres instance is needed.
 
-For the existing local web preview, `APP_WEB_ORIGIN` must be
+For the existing local web preview, `APP_WEB_ORIGIN` must include
 `http://localhost:8081`; the app return route is
-`http://localhost:8081/instagram-connected`. For another dev port or
-production host, configure `APP_WEB_ORIGIN` to that exact origin and add the
+`http://localhost:8081/instagram-connected`. `APP_WEB_ORIGIN` accepts a
+comma-separated list, so local development and the production host can stay
+enabled at the same time — for example
+`https://www.creatordna.in,https://creatordna-app.vercel.app,http://localhost:8081`.
+For another dev port, add that exact origin to the list and add the
 matching `/instagram-connected` route as a redirect URI in the Edge Function's
 OAuth allowlist. The Meta `INSTAGRAM_REDIRECT_URI` remains the Supabase
 callback URL above.
@@ -189,10 +195,12 @@ never with an `EXPO_PUBLIC_` prefix):
 - `AI_API_KEY`: provider secret
 - `AI_MODEL_FAST`: exact provider model identifier (for example, the Gemini
   model enabled for your API key)
-- `AI_WEB_ORIGIN`: optional exact browser app origin allowed by the AI function
-  for a non-local web deployment. Localhost/loopback origins on any port are
+- `AI_WEB_ORIGIN`: optional browser app origins allowed by the AI function
+  for a non-local web deployment — one origin, or several as a
+  comma-separated list. Localhost/loopback origins on any port are
   accepted for development.
-- `APP_WEB_ORIGIN`: exact browser app origin used by Instagram OAuth (leave it
+- `APP_WEB_ORIGIN`: browser app origins used by Instagram OAuth and the other
+  web functions — one origin, or several as a comma-separated list (leave it
   unchanged when configuring a separate AI preview origin)
 
 Supabase Edge Functions must also have their normal `SUPABASE_URL`,

@@ -15,6 +15,7 @@ import {
   type TrendItem,
   type TrendSourceKey,
 } from '../_shared/discover.ts';
+import { parseAllowedOrigins } from '../_shared/origins.ts';
 
 // Serves the Discover screen's Trends tab.
 //
@@ -30,7 +31,7 @@ import {
 type FunctionConfig = {
   supabaseUrl: string;
   anonKey: string;
-  appWebOrigin: string;
+  appWebOrigins: string[];
   redditClientId: string | null;
   redditClientSecret: string | null;
   xBearerToken: string | null;
@@ -69,14 +70,10 @@ function getConfig(): FunctionConfig {
     throw new Error('SUPABASE_URL must use HTTPS.');
   }
 
-  const appWebOrigin = required('APP_WEB_ORIGIN');
-  const appUrl = new URL(appWebOrigin);
-  if (
-    appUrl.origin !== appWebOrigin.replace(/\/$/, '') ||
-    (appUrl.protocol !== 'https:' && appUrl.hostname !== 'localhost')
-  ) {
-    throw new Error('APP_WEB_ORIGIN must be an HTTPS origin or localhost.');
-  }
+  const appWebOrigins = parseAllowedOrigins(
+    'APP_WEB_ORIGIN',
+    required('APP_WEB_ORIGIN'),
+  );
 
   const redditClientId = optional('REDDIT_CLIENT_ID');
   const redditClientSecret = optional('REDDIT_CLIENT_SECRET');
@@ -91,7 +88,7 @@ function getConfig(): FunctionConfig {
   return {
     supabaseUrl,
     anonKey: required('SUPABASE_ANON_KEY'),
-    appWebOrigin: appUrl.origin,
+    appWebOrigins,
     redditClientId,
     redditClientSecret,
     xBearerToken: optional('X_BEARER_TOKEN'),
@@ -566,7 +563,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
   }
 
   const origin = request.headers.get('origin');
-  const allowedOrigins = [config.appWebOrigin];
+  const allowedOrigins = config.appWebOrigins;
   const headers = responseHeaders(origin, allowedOrigins);
   if (origin && !isAllowedOrigin(origin, allowedOrigins)) {
     return jsonResponse({ error: 'origin_not_allowed' }, 403, headers);
