@@ -34,9 +34,9 @@ test('authorization URL uses Meta Unified Login with the configuration ID', () =
   );
   assert.equal(url.searchParams.get('response_type'), 'code');
   assert.equal(url.searchParams.get('display'), 'popup');
-  // `prompt=consent` keeps the existing Facebook session (no login page) and
-  // always stops on Meta's business-asset selection screen.
-  assert.equal(url.searchParams.get('prompt'), 'consent');
+  // No `prompt` on a plain Connect: Meta then skips its consent/asset
+  // screen once access is granted and redirects straight back to the app.
+  assert.equal(url.searchParams.get('prompt'), null);
   assert.equal(url.searchParams.get('state'), state);
   // Unified Login fixes the grant via config_id — no scope list, and the
   // retired instagram.com host must stay gone.
