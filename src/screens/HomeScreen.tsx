@@ -462,7 +462,11 @@ export function HomeScreen({
                     { color: growth ? (growth.up ? c.green : c.red) : c.onDarkSub },
                   ]}
                 >
-                  {growth ? `${growth.up ? '↑' : '↓'} ${Math.abs(growth.pct)}%` : '—'}
+                  {/* Capped at 100%: a jump past the ceiling is reported as
+                      the ceiling rather than as an unbounded number. */}
+                  {growth
+                    ? `${growth.up ? '↑' : '↓'} ${Math.min(Math.abs(growth.pct), 100)}%`
+                    : '—'}
                 </Text>
                 <Text style={styles.growthCaption}>
                   {growth

@@ -155,9 +155,11 @@ Login tokens are read on `graph.facebook.com`):
 - `GET /v27.0/{instagram-user-id}/insights` for views, likes, and comments
   over the last 30 days
 
-Supabase email/password sign-in is available from the sign-in screen shown
-again after a sign-out; the welcome flow no longer offers it, so connecting
-Instagram is the entry path. The Auth
+Supabase email/password sign-up and sign-in are available from the auth
+screen. "Continue without Instagram" on the connect screen opens it at Sign
+up (name, email, password); the same screen toggles to Log in (email,
+password) and keeps its own "Continue without Instagram" link as the guest
+path. The Auth
 access token is held in memory for the current app session and is not persisted
 or refreshed. Separately, the Instagram opaque connection session remains a
 bearer credential scoped to one Instagram connection and expires no later than

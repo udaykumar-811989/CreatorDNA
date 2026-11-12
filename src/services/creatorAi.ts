@@ -1030,6 +1030,93 @@ export async function signInForCreatorAi(
   };
 }
 
+export type SignUpResult =
+  | { status: 'signed_in'; accessToken: string; refreshToken: string | null }
+  | { status: 'confirm_email' };
+
+// Creates the email account that stands in for Instagram when a creator
+// connects nothing. Supabase either returns a session (email confirmation
+// off) or just the user (confirmation on) — both are success, but only the
+// first one can enter the app.
+export async function signUpForCreatorAi(
+  supabaseUrl: string,
+  anonKey: string,
+  name: string,
+  email: string,
+  password: string,
+): Promise<SignUpResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${supabaseUrl}/auth/v1/signup`, {
+      method: 'POST',
+      headers: {
+        apikey: anonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: email.trim(),
+        password,
+        data: { name: name.trim() },
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    throw new Error('Could not reach sign-up. Check your connection and retry.');
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error('Sign-up returned an unreadable response. Please try again.');
+  }
+  if (!isRecord(body)) {
+    throw new Error('Sign-up returned an invalid response. Please try again.');
+  }
+
+  if (!response.ok) {
+    const code =
+      typeof body.error_code === 'string'
+        ? body.error_code
+        : typeof body.code === 'string'
+          ? body.code
+          : '';
+    const detail =
+      typeof body.msg === 'string'
+        ? body.msg
+        : typeof body.message === 'string'
+          ? body.message
+          : '';
+    if (code === 'user_already_exists' || /already (registered|exists)/i.test(detail)) {
+      throw new Error('An account with this email already exists. Use Log in instead.');
+    }
+    if (code === 'weak_password') {
+      throw new Error('Choose a stronger password — at least 8 characters.');
+    }
+    if (response.status === 429 || code === 'over_request_rate_limit') {
+      throw new Error('Too many attempts. Wait a little and try again.');
+    }
+    if (response.status === 400 || response.status === 422) {
+      throw new Error('Check your name, email, and password, then try again.');
+    }
+    throw new Error('Sign-up is unavailable. Please try again shortly.');
+  }
+
+  const accessToken = typeof body.access_token === 'string' ? body.access_token : null;
+  if (accessToken && accessToken.length >= 20) {
+    return {
+      status: 'signed_in',
+      accessToken,
+      // The refresh token powers one-tap re-login for remembered accounts.
+      refreshToken:
+        typeof body.refresh_token === 'string' && body.refresh_token.length > 10
+          ? body.refresh_token
+          : null,
+    };
+  }
+  return { status: 'confirm_email' };
+}
+
 export async function refreshCreatorAiSession(
   supabaseUrl: string,
   anonKey: string,

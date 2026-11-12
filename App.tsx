@@ -107,6 +107,7 @@ import {
   sendCreatorAiChat,
   signInAnonymouslyForCreatorAi,
   signInForCreatorAi,
+  signUpForCreatorAi,
   submitCreatorContent,
   tokenExpiry,
 } from './src/services/creatorAi';
@@ -545,6 +546,10 @@ function AppShell() {
   const [supabaseAccessToken, setSupabaseAccessToken] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  // Which of the two auth forms is open. "Continue without Instagram" on the
+  // connect screen starts at Sign up; a returning device with saved accounts
+  // starts at Log in.
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionErrorDetail, setConnectionErrorDetail] = useState<
     string | null
@@ -1540,6 +1545,54 @@ function AppShell() {
     [],
   );
 
+  // Sign-up mirrors authenticate: the same session persistence, and a fresh
+  // account never inherits another account's live Instagram connection.
+  const signUp = useCallback(
+    async (name: string, email: string, password: string): Promise<boolean> => {
+      setAuthLoading(true);
+      setAuthError(null);
+      try {
+        if (!supabaseUrl || !supabaseAnonKey) {
+          throw new Error('Supabase Auth is not configured in this app.');
+        }
+        const result = await signUpForCreatorAi(
+          supabaseUrl,
+          supabaseAnonKey,
+          name,
+          email,
+          password,
+        );
+        if (result.status === 'confirm_email') {
+          // The account exists but Supabase hands back no session until the
+          // address is confirmed — report that as the next step, not a failure.
+          setAuthError('Account created. Confirm your email, then log in.');
+          return false;
+        }
+        setSupabaseAccessToken(result.accessToken);
+        saveAuthSession({
+          token: result.accessToken,
+          email: email.trim().toLowerCase(),
+          refreshToken: result.refreshToken,
+        });
+        void clearInstagramSession();
+        setSessionToken(null);
+        setProfile(null);
+        setDashboard(null);
+        setDashboardError(null);
+        setScreen('home');
+        return true;
+      } catch (error) {
+        setAuthError(
+          error instanceof Error ? error.message : 'Sign-up failed. Please try again.',
+        );
+        return false;
+      } finally {
+        setAuthLoading(false);
+      }
+    },
+    [],
+  );
+
   const continueToDashboard = useCallback(() => {
     setScreen('home');
     if (sessionToken) {
@@ -1558,6 +1611,16 @@ function AppShell() {
     setConnectionState('idle');
     setConnectionError(null);
     setScreen('home');
+  }, []);
+
+  // "Continue without Instagram" from the connect screen means "I have no
+  // Instagram", so it opens account creation instead of dropping the creator
+  // into a guest home with nothing saved. The auth screen keeps its own link
+  // as the guest escape hatch, so both remain reachable.
+  const skipInstagramToAccount = useCallback(() => {
+    setAuthMode('signup');
+    setAuthError(null);
+    setScreen('auth');
   }, []);
 
   const reconnectInstagram = useCallback(async () => {
@@ -1633,6 +1696,7 @@ function AppShell() {
     setConnectionError(null);
     setSessionWarning(false);
     setAuthError(null);
+    setAuthMode('login');
     setOnboardingStep(0);
     // With saved accounts, logging out lands straight on the login screen
     // showing them (Instagram-style one-tap return); fresh devices start at
@@ -2875,6 +2939,12 @@ function AppShell() {
             }
             setScreen('home');
           }}
+          onSignUp={signUp}
+          formMode={authMode}
+          onFormModeChange={(next) => {
+            setAuthMode(next);
+            setAuthError(null);
+          }}
           authLoading={authLoading}
           authError={authError}
           onConnectInstagram={handleConnectEntry}
@@ -3117,7 +3187,7 @@ function AppShell() {
             void connectInstagram();
           }}
           onShowAccounts={() => setAccountSwitcherOpen(true)}
-          onContinueWithoutInstagram={continueWithoutInstagram}
+          onContinueWithoutInstagram={skipInstagramToAccount}
           connectionState={connectionState}
           connectionError={connectionError}
           connectionErrorDetail={connectionErrorDetail}

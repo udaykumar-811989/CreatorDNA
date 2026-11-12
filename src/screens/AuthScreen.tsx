@@ -20,6 +20,9 @@ import { radius, type } from '../theme';
 export function AuthScreen({
   onBack,
   onSignIn,
+  onSignUp,
+  formMode,
+  onFormModeChange,
   authLoading,
   authError,
   onConnectInstagram,
@@ -30,6 +33,12 @@ export function AuthScreen({
 }: {
   onBack: () => void;
   onSignIn: (email: string, password: string) => void;
+  onSignUp: (name: string, email: string, password: string) => void;
+  // Sign up asks for a name; Log in does not. The mode lives in App so the
+  // entry point decides which of the two opens first. (Named `formMode`
+  // because `mode` is already the theme's light/dark value here.)
+  formMode: 'login' | 'signup';
+  onFormModeChange: (mode: 'login' | 'signup') => void;
   authLoading: boolean;
   authError: string | null;
   onConnectInstagram: () => void;
@@ -45,6 +54,7 @@ export function AuthScreen({
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   // Height of the open keyboard. Android resizes the window (adjustResize) but
   // never scrolls the focused field clear of the keyboard, so the form pads its
   // bottom by this much instead. iOS is lifted by the KeyboardAvoidingView.
@@ -64,7 +74,13 @@ export function AuthScreen({
   const { mode } = useTheme();
   const c = useThemeColors();
   const isDark = mode === 'dark';
-  const canSignIn = email.trim().length > 0 && password.length > 0 && !authLoading;
+  const isSignUp = formMode === 'signup';
+  const canSubmit = isSignUp
+    ? name.trim().length > 0 &&
+      email.trim().length > 0 &&
+      password.length > 0 &&
+      !authLoading
+    : email.trim().length > 0 && password.length > 0 && !authLoading;
 
   const styles = useMemo(
     () =>
@@ -212,9 +228,13 @@ export function AuthScreen({
 
           <View style={styles.header}>
             <DnaMark size={56} />
-            <Text style={styles.title}>Welcome back</Text>
+            <Text style={styles.title}>
+              {isSignUp ? 'Create your account' : 'Welcome back'}
+            </Text>
             <Text style={styles.subtitle}>
-              Sign in to continue your CreatorDNA progress.
+              {isSignUp
+                ? 'Sign up with your email — Instagram can be added later.'
+                : 'Sign in to continue your CreatorDNA progress.'}
             </Text>
           </View>
 
@@ -268,6 +288,21 @@ export function AuthScreen({
           ) : null}
 
           <View style={styles.form}>
+            {isSignUp ? (
+              <View style={styles.field}>
+                <Text style={styles.label}>Name</Text>
+                <TextInput
+                  value={name}
+                  onChangeText={setName}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  placeholder="Your name"
+                  placeholderTextColor={c.onDarkDim}
+                  style={styles.input}
+                />
+              </View>
+            ) : null}
+
             <View style={styles.field}>
               <Text style={styles.label}>Email</Text>
               <TextInput
@@ -295,11 +330,23 @@ export function AuthScreen({
             </View>
 
             <GradientButton
-              label={authLoading ? 'Signing in…' : 'Sign in'}
+              label={
+                authLoading
+                  ? isSignUp
+                    ? 'Creating account…'
+                    : 'Signing in…'
+                  : isSignUp
+                    ? 'Create account'
+                    : 'Sign in'
+              }
               loading={authLoading}
-              disabled={!canSignIn}
+              disabled={!canSubmit}
               onPress={() => {
-                void Promise.resolve(onSignIn(email, password)).finally(() => setPassword(''));
+                void Promise.resolve(
+                  isSignUp
+                    ? onSignUp(name, email, password)
+                    : onSignIn(email, password),
+                ).finally(() => setPassword(''));
               }}
             />
 
@@ -308,6 +355,19 @@ export function AuthScreen({
                 {authError}
               </Text>
             ) : null}
+
+            <Pressable
+              accessibilityRole="button"
+              disabled={authLoading}
+              onPress={() => onFormModeChange(isSignUp ? 'login' : 'signup')}
+              style={({ pressed }) => pressed && { opacity: 0.6 }}
+            >
+              <Text style={styles.link}>
+                {isSignUp
+                  ? 'Already have an account? Log in'
+                  : 'New here? Create an account'}
+              </Text>
+            </Pressable>
 
             <Pressable
               accessibilityRole="button"
