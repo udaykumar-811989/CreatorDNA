@@ -424,9 +424,14 @@ export function HomeScreen({
           <Card tone={tone} style={styles.errorCard}>
             <Text style={styles.errorTitle}>No Instagram connected yet</Text>
             <Text style={styles.errorBody}>
-              Link your account to see real views, engagement, and your Creator DNA score.
+              Link your account to see real views, engagement, and your Creator DNA score. Until
+              then everything else in the app still works.
             </Text>
-            <GradientButton label="Connect Instagram" onPress={onConnect} style={{ marginTop: 14 }} />
+            <GradientButton
+              label="Connect Instagram Account"
+              onPress={onConnect}
+              style={{ marginTop: 14 }}
+            />
           </Card>
         ) : null}
 

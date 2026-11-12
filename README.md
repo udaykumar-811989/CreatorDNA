@@ -155,11 +155,20 @@ Login tokens are read on `graph.facebook.com`):
 - `GET /v27.0/{instagram-user-id}/insights` for views, likes, and comments
   over the last 30 days
 
-Supabase email/password sign-up and sign-in are available from the auth
-screen. "Continue without Instagram" on the connect screen opens it at Sign
-up (name, email, password); the same screen toggles to Log in (email,
-password) and keeps its own "Continue without Instagram" link as the guest
-path. The Auth
+CreatorDNA opens on the Login / Sign Up screen: register with name, email,
+and password, or log in with email and password, and the app goes straight to
+the Home dashboard. Instagram is never part of signing up or signing in, and
+nothing starts Instagram OAuth automatically — the optional "Continue with
+Google" button opens Supabase's OAuth redirect (enable the Google provider in
+Supabase Auth settings first; the app captures the returned session from the
+URL hash, token or PKCE code alike, and reports provider errors in the form).
+Instagram is connected later from an explicit "Connect Instagram Account"
+button on the dashboard or in Profile; Profile also shows the connected
+account's picture, name, handle, and connection status with Disconnect and
+Reconnect actions. While disconnected, the dashboard and analytics keep their
+empty states and a connect prompt instead of breaking. "Continue without
+Instagram" on the connect screen opens the auth screen at Sign up; its own
+link on the auth screen remains the guest path. The Auth
 access token is held in memory for the current app session and is not persisted
 or refreshed. Separately, the Instagram opaque connection session remains a
 bearer credential scoped to one Instagram connection and expires no later than

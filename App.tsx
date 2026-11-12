@@ -153,6 +153,16 @@ WebBrowser.maybeCompleteAuthSession();
 
 const pendingOAuthStorageKey = 'veyyra.instagram.oauth-state';
 
+// SCREEN_PATHS maps "/" to the marketing landing, but the app itself opens
+// on Login / Sign Up: only the standalone linked routes (/privacy-policy,
+// /help) count as an entry that must keep its own screen. "/" resolves to
+// null everywhere an entry screen is decided, so the auth front door wins —
+// and a session-restoring refresh of "/" still lands on Home.
+const linkedScreenForPath = (pathname: string): Screen | null => {
+  const found = screenForPath(pathname);
+  return found && found !== 'landing' ? found : null;
+};
+
 // Active email session (token + the account it belongs to). Persisted so a
 // page refresh returns the creator to their dashboard; only an explicit
 // logout clears it — and logout still remembers the account for one-tap
@@ -229,6 +239,143 @@ const clearAuthSession = (): void => {
   } catch {
     // Best-effort cleanup.
   }
+};
+
+// PKCE verifier for the optional "Continue with Google" redirect, written
+// before leaving for Supabase and consumed on the way back.
+const pkceVerifierStorageKey = 'creatordna.pkce.verifier';
+
+const randomBase64Url = (bytes: number): string => {
+  const raw = new Uint8Array(bytes);
+  crypto.getRandomValues(raw);
+  return btoa(String.fromCharCode(...raw))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+};
+
+// Supabase hands an OAuth session (Google, or an email-confirmation link)
+// back in the URL hash — either the tokens directly (implicit flow) or a
+// one-time `code` to exchange (PKCE flow). Capture whichever arrives before
+// the first paint of the auth screen, so a Google sign-in lands on Home just
+// like a password one. Failures come back as a message for the form, never
+// as a silent no-op.
+const captureOAuthReturn = async (): Promise<string | null> => {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !supabaseUrl) {
+    return null;
+  }
+  const raw = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
+  if (!raw) {
+    return null;
+  }
+  const params = new URLSearchParams(raw);
+  const error = params.get('error_description') ?? params.get('error');
+  const accessToken = params.get('access_token');
+  const code = params.get('code');
+  if (!error && !accessToken && !code) {
+    return null;
+  }
+  // Strip the one-time credentials from the address bar immediately.
+  window.history.replaceState(
+    window.history.state,
+    '',
+    `${window.location.pathname}${window.location.search}`,
+  );
+
+  if (error) {
+    return /provider/i.test(error)
+      ? 'Google sign-in isn’t enabled on CreatorDNA yet. Enable the Google provider in Supabase Auth settings, or use email instead.'
+      : `Google sign-in couldn’t complete: ${error}`;
+  }
+
+  if (accessToken) {
+    saveAuthSession({
+      token: accessToken,
+      email: null,
+      refreshToken:
+        typeof params.get('refresh_token') === 'string' ? params.get('refresh_token') : null,
+    });
+    return null;
+  }
+
+  // PKCE: swap the one-time code for the session using the stored verifier.
+  try {
+    const verifier = localStorage.getItem(pkceVerifierStorageKey);
+    localStorage.removeItem(pkceVerifierStorageKey);
+    if (!verifier) {
+      return 'Your sign-in session expired before it finished. Please try again.';
+    }
+    const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=pkce`, {
+      method: 'POST',
+      headers: {
+        apikey: supabaseAnonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ auth_code: code, code_verifier: verifier }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const token = typeof body.access_token === 'string' ? body.access_token : null;
+    if (!response.ok || !token) {
+      const reason =
+        typeof body.error_description === 'string'
+          ? body.error_description
+          : typeof body.msg === 'string'
+            ? body.msg
+            : '';
+      return reason
+        ? `Google sign-in couldn’t complete: ${reason}`
+        : 'Google sign-in couldn’t complete. Please try again.';
+    }
+    saveAuthSession({
+      token,
+      email: null,
+      refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : null,
+    });
+    return null;
+  } catch {
+    return 'Couldn’t reach sign-in to finish it. Check your connection and try again.';
+  }
+};
+
+// Starts Supabase's Google OAuth in the browser. Only reachable on web for
+// now — native builds get a clear message instead of a dead button. No
+// Instagram tokens or secrets are involved; this is Supabase Auth only.
+const startGoogleSignIn = async (): Promise<string | null> => {
+  if (!supabaseUrl) {
+    return 'Google sign-in is not configured in this app.';
+  }
+  if (Platform.OS !== 'web' || typeof window === 'undefined') {
+    return 'Google sign-in isn’t available in this build yet — use email and password instead.';
+  }
+  const redirectTo = `${window.location.origin}/`;
+  const url =
+    `${supabaseUrl}/auth/v1/authorize?provider=google` +
+    `&redirect_to=${encodeURIComponent(redirectTo)}`;
+  try {
+    // Always send a PKCE challenge: a PKCE project needs it to accept the
+    // return, and an implicit-flow project ignores the extra parameters.
+    const verifier = randomBase64Url(64);
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(verifier),
+    );
+    const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    try {
+      localStorage.setItem(pkceVerifierStorageKey, verifier);
+    } catch {
+      // Storage off: the implicit return still works.
+    }
+    window.location.assign(
+      `${url}&code_challenge=${challenge}&code_challenge_method=s256`,
+    );
+  } catch {
+    window.location.assign(url);
+  }
+  return null;
 };
 
 const loadSavedAccounts = (): SavedAccount[] => {
@@ -501,10 +648,12 @@ function AppShell() {
   // ---------- Navigation & entry flow ----------
   // A linked /privacy or /help URL opens straight on that screen — that is
   // what makes the routes shareable from a store listing or a support reply.
+  // The app's front door is Login / Sign Up. Linked /privacy and /help URLs
+  // still open straight on their screen; everything else starts at auth.
   const [screen, setScreen] = useState<Screen>(() =>
     Platform.OS === 'web' && typeof window !== 'undefined'
-      ? screenForPath(window.location.pathname) ?? 'onboarding'
-      : 'onboarding',
+      ? linkedScreenForPath(window.location.pathname) ?? 'auth'
+      : 'auth',
   );
   // Screen to return to when the browser back button leaves a linked route.
   const legalReturn = useRef<Screen>('settings');
@@ -1100,10 +1249,17 @@ function AppShell() {
     // never pushes a history entry (the initial screen already is that one).
     const legalEntry =
       Platform.OS === 'web' && typeof window !== 'undefined'
-        ? screenForPath(window.location.pathname)
+        ? linkedScreenForPath(window.location.pathname)
         : null;
-    void loadInstagramSession()
-      .then((token) => {
+    void (async () => {
+      // A Supabase OAuth return (Google sign-in, confirmation link) lands in
+      // the URL hash — persist it first so the session check below sees it.
+      const oauthError = await captureOAuthReturn();
+      if (oauthError) {
+        setAuthError(oauthError);
+      }
+      try {
+        const token = await loadInstagramSession();
         if (token) {
           setSessionToken(token);
           if (!legalEntry) {
@@ -1117,14 +1273,16 @@ function AppShell() {
         if (loadAuthSession() && !legalEntry) {
           settleOnScreen('home');
         }
-      })
-      .catch(() => {
+      } catch {
         setConnectionError('session_restore_failed');
         setConnectionState('failed');
         if (!legalEntry) {
-          settleOnScreen('connect');
+          // Restore failed with no session: the front door is the auth
+          // screen — never the Instagram connect flow.
+          settleOnScreen('auth');
         }
-      });
+      }
+    })();
   }, [incomingUrl, loadDashboard]);
 
   // ---------- Browser history ----------
@@ -1593,6 +1751,17 @@ function AppShell() {
     [],
   );
 
+  // Optional Google sign-in: web opens Supabase's OAuth redirect (the return
+  // is captured by captureOAuthReturn above); anywhere else reports why the
+  // button can't proceed rather than doing nothing.
+  const googleSignIn = useCallback(async () => {
+    setAuthError(null);
+    const error = await startGoogleSignIn();
+    if (error) {
+      setAuthError(error);
+    }
+  }, []);
+
   const continueToDashboard = useCallback(() => {
     setScreen('home');
     if (sessionToken) {
@@ -1639,6 +1808,28 @@ function AppShell() {
     setConnectionError(null);
     setSessionWarning(false);
     setScreen('connect');
+  }, []);
+
+  // Explicit disconnect (Profile → Disconnect). The stored connection is
+  // removed first; if storage refuses, nothing is torn down, so the UI never
+  // claims a disconnection that a refresh would undo. On success everything
+  // Instagram-derived clears and the Profile card becomes the connect prompt.
+  const disconnectInstagram = useCallback(async () => {
+    try {
+      await clearInstagramSession();
+    } catch {
+      setConnectionError('session_clear_failed');
+      setConnectionState('failed');
+      return;
+    }
+    dashboardRequestId.current += 1;
+    setSessionToken(null);
+    setProfile(null);
+    setDashboard(null);
+    setDashboardError(null);
+    setConnectionState('idle');
+    setConnectionError(null);
+    setSessionWarning(false);
   }, []);
 
   const handleConnectEntry = useCallback(() => {
@@ -1698,10 +1889,9 @@ function AppShell() {
     setAuthError(null);
     setAuthMode('login');
     setOnboardingStep(0);
-    // With saved accounts, logging out lands straight on the login screen
-    // showing them (Instagram-style one-tap return); fresh devices start at
-    // onboarding.
-    setScreen(loadSavedAccounts().length > 0 ? 'auth' : 'onboarding');
+    // Logged out → the Login / Sign Up page, saved accounts or not. The
+    // Instagram connect flow is never part of signing out.
+    setScreen('auth');
   }, [dashboard, profile, sessionToken]);
 
   // ---------- Creator AI: token, analysis, ideas, chat ----------
@@ -2903,7 +3093,11 @@ function AppShell() {
           onAdvance={() => setOnboardingStep((current) => current + 1)}
           onGetStarted={() => {
             setOnboardingStep(0);
-            setScreen('connect');
+            // The welcome flow's CTA leads to account creation — Instagram
+            // stays an optional add-on from the dashboard or Profile.
+            setAuthMode('signup');
+            setAuthError(null);
+            setScreen('auth');
           }}
           onBack={() =>
             setOnboardingStep((current) => Math.max(0, current - 1))
@@ -2940,6 +3134,7 @@ function AppShell() {
             setScreen('home');
           }}
           onSignUp={signUp}
+          onGoogleSignIn={googleSignIn}
           formMode={authMode}
           onFormModeChange={(next) => {
             setAuthMode(next);
@@ -3114,6 +3309,8 @@ function AppShell() {
           onOpenSettings={() => setScreen('settings')}
           onSwitchAccount={() => setAccountSwitcherOpen(true)}
           onOpenMediaKit={() => setScreen('mediaKit')}
+          onConnect={handleConnectEntry}
+          onDisconnect={() => void disconnectInstagram()}
           onLogout={logout}
         />
       ) : screen === 'notifications' ? (
@@ -3178,7 +3375,7 @@ function AppShell() {
         />
       ) : (
         <ConnectScreen
-          onBack={() => setScreen(sessionToken ? 'home' : 'onboarding')}
+          onBack={() => setScreen(sessionToken ? 'home' : 'auth')}
           onConnect={() => void connectInstagram()}
           onConnected={continueToDashboard}
           onConnectDifferent={() => {

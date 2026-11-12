@@ -4,7 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { DnaMark } from '../components/DnaMark';
 import { MilestonesCard } from '../components/MilestonesCard';
 import { ChevronRightIcon, GearIcon, LinkOutIcon, LogoutIcon, DocIcon, SparkIcon } from '../components/icons';
-import { Avatar, Badge, ListRow, ScreenHeader } from '../components/ui';
+import { Avatar, Badge, GradientButton, ListRow, ScreenHeader } from '../components/ui';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
 import { useTheme, useThemeColors } from '../themeContext';
 import { FAB_CLEARANCE, radius, type } from '../theme';
@@ -20,6 +20,8 @@ export function ProfileScreen({
   onOpenSettings,
   onSwitchAccount,
   onOpenMediaKit,
+  onConnect,
+  onDisconnect,
   onLogout,
 }: {
   profile: InstagramProfile | null;
@@ -32,6 +34,11 @@ export function ProfileScreen({
   onOpenSettings: () => void;
   onSwitchAccount: () => void;
   onOpenMediaKit: () => void;
+  // Instagram stays optional: connect/reconnect starts the OAuth flow,
+  // disconnect removes the stored session and turns this card into the
+  // prompt below.
+  onConnect: () => void;
+  onDisconnect: () => void;
   onLogout: () => void;
 }) {
   const { mode } = useTheme();
@@ -59,6 +66,42 @@ export function ProfileScreen({
         identity: { alignItems: 'center', gap: 8, marginTop: 6 },
         name: { ...type.h2, color: c.onDark, fontSize: 26, marginTop: 10 },
         handle: { ...type.small, color: c.onDarkSub, fontSize: 14 },
+
+        igCard: {
+          backgroundColor: c.darkCard,
+          borderWidth: 1,
+          borderColor: c.darkBorder,
+          borderRadius: radius.md + 2,
+          padding: 16,
+          gap: 12,
+        },
+        igTitleRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        },
+        igTitle: { ...type.h4, color: c.onDark, fontSize: 17 },
+        igIdentity: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+        igName: { color: c.onDark, fontSize: 15.5, fontWeight: '700' },
+        igMeta: { color: c.onDarkSub, fontSize: 13.5, marginTop: 2 },
+        igHint: {
+          color: c.onDarkSub,
+          fontSize: 13.5,
+          lineHeight: 19,
+        },
+        igActions: { flexDirection: 'row', gap: 10 },
+        igAction: {
+          flex: 1,
+          minHeight: 46,
+          borderRadius: 14,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1.5,
+        },
+        reconnect: { borderColor: c.primarySoft, backgroundColor: c.primarySoft },
+        reconnectLabel: { color: c.primary, fontSize: 15, fontWeight: '700' },
+        disconnect: { borderColor: c.red },
+        disconnectLabel: { color: c.red, fontSize: 15, fontWeight: '700' },
 
         dnaCard: {
           borderRadius: radius.md + 4,
@@ -140,6 +183,72 @@ export function ProfileScreen({
               />
             </View>
           ) : null}
+        </View>
+
+        {/* Instagram connection: picture, name, handle and status in one
+            place, with the connect / disconnect / reconnect actions. When
+            nothing is connected this is the helpful prompt — the rest of the
+            screen keeps working exactly as before. */}
+        <View style={styles.igCard}>
+          <View style={styles.igTitleRow}>
+            <Text style={styles.igTitle}>Instagram</Text>
+            <Badge
+              label={connected ? 'Connected' : 'Not connected'}
+              tone={connected ? 'green' : 'gray'}
+            />
+          </View>
+          {connected ? (
+            <>
+              <View style={styles.igIdentity}>
+                <Avatar
+                  uri={dashboard?.profile.profilePictureUrl ?? profile?.profilePictureUrl ?? null}
+                  name={username}
+                  size={44}
+                  dark={isDark}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.igName} numberOfLines={1}>
+                    {displayName}
+                  </Text>
+                  <Text style={styles.igMeta} numberOfLines={1}>
+                    @{username}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.igActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={onConnect}
+                  style={({ pressed }) => [
+                    styles.igAction,
+                    styles.reconnect,
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={styles.reconnectLabel}>Reconnect</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={onDisconnect}
+                  style={({ pressed }) => [
+                    styles.igAction,
+                    styles.disconnect,
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={styles.disconnectLabel}>Disconnect</Text>
+                </Pressable>
+              </View>
+            </>
+          ) : (
+            <>
+              <Text style={styles.igHint}>
+                Connect your Instagram account to unlock real analytics and Instagram-powered AI
+                advice. You can keep using CreatorDNA without it.
+              </Text>
+              <GradientButton label="Connect Instagram Account" onPress={onConnect} />
+            </>
+          )}
         </View>
 
         {/* DNA card */}

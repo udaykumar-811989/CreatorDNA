@@ -1093,8 +1093,16 @@ export async function signUpForCreatorAi(
     if (code === 'weak_password') {
       throw new Error('Choose a stronger password — at least 8 characters.');
     }
-    if (response.status === 429 || code === 'over_request_rate_limit') {
-      throw new Error('Too many attempts. Wait a little and try again.');
+    if (
+      response.status === 429 ||
+      code === 'over_request_rate_limit' ||
+      code === 'over_email_send_rate_limit'
+    ) {
+      // GoTrue reports the signup-email throttle either as a 429 or as a
+      // 400 carrying this code — both mean "wait", never "fix the form".
+      throw new Error(
+        'Too many attempts. Wait a few minutes before requesting another sign-up email.',
+      );
     }
     if (response.status === 400 || response.status === 422) {
       throw new Error('Check your name, email, and password, then try again.');

@@ -376,3 +376,35 @@ export function MailIcon({ size = 20, color: colorProp, strokeWidth = 1.8 }: Ico
     </Svg>
   );
 }
+
+export function LockIcon({ size = 20, color: colorProp, strokeWidth = 1.8 }: IconProps) {
+  const color = useIconColor(colorProp);
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M5.6 10.7h12.8v9.4H5.6z" {...stroke(color, strokeWidth)} />
+      <Path d="M8.4 10.7V7.9a3.6 3.6 0 0 1 7.2 0v2.8" {...stroke(color, strokeWidth)} />
+      <Path d="M12 14.4v2.3" {...stroke(color, strokeWidth)} />
+    </Svg>
+  );
+}
+
+export function EyeIcon({ size = 20, color: colorProp, strokeWidth = 1.8 }: IconProps) {
+  const color = useIconColor(colorProp);
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M2.6 12S6.3 5.9 12 5.9 21.4 12 21.4 12 17.7 18.1 12 18.1 2.6 12 2.6 12z" {...stroke(color, strokeWidth)} />
+      <Circle cx={12} cy={12} r={2.7} {...stroke(color, strokeWidth)} />
+    </Svg>
+  );
+}
+
+export function EyeOffIcon({ size = 20, color: colorProp, strokeWidth = 1.8 }: IconProps) {
+  const color = useIconColor(colorProp);
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path d="M2.6 12S6.3 5.9 12 5.9 21.4 12 21.4 12 17.7 18.1 12 18.1 2.6 12 2.6 12z" {...stroke(color, strokeWidth)} />
+      <Circle cx={12} cy={12} r={2.7} {...stroke(color, strokeWidth)} />
+      <Path d="M4.5 4.5 19.5 19.5" {...stroke(color, strokeWidth)} />
+    </Svg>
+  );
+}
