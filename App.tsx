@@ -352,6 +352,22 @@ const startGoogleSignIn = async (): Promise<string | null> => {
   const url =
     `${supabaseUrl}/auth/v1/authorize?provider=google` +
     `&redirect_to=${encodeURIComponent(redirectTo)}`;
+  // Fail fast in-app when the provider isn't enabled: GoTrue answers the
+  // authorize URL itself with a JSON 400 in that case, which would otherwise
+  // strand the creator on a raw error page. A working provider answers with a
+  // redirect, which `redirect: 'manual'` reports as an opaque status 0.
+  try {
+    const probe = await fetch(url, { redirect: 'manual' });
+    if (probe.status >= 400) {
+      const body = await probe.text().catch(() => '');
+      return /provider|not enabled/i.test(body)
+        ? 'Google sign-in isn’t enabled on CreatorDNA yet. Enable the Google provider in Supabase Auth settings, or use email instead.'
+        : 'Google sign-in couldn’t start right now. Please try again later or use email instead.';
+    }
+  } catch {
+    // Cross-origin or network: fall through and let the browser navigate —
+    // the round trip below still reports whatever Supabase says.
+  }
   try {
     // Always send a PKCE challenge: a PKCE project needs it to accept the
     // return, and an implicit-flow project ignores the extra parameters.
