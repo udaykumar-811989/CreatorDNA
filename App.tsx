@@ -255,31 +255,38 @@ const randomBase64Url = (bytes: number): string => {
 };
 
 // Supabase hands an OAuth session (Google, or an email-confirmation link)
-// back in the URL hash — either the tokens directly (implicit flow) or a
-// one-time `code` to exchange (PKCE flow). Capture whichever arrives before
-// the first paint of the auth screen, so a Google sign-in lands on Home just
-// like a password one. Failures come back as a message for the form, never
-// as a silent no-op.
+// back to the page in one of two shapes: a PKCE project returns a one-time
+// `?code=` in the *query* (what our Google sign-in uses), while an implicit
+// project returns the tokens or an error in the URL *hash*. Capture whichever
+// arrives before the first paint of the auth screen, so a Google sign-in
+// lands on Home just like a password one. Failures come back as a message for
+// the form, never as a silent no-op.
 const captureOAuthReturn = async (): Promise<string | null> => {
   if (Platform.OS !== 'web' || typeof window === 'undefined' || !supabaseUrl) {
     return null;
   }
-  const raw = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
-  if (!raw) {
-    return null;
-  }
-  const params = new URLSearchParams(raw);
-  const error = params.get('error_description') ?? params.get('error');
-  const accessToken = params.get('access_token');
-  const code = params.get('code');
+  const hashParams = new URLSearchParams(
+    window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '',
+  );
+  const queryParams = new URLSearchParams(window.location.search);
+  const pick = (key: string): string | null => hashParams.get(key) ?? queryParams.get(key);
+  const error = pick('error_description') ?? pick('error');
+  const accessToken = pick('access_token');
+  const code = pick('code');
   if (!error && !accessToken && !code) {
     return null;
   }
-  // Strip the one-time credentials from the address bar immediately.
+  // Strip the one-time credentials from the address bar immediately. Other
+  // query params (the Instagram return, for example) must survive the cleanup.
+  const remaining = new URLSearchParams(window.location.search);
+  for (const key of ['code', 'error', 'error_code', 'error_description']) {
+    remaining.delete(key);
+  }
+  const query = remaining.toString();
   window.history.replaceState(
     window.history.state,
     '',
-    `${window.location.pathname}${window.location.search}`,
+    `${window.location.pathname}${query ? `?${query}` : ''}`,
   );
 
   if (error) {
@@ -292,8 +299,7 @@ const captureOAuthReturn = async (): Promise<string | null> => {
     saveAuthSession({
       token: accessToken,
       email: null,
-      refreshToken:
-        typeof params.get('refresh_token') === 'string' ? params.get('refresh_token') : null,
+      refreshToken: pick('refresh_token'),
     });
     return null;
   }
