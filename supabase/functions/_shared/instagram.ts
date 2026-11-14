@@ -780,6 +780,15 @@ async function readResponse(response: Response): Promise<Record<string, unknown>
   return data;
 }
 
+/** Meta's message as app-visible detail, with the App Secret stripped out. */
+function redactedDetail(detail: string, config: InstagramConfig): string {
+  const secret = config.instagramAppSecret;
+  if (!secret) {
+    return detail;
+  }
+  return detail.split(secret).join('[redacted]');
+}
+
 async function exchangeAuthorizationCode(
   code: string,
   config: InstagramConfig,
@@ -804,7 +813,10 @@ async function exchangeAuthorizationCode(
   try {
     body = await response.json();
   } catch {
-    throw new InstagramFlowError('invalid_authorization_code');
+    throw new InstagramFlowError(
+      'invalid_authorization_code',
+      `Instagram returned a non-JSON response (http=${response.status})`,
+    );
   }
   const data = firstRecord(body);
   const accessToken = requiredString(data?.access_token);
@@ -819,7 +831,15 @@ async function exchangeAuthorizationCode(
         `${message ? ` message=${message}` : ''}` +
         `${typeof metaCode !== 'undefined' ? ` meta_code=${metaCode}` : ''}`,
     );
-    throw new InstagramFlowError('invalid_authorization_code');
+    throw new InstagramFlowError(
+      'invalid_authorization_code',
+      redactedDetail(
+        [message, typeof metaCode !== 'undefined' ? `code ${metaCode}` : '']
+          .filter(Boolean)
+          .join(' ') || `Instagram rejected the exchange (http=${response.status})`,
+        config,
+      ),
+    );
   }
   // The system-user token response carries no permissions list (the config_id
   // fixed the grant); assertRequiredPermissions treats that as expected and
