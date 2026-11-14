@@ -25,11 +25,19 @@ export function MilestonesCard({
   getCreatorToken,
   handle,
   connected,
+  liveFollowers,
 }: {
   getCreatorToken: () => Promise<string>;
   /** Instagram handle, used only for the "verified" caption. */
   handle: string | null;
   connected: boolean;
+  /**
+   * Live follower count from the dashboard (Instagram's own answer for the
+   * connected account). Shown only when the server's verified stats row has
+   * not been written yet, and always labelled as a live reading — never with
+   * a "verified on" date.
+   */
+  liveFollowers: number | null;
 }) {
   const c = useThemeColors();
   const { mode } = useTheme();
@@ -89,11 +97,37 @@ export function MilestonesCard({
     return set;
   }, [achievements]);
 
-  // The verified reading wins; the highest badge is the floor when the stats
-  // row has not been written yet (a badge is still proof of a past reading).
-  const shownFollowers = followers ?? (earned.size > 0 ? Math.max(...earned) : null);
-  const next = shownFollowers === null ? MILESTONES[0] : MILESTONES.find((m) => m > shownFollowers) ?? null;
-  const progress = next && shownFollowers !== null ? milestoneProgress(shownFollowers, next) : 0;
+  // Two honest sources can put a number on screen: the server's verified
+  // stats row (Instagram's own answer, recorded with a date) first, then the
+  // live dashboard reading for the connected account. A badge threshold is
+  // never a follower count — a badge only proves a past reading, so it is
+  // used solely as a lower bound and must be labelled "at least".
+  const shownFollowers = followers ?? liveFollowers;
+  const isVerified = followers !== null;
+  const lowerBound = shownFollowers === null && earned.size > 0 ? Math.max(...earned) : null;
+  const progressCount = shownFollowers ?? lowerBound;
+  const next = progressCount === null ? MILESTONES[0] : MILESTONES.find((m) => m > progressCount) ?? null;
+  const progress = next && progressCount !== null ? milestoneProgress(progressCount, next) : 0;
+
+  // Provenance is always on screen: a verified reading carries its date, a
+  // live reading says so, and a badge-only floor says "at least".
+  const handleSuffix = handle ? ` · @${handle.replace(/^@/, '')}` : '';
+  const countNote =
+    shownFollowers !== null
+      ? `${shownFollowers.toLocaleString('en-US')} followers${
+          isVerified
+            ? measuredAt
+              ? ` · verified by Instagram on ${new Date(measuredAt).toLocaleDateString('en-US', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                })}`
+              : ' · verified by Instagram'
+            : ' · live from Instagram'
+        }${handleSuffix}`
+      : lowerBound !== null
+        ? `At least ${lowerBound.toLocaleString('en-US')} followers from earned milestones — Instagram has not shared an exact count yet${handleSuffix}`
+        : null;
 
   const s = useMemo(
     () =>
@@ -125,7 +159,7 @@ export function MilestonesCard({
           backgroundColor: isDark ? c.darkCard2 : c.lightCard,
         },
         badgeValue: { ...type.tiny, letterSpacing: 0.4 },
-        badgeTitle: { fontSize: 10.5, fontWeight: '600', color: c.textDim, textAlign: 'center' },
+        badgeTitle: { ...type.tiny, color: c.textDim, textAlign: 'center', letterSpacing: 0.2 },
         track: {
           height: 8,
           borderRadius: radius.pill,
@@ -208,7 +242,7 @@ export function MilestonesCard({
           </View>
 
           {connected ? (
-            shownFollowers === null ? (
+            progressCount === null ? (
               <Text style={s.hint}>
                 Instagram has not shared a follower count yet. It appears as soon as your account
                 reports one — CreatorDNA will not guess it for you.
@@ -220,22 +254,15 @@ export function MilestonesCard({
                     NEXT · {next.toLocaleString('en-US')}
                   </Text>
                   <Text style={s.progressValue}>
-                    {(next - shownFollowers).toLocaleString('en-US')} TO GO
+                    {shownFollowers === null
+                      ? `AT MOST ${(next - progressCount).toLocaleString('en-US')} TO GO`
+                      : `${(next - progressCount).toLocaleString('en-US')} TO GO`}
                   </Text>
                 </View>
                 <View style={s.track}>
                   <View style={[s.fill, { width: `${Math.round(progress * 100)}%` }]} />
                 </View>
-                <Text style={s.note}>
-                  {shownFollowers.toLocaleString('en-US')} followers
-                  {measuredAt
-                    ? ` · verified by Instagram on ${new Date(measuredAt).toLocaleDateString(
-                        'en-US',
-                        { day: 'numeric', month: 'short', year: 'numeric' },
-                      )}`
-                    : ''}
-                  {handle ? ` · @${handle.replace(/^@/, '')}` : ''}
-                </Text>
+                <Text style={s.note}>{countNote}</Text>
               </View>
             ) : (
               <Text style={s.note}>

@@ -132,7 +132,7 @@ export function EditProfileScreen({
           gap: 12,
           marginTop: 6,
         },
-        photoHint: { ...type.small, color: c.onDarkDim, fontSize: 12 },
+        photoHint: { ...type.small, color: c.onDarkDim },
         photoActions: { flexDirection: 'row', gap: 10 },
         photoAction: {
           paddingHorizontal: 16,
@@ -167,7 +167,8 @@ export function EditProfileScreen({
           paddingHorizontal: 14,
           paddingVertical: 12,
           color: c.onDark,
-          fontSize: 15.5,
+          ...type.body,
+          lineHeight: 20,
         },
         fieldDisabled: { opacity: 0.6 },
 
@@ -195,7 +196,6 @@ export function EditProfileScreen({
           ...type.small,
           color: c.onDarkDim,
           textAlign: 'center',
-          fontSize: 12,
           lineHeight: 18,
           paddingHorizontal: 6,
         },

@@ -134,11 +134,10 @@ export function ProfileScreen({
         identityRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
         identityText: { flex: 1, gap: 3 },
         identityName: {
+          ...type.h3,
           color: c.onDark,
-          fontSize: 20,
-          fontWeight: '800',
         },
-        identityEmail: { color: c.onDarkSub, fontSize: 14 },
+        identityEmail: { ...type.small, color: c.onDarkSub },
         identityDivider: { height: StyleSheet.hairlineWidth, backgroundColor: c.darkBorder },
         resetSent: {
           ...type.small,
@@ -164,13 +163,13 @@ export function ProfileScreen({
           alignItems: 'center',
           justifyContent: 'space-between',
         },
-        igTitle: { ...type.h4, color: c.onDark, fontSize: 17 },
+        igTitle: { ...type.h4, color: c.onDark },
         igIdentity: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-        igName: { color: c.onDark, fontSize: 15.5, fontWeight: '700' },
-        igMeta: { color: c.onDarkSub, fontSize: 13.5, marginTop: 2 },
+        igName: { ...type.bodyBold, color: c.onDark },
+        igMeta: { ...type.small, color: c.onDarkSub, marginTop: 2 },
         igHint: {
+          ...type.small,
           color: c.onDarkSub,
-          fontSize: 13.5,
           lineHeight: 19,
         },
         igActions: { flexDirection: 'row', gap: 10 },
@@ -183,9 +182,9 @@ export function ProfileScreen({
           borderWidth: 1.5,
         },
         reconnect: { borderColor: c.primarySoft, backgroundColor: c.primarySoft },
-        reconnectLabel: { color: c.primary, fontSize: 15, fontWeight: '700' },
+        reconnectLabel: { ...type.bodyBold, color: c.primary },
         disconnect: { borderColor: c.red },
-        disconnectLabel: { color: c.red, fontSize: 15, fontWeight: '700' },
+        disconnectLabel: { ...type.bodyBold, color: c.red },
 
         warning: {
           ...type.small,
@@ -206,10 +205,9 @@ export function ProfileScreen({
         rowDivider: { height: StyleSheet.hairlineWidth, backgroundColor: c.darkBorder },
 
         footerNote: {
-          ...type.small,
+          ...type.tiny,
           color: c.onDarkDim,
           textAlign: 'center',
-          fontSize: 11.5,
           lineHeight: 17,
           paddingHorizontal: 10,
         },
@@ -355,6 +353,7 @@ export function ProfileScreen({
           getCreatorToken={getCreatorToken}
           handle={username}
           connected={connected}
+          liveFollowers={dashboard?.profile.followersCount ?? null}
         />
 
         {sessionWarning ? (
