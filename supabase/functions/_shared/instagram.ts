@@ -781,12 +781,11 @@ async function readResponse(response: Response): Promise<Record<string, unknown>
 }
 
 /** Meta's message as app-visible detail, with the App Secret stripped out. */
-function redactedDetail(detail: string, config: InstagramConfig): string {
-  const secret = config.instagramAppSecret;
-  if (!secret) {
+export function redactedDetail(detail: string, appSecret: string): string {
+  if (!appSecret) {
     return detail;
   }
-  return detail.split(secret).join('[redacted]');
+  return detail.split(appSecret).join('[redacted]');
 }
 
 async function exchangeAuthorizationCode(
@@ -826,10 +825,17 @@ async function exchangeAuthorizationCode(
     const metaError = record(record(body)?.error);
     const message = requiredString(metaError?.message);
     const metaCode = metaError?.code;
+    // Shape only — length and charset, never the value — so a mis-pasted
+    // secret (quotes, whitespace, wrong length) is identifiable in the logs.
+    const secretShape =
+      `len=${config.instagramAppSecret.length}` +
+      ` hex=${/^[0-9a-fA-F]+$/.test(config.instagramAppSecret)}` +
+      ` trim=${config.instagramAppSecret.trim() === config.instagramAppSecret}`;
     console.error(
       `Instagram token exchange rejected: http=${response.status}` +
         `${message ? ` message=${message}` : ''}` +
-        `${typeof metaCode !== 'undefined' ? ` meta_code=${metaCode}` : ''}`,
+        `${typeof metaCode !== 'undefined' ? ` meta_code=${metaCode}` : ''}` +
+        ` app_id=${config.instagramAppId} secret_shape(${secretShape})`,
     );
     throw new InstagramFlowError(
       'invalid_authorization_code',
@@ -837,7 +843,7 @@ async function exchangeAuthorizationCode(
         [message, typeof metaCode !== 'undefined' ? `code ${metaCode}` : '']
           .filter(Boolean)
           .join(' ') || `Instagram rejected the exchange (http=${response.status})`,
-        config,
+        config.instagramAppSecret,
       ),
     );
   }

@@ -10,6 +10,7 @@ import {
   normalizeInstagramMedia,
   normalizeInstagramProfile,
   parseInstagramInsightValue,
+  redactedDetail,
   REQUIRED_SCOPES,
 } from './instagram';
 
@@ -63,6 +64,22 @@ test('required Instagram permissions must both be granted', () => {
   // profile read right after is what proves instagram_basic works.
   assert.deepEqual(assertRequiredPermissions(undefined), []);
   assert.deepEqual(assertRequiredPermissions(null), []);
+});
+
+// The token-exchange failure detail is shown in the app, so it must carry
+// Meta's reason but never the App Secret it was sent with.
+test('token-exchange detail keeps Meta\'s reason and strips the app secret', () => {
+  const secret = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+  assert.equal(
+    redactedDetail('Error validating client secret. code 1', secret),
+    'Error validating client secret. code 1',
+  );
+  assert.equal(
+    redactedDetail(`bad request for ${secret}`, secret),
+    'bad request for [redacted]',
+  );
+  // No secret configured: the detail still passes through unchanged.
+  assert.equal(redactedDetail('Error validating client secret.', ''), 'Error validating client secret.');
 });
 
 test('profile parser accepts professional accounts and labels missing types honestly', () => {
