@@ -12,6 +12,8 @@ import { FAB_CLEARANCE, radius, type } from '../theme';
 export function ProfileScreen({
   profile,
   dashboard,
+  accountName,
+  accountEmail,
   recordCount,
   sessionWarning,
   getCreatorToken,
@@ -26,6 +28,12 @@ export function ProfileScreen({
 }: {
   profile: InstagramProfile | null;
   dashboard: InstagramDashboard | null;
+  // The login this device is signed in with: name + email of the account
+  // that authenticated here (Google or email signup). Either may be null
+  // when the session never kept one — those fields are labelled, never
+  // invented.
+  accountName: string | null;
+  accountEmail: string | null;
   recordCount: number;
   sessionWarning: boolean;
   getCreatorToken: () => Promise<string>;
@@ -50,7 +58,21 @@ export function ProfileScreen({
   const username = dashboard?.profile.username ?? profile?.username ?? null;
   const accountType = dashboard?.profile.accountType ?? profile?.accountType ?? null;
   const connected = Boolean(username);
-  const displayName = username ?? 'Creator';
+  // The login identity leads the screen (name + email of the signed-in
+  // account); Instagram is the optional connection shown in its own card
+  // below. When no name was ever stored, the email's local part stands in —
+  // it is still the real login value, not a made-up display name.
+  const loginName = accountName ?? (accountEmail ? accountEmail.split('@')[0] : null);
+  const igPictureUrl =
+    dashboard?.profile.profilePictureUrl ?? profile?.profilePictureUrl ?? null;
+  const accountTypeLabel =
+    accountType === 'Media_Creator'
+      ? 'Creator account'
+      : accountType === 'Professional'
+        ? 'Professional account'
+        : accountType === 'Business'
+          ? 'Business account'
+          : null;
 
   const styles = useMemo(
     () =>
@@ -158,31 +180,22 @@ export function ProfileScreen({
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <ScreenHeader title="Profile" tone={tone} />
 
+        {/* Signed-in account first: the login's own name and email, exactly
+            as they authenticated. Instagram stays optional and lives in its
+            own card below. */}
         <View style={styles.identity}>
           <Avatar
-            uri={dashboard?.profile.profilePictureUrl ?? profile?.profilePictureUrl ?? null}
-            name={username}
+            uri={connected ? igPictureUrl : null}
+            name={loginName ?? username ?? accountEmail}
             size={88}
             dark={isDark}
           />
           <Text style={styles.name} numberOfLines={1}>
-            {displayName}
+            {loginName ?? 'Name not available'}
           </Text>
-          <Text style={styles.handle}>{username ? `@${username}` : 'No account connected'}</Text>
-          {accountType ? (
-            <View style={{ marginTop: 10 }}>
-              <Badge
-                label={
-                  accountType === 'Media_Creator'
-                    ? 'Creator account'
-                    : accountType === 'Professional'
-                      ? 'Professional account'
-                      : 'Business account'
-                }
-                tone="purple"
-              />
-            </View>
-          ) : null}
+          <Text style={styles.handle} numberOfLines={1}>
+            {accountEmail ?? 'Email not available'}
+          </Text>
         </View>
 
         {/* Instagram connection: picture, name, handle and status in one
@@ -200,18 +213,16 @@ export function ProfileScreen({
           {connected ? (
             <>
               <View style={styles.igIdentity}>
-                <Avatar
-                  uri={dashboard?.profile.profilePictureUrl ?? profile?.profilePictureUrl ?? null}
-                  name={username}
-                  size={44}
-                  dark={isDark}
-                />
+                <Avatar uri={igPictureUrl} name={username} size={44} dark={isDark} />
                 <View style={{ flex: 1 }}>
+                  {/* The connected account's name, kept separate from the
+                      login identity above. */}
                   <Text style={styles.igName} numberOfLines={1}>
-                    {displayName}
+                    {username}
                   </Text>
                   <Text style={styles.igMeta} numberOfLines={1}>
                     @{username}
+                    {accountTypeLabel ? ` · ${accountTypeLabel}` : ''}
                   </Text>
                 </View>
               </View>

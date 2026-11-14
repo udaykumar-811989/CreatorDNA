@@ -61,8 +61,6 @@ export function AuthScreen({
   onFormModeChange,
   authLoading,
   authError,
-  onConnectInstagram,
-  onContinueWithoutInstagram,
   savedAccounts,
   onLoginSaved,
   onForgetSavedAccount,
@@ -81,8 +79,6 @@ export function AuthScreen({
   onFormModeChange: (mode: 'login' | 'signup') => void;
   authLoading: boolean;
   authError: string | null;
-  onConnectInstagram: () => void;
-  onContinueWithoutInstagram: () => void;
   // Accounts remembered on this device for one-tap re-login and swapping.
   savedAccounts: Array<{
     email: string;
@@ -249,14 +245,6 @@ export function AuthScreen({
           borderColor: fieldBorder,
         },
         googleLabel: { color: '#FFFFFF', fontSize: 15.5, fontWeight: '600' },
-        secondaryLinks: { alignItems: 'center', gap: 2, marginTop: 6 },
-        link: {
-          color: subtle,
-          fontSize: 14,
-          fontWeight: '600',
-          textAlign: 'center',
-          paddingVertical: 7,
-        },
         toggle: {
           marginTop: 18,
           textAlign: 'center',
@@ -543,23 +531,6 @@ export function AuthScreen({
               <GoogleGlyph size={20} />
               <Text style={styles.googleLabel}>Continue with Google</Text>
             </Pressable>
-
-            <View style={styles.secondaryLinks}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={onConnectInstagram}
-                style={({ pressed }) => pressed && { opacity: 0.6 }}
-              >
-                <Text style={styles.link}>Connect Instagram instead</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={onContinueWithoutInstagram}
-                style={({ pressed }) => pressed && { opacity: 0.6 }}
-              >
-                <Text style={styles.link}>Continue without Instagram</Text>
-              </Pressable>
-            </View>
 
             <Pressable
               accessibilityRole="button"

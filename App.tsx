@@ -163,6 +163,19 @@ const linkedScreenForPath = (pathname: string): Screen | null => {
   return found && found !== 'landing' ? found : null;
 };
 
+// The Instagram OAuth callback redirects back with its outcome in the
+// query. Only the two statuses the callback actually sends count as a
+// return — anything else must fall through to normal session restore, or a
+// malformed URL would skip restore and strand a signed-in creator on the
+// sign-in screen (which looks exactly like being logged out).
+const instagramReturnStatus = (url: string | null | undefined): 'connected' | 'failed' | null => {
+  if (!url) {
+    return null;
+  }
+  const status = Linking.parse(url).queryParams?.instagram_status;
+  return status === 'connected' || status === 'failed' ? status : null;
+};
+
 // Active email session (token + the account it belongs to). Persisted so a
 // page refresh returns the creator to their dashboard; only an explicit
 // logout clears it — and logout still remembers the account for one-tap
@@ -175,6 +188,9 @@ type AuthSessionRecord = {
   token: string;
   email: string | null;
   refreshToken: string | null;
+  // Display name from sign-up / Google / the user record. Optional so older
+  // saved sessions keep loading — Profile fetches it once when missing.
+  name?: string | null;
 };
 
 // A remembered account: enough to sign back in without typing anything —
@@ -219,6 +235,7 @@ const loadAuthSession = (): AuthSessionRecord | null => {
         token: parsed.token,
         email: typeof parsed.email === 'string' ? parsed.email : null,
         refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : null,
+        name: typeof parsed.name === 'string' ? parsed.name : null,
       };
     }
     // Supabase access tokens are short-lived JWTs — only restore one that
@@ -333,10 +350,17 @@ const captureOAuthReturn = async (): Promise<string | null> => {
         ? `Google sign-in couldn’t complete: ${reason}`
         : 'Google sign-in couldn’t complete. Please try again.';
     }
+    // The exchange response carries the Google profile: keep its name for
+    // Profile. The record's `email` stays as it was — that field keys the
+    // local data scope and must not change under a session that never had it.
+    const user = isRecord(body.user) ? body.user : null;
+    const meta = user && isRecord(user.user_metadata) ? user.user_metadata : null;
+    const rawName = meta ? meta.full_name ?? meta.name : null;
     saveAuthSession({
       token,
       email: null,
       refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : null,
+      name: typeof rawName === 'string' && rawName.trim() ? rawName.trim() : null,
     });
     return null;
   } catch {
@@ -671,12 +695,20 @@ function AppShell() {
   // A linked /privacy or /help URL opens straight on that screen — that is
   // what makes the routes shareable from a store listing or a support reply.
   // The app's front door is Login / Sign Up. Linked /privacy and /help URLs
-  // still open straight on their screen; everything else starts at auth.
-  const [screen, setScreen] = useState<Screen>(() =>
-    Platform.OS === 'web' && typeof window !== 'undefined'
-      ? linkedScreenForPath(window.location.pathname) ?? 'auth'
-      : 'auth',
-  );
+  // still open straight on their screen; everything else starts at auth —
+  // except a full-page Instagram OAuth return, which has no route of its own
+  // and must open on the screen the return handler writes to. Starting that
+  // load on the sign-in screen is what made a cancelled Instagram connection
+  // look like an automatic logout.
+  const [screen, setScreen] = useState<Screen>(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return 'auth';
+    }
+    if (instagramReturnStatus(window.location.href) !== null) {
+      return 'connect';
+    }
+    return linkedScreenForPath(window.location.pathname) ?? 'auth';
+  });
   // Screen to return to when the browser back button leaves a linked route.
   const legalReturn = useRef<Screen>('settings');
   // Current screen for the listeners that register once (browser history,
@@ -715,11 +747,21 @@ function AppShell() {
   >(null);
   const [sessionWarning, setSessionWarning] = useState(false);
   const [supabaseAccessToken, setSupabaseAccessToken] = useState<string | null>(null);
+  // The signed-in login identity Profile shows (name + email) — the account
+  // that authenticated here, independent of the optional Instagram
+  // connection. Seeded from the persisted session; a login or the one-time
+  // user-record fetch below fills in what the session didn't keep.
+  const [authIdentity, setAuthIdentity] = useState<{
+    name: string | null;
+    email: string | null;
+  } | null>(() => {
+    const stored = loadAuthSession();
+    return stored ? { name: stored.name ?? null, email: stored.email } : null;
+  });
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  // Which of the two auth forms is open. "Continue without Instagram" on the
-  // connect screen starts at Sign up; a returning device with saved accounts
-  // starts at Log in.
+  // Which of the two auth forms is open. A returning device with saved
+  // accounts starts at Log in; the welcome flow's CTA opens Sign up.
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionErrorDetail, setConnectionErrorDetail] = useState<
@@ -1112,10 +1154,7 @@ function AppShell() {
 
   const handleInstagramReturn = useCallback(async (url: string) => {
     const query = Linking.parse(url).queryParams ?? {};
-    if (
-      query.instagram_status !== 'connected' &&
-      query.instagram_status !== 'failed'
-    ) {
+    if (instagramReturnStatus(url) === null) {
       return;
     }
 
@@ -1259,9 +1298,10 @@ function AppShell() {
   useEffect(() => {
     // Only an actual Instagram OAuth return should preempt restore. On the
     // web `incomingUrl` is *always* the current URL, which made every page
-    // refresh skip session restore and log the creator out.
-    const isInstagramReturn =
-      typeof incomingUrl === 'string' && incomingUrl.includes('instagram_status=');
+    // refresh skip session restore and log the creator out. A URL that merely
+    // mentions `instagram_status` without a real status is not a return: it
+    // falls through to the restore below, so a session is never dropped.
+    const isInstagramReturn = instagramReturnStatus(incomingUrl) !== null;
     if (isInstagramReturn || sessionRestoreStarted.current) {
       return;
     }
@@ -1279,6 +1319,57 @@ function AppShell() {
       const oauthError = await captureOAuthReturn();
       if (oauthError) {
         setAuthError(oauthError);
+      }
+      // Profile shows the login identity (name + email): seed it from the
+      // session the OAuth return (or a previous visit) persisted.
+      const restored = loadAuthSession();
+      if (restored) {
+        setAuthIdentity({ name: restored.name ?? null, email: restored.email });
+        if (
+          (!restored.name || !restored.email) &&
+          restored.token &&
+          supabaseUrl &&
+          supabaseAnonKey
+        ) {
+          // Sessions saved before the name was kept (Google sign-in stores no
+          // email in the record either): read the user once so Profile shows
+          // real name/email instead of blanks. Only the name is written back
+          // — the record's email field keys the local data scope and must not
+          // change under an existing session.
+          void (async () => {
+            try {
+              const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+                headers: {
+                  apikey: supabaseAnonKey,
+                  Authorization: `Bearer ${restored.token}`,
+                },
+                signal: AbortSignal.timeout(15_000),
+              });
+              if (!response.ok) {
+                return;
+              }
+              const user: unknown = await response.json();
+              if (!isRecord(user)) {
+                return;
+              }
+              const meta = isRecord(user.user_metadata) ? user.user_metadata : null;
+              const rawName = meta ? meta.full_name ?? meta.name : null;
+              const name =
+                typeof rawName === 'string' && rawName.trim()
+                  ? rawName.trim()
+                  : restored.name ?? null;
+              const email =
+                typeof user.email === 'string' && user.email ? user.email : restored.email;
+              if (name && name !== restored.name) {
+                saveAuthSession({ ...restored, name });
+              }
+              setAuthIdentity({ name, email });
+            } catch {
+              // Offline or expired token: Profile falls back to whatever the
+              // session already had and labels anything still missing.
+            }
+          })();
+        }
       }
       try {
         const token = await loadInstagramSession();
@@ -1299,9 +1390,10 @@ function AppShell() {
         setConnectionError('session_restore_failed');
         setConnectionState('failed');
         if (!legalEntry) {
-          // Restore failed with no session: the front door is the auth
-          // screen — never the Instagram connect flow.
-          settleOnScreen('auth');
+          // Only a creator with no session at all belongs on the sign-in
+          // page: a failed Instagram restore must never drop an email
+          // session back to Login — that reads as being logged out.
+          settleOnScreen(loadAuthSession() ? 'home' : 'auth');
         }
       }
     })();
@@ -1422,6 +1514,7 @@ function AppShell() {
         if (!account.refreshToken) {
           clearAuthSession();
           setSupabaseAccessToken(null);
+          setAuthIdentity(null);
           setProfile(null);
           setDashboard(null);
           setDashboardError(null);
@@ -1473,8 +1566,14 @@ function AppShell() {
         if (session) {
           // Supabase rotates refresh tokens on use; store the new one.
           const refreshToken = session.refreshToken ?? account.refreshToken;
-          saveAuthSession({ token: session.accessToken, email: account.email, refreshToken });
+          saveAuthSession({
+            token: session.accessToken,
+            email: account.email,
+            refreshToken,
+            name: session.name ?? null,
+          });
           setSupabaseAccessToken(session.accessToken);
+          setAuthIdentity({ name: session.name ?? null, email: account.email });
           setSavedAccounts(upsertSavedAccount({ ...account, refreshToken, savedAt: Date.now() }));
         }
         // Swap into this account: drop the previous account's live state and
@@ -1711,7 +1810,9 @@ function AppShell() {
           token: session.accessToken,
           email: email.trim().toLowerCase(),
           refreshToken: session.refreshToken,
+          name: session.name ?? null,
         });
+        setAuthIdentity({ name: session.name ?? null, email: email.trim().toLowerCase() });
         return true;
       } catch (error) {
         setAuthError(
@@ -1753,6 +1854,11 @@ function AppShell() {
           token: result.accessToken,
           email: email.trim().toLowerCase(),
           refreshToken: result.refreshToken,
+          name: result.name,
+        });
+        setAuthIdentity({
+          name: result.name,
+          email: email.trim().toLowerCase(),
         });
         void clearInstagramSession();
         setSessionToken(null);
@@ -1793,26 +1899,6 @@ function AppShell() {
       setDashboard(null);
     }
   }, [loadDashboard, sessionToken]);
-
-  const continueWithoutInstagram = useCallback(() => {
-    setSessionToken(null);
-    setProfile(null);
-    setDashboard(null);
-    setDashboardError(null);
-    setConnectionState('idle');
-    setConnectionError(null);
-    setScreen('home');
-  }, []);
-
-  // "Continue without Instagram" from the connect screen means "I have no
-  // Instagram", so it opens account creation instead of dropping the creator
-  // into a guest home with nothing saved. The auth screen keeps its own link
-  // as the guest escape hatch, so both remain reachable.
-  const skipInstagramToAccount = useCallback(() => {
-    setAuthMode('signup');
-    setAuthError(null);
-    setScreen('auth');
-  }, []);
 
   const reconnectInstagram = useCallback(async () => {
     try {
@@ -1897,6 +1983,7 @@ function AppShell() {
       }
     }
     setSupabaseAccessToken(null);
+    setAuthIdentity(null);
     // Logout is the only thing that ends a live session — clear every
     // persisted credential so a refresh stays signed out.
     clearAuthSession();
@@ -3164,8 +3251,6 @@ function AppShell() {
           }}
           authLoading={authLoading}
           authError={authError}
-          onConnectInstagram={handleConnectEntry}
-          onContinueWithoutInstagram={continueWithoutInstagram}
           savedAccounts={savedAccounts.map((account) => ({
             email: account.email,
             instagramUsername: account.instagramUsername,
@@ -3323,6 +3408,8 @@ function AppShell() {
         <ProfileScreen
           profile={profile}
           dashboard={dashboard}
+          accountName={authIdentity?.name ?? null}
+          accountEmail={authIdentity?.email ?? null}
           recordCount={analyses.length}
           sessionWarning={sessionWarning}
           getCreatorToken={getCreatorToken}
@@ -3397,7 +3484,13 @@ function AppShell() {
         />
       ) : (
         <ConnectScreen
-          onBack={() => setScreen(sessionToken ? 'home' : 'auth')}
+          onBack={() =>
+            // A creator with a login session (email or Instagram) always
+            // returns to the app — only a truly signed-out visitor goes back
+            // to the sign-in page. Landing here after a cancelled connection
+            // must never look like a logout.
+            setScreen(sessionToken || loadAuthSession() ? 'home' : 'auth')
+          }
           onConnect={() => void connectInstagram()}
           onConnected={continueToDashboard}
           onConnectDifferent={() => {
@@ -3406,7 +3499,6 @@ function AppShell() {
             void connectInstagram();
           }}
           onShowAccounts={() => setAccountSwitcherOpen(true)}
-          onContinueWithoutInstagram={skipInstagramToAccount}
           connectionState={connectionState}
           connectionError={connectionError}
           connectionErrorDetail={connectionErrorDetail}

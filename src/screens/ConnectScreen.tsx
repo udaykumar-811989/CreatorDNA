@@ -49,7 +49,6 @@ export function ConnectScreen({
   onConnected,
   onConnectDifferent,
   onShowAccounts,
-  onContinueWithoutInstagram,
   connectionState,
   connectionError,
   connectionErrorDetail,
@@ -62,7 +61,6 @@ export function ConnectScreen({
   onConnectDifferent: () => void;
   /** Open the saved-accounts switcher without leaving this page. */
   onShowAccounts: () => void;
-  onContinueWithoutInstagram: () => void;
   connectionState: ConnectionState;
   connectionError: string | null;
   connectionErrorDetail: string | null;
@@ -164,15 +162,6 @@ export function ConnectScreen({
             style={{ marginTop: 12 }}
           />
         ) : null}
-
-        {connectionState === 'connected' ? null : (
-          <OutlineButton
-            label="Continue without Instagram"
-            onPress={onContinueWithoutInstagram}
-            tone="light"
-            style={{ marginTop: 12 }}
-          />
-        )}
 
         <Text style={styles.requirement}>
           Connecting needs an Instagram Professional account (Creator or

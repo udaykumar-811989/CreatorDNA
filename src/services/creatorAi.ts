@@ -995,12 +995,25 @@ async function parseResponse(
   return body;
 }
 
+// The account's display name as Supabase knows it (Google's full name, or
+// the name typed at sign-up). Null when the account never stored one — the
+// app then labels the field instead of inventing a name.
+function sessionDisplayName(body: Record<string, unknown>): string | null {
+  const user = isRecord(body.user) ? body.user : null;
+  const meta = user && isRecord(user.user_metadata) ? user.user_metadata : null;
+  if (!meta) {
+    return null;
+  }
+  const candidate = typeof meta.full_name === 'string' ? meta.full_name : meta.name;
+  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
+}
+
 export async function signInForCreatorAi(
   supabaseUrl: string,
   anonKey: string,
   email: string,
   password: string,
-): Promise<{ accessToken: string; refreshToken: string | null }> {
+): Promise<{ accessToken: string; refreshToken: string | null; name: string | null }> {
   let response: Response;
   try {
     response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
@@ -1027,11 +1040,12 @@ export async function signInForCreatorAi(
       typeof body.refresh_token === 'string' && body.refresh_token.length > 10
         ? body.refresh_token
         : null,
+    name: sessionDisplayName(body),
   };
 }
 
 export type SignUpResult =
-  | { status: 'signed_in'; accessToken: string; refreshToken: string | null }
+  | { status: 'signed_in'; accessToken: string; refreshToken: string | null; name: string | null }
   | { status: 'confirm_email' };
 
 // Creates the email account that stands in for Instagram when a creator
@@ -1120,6 +1134,9 @@ export async function signUpForCreatorAi(
         typeof body.refresh_token === 'string' && body.refresh_token.length > 10
           ? body.refresh_token
           : null,
+      // The name the creator typed here — Profile shows it as their login
+      // name without needing another round trip.
+      name: name.trim() || null,
     };
   }
   return { status: 'confirm_email' };
@@ -1129,7 +1146,7 @@ export async function refreshCreatorAiSession(
   supabaseUrl: string,
   anonKey: string,
   refreshToken: string,
-): Promise<{ accessToken: string; refreshToken: string | null }> {
+): Promise<{ accessToken: string; refreshToken: string | null; name: string | null }> {
   let response: Response;
   try {
     response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
@@ -1170,6 +1187,7 @@ export async function refreshCreatorAiSession(
       typeof session.refresh_token === 'string' && session.refresh_token.length > 10
         ? session.refresh_token
         : null,
+    name: sessionDisplayName(session),
   };
 }
 
