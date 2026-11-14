@@ -33,6 +33,8 @@ export function ContentScreen({
   savedIdeas,
   generating,
   generateError,
+  generateTopic,
+  onRetryGenerate,
   defaults,
   planStatuses,
   onGenerate,
@@ -49,6 +51,10 @@ export function ContentScreen({
   savedIdeas: CreatorAiIdea[];
   generating: boolean;
   generateError: string | null;
+  /** Topic of the in-flight generation, shown while the list builds. */
+  generateTopic: string | null;
+  /** Re-runs the request that failed (the trend flow's own error path). */
+  onRetryGenerate: () => void;
   defaults: IdeaRequest;
   planStatuses: Record<string, PlanStatus>;
   onGenerate: (mode: 'replace' | 'append' | 'trending', request: IdeaRequest) => void;
@@ -105,6 +111,8 @@ export function ContentScreen({
           savedIdeas={savedIdeas}
           generating={generating}
           generateError={generateError}
+          generateTopic={generateTopic}
+          onRetryGenerate={onRetryGenerate}
           defaults={defaults}
           onGenerate={onGenerate}
           onToggleSave={onToggleSave}

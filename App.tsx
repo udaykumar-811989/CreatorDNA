@@ -1093,6 +1093,10 @@ function AppShell() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  // The topic behind the in-flight generation, shown on the Ideas list while
+  // it runs: the trend → idea jump never opens the generate modal, so the
+  // list itself has to say what it is building.
+  const [generateTopic, setGenerateTopic] = useState<string | null>(null);
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
 
@@ -1104,6 +1108,12 @@ function AppShell() {
   const pendingSubmission = useRef<
     { submission: AnalysisSubmission; origin: Screen } | null
   >(null);
+  // The last generate request, so the Ideas list's "Try again" re-runs
+  // exactly what failed — a trend headline, not the generic defaults.
+  const lastGenerateRequest = useRef<{
+    mode: 'replace' | 'append' | 'trending';
+    request: IdeaRequest;
+  } | null>(null);
   const handledJobIds = useRef(new Set<string>());
   const isMounted = useRef(true);
 
@@ -2470,8 +2480,10 @@ function AppShell() {
         setGenerateError('Supabase is not configured for Creator AI.');
         return;
       }
+      lastGenerateRequest.current = { mode, request };
       setGenerating(true);
       setGenerateError(null);
+      setGenerateTopic(request.topic);
       try {
         const token = await getCreatorToken();
         const result = await generateCreatorIdeas(
@@ -2507,6 +2519,14 @@ function AppShell() {
     },
     [getCreatorToken, setIdeas, setTrendingIdeas],
   );
+
+  // Re-runs the exact request that just failed. The trend → idea flow never
+  // opens the generate modal (where the error and its retry live), so the
+  // Ideas list carries its own error state and calls this.
+  const retryGenerate = useCallback(() => {
+    const last = lastGenerateRequest.current;
+    if (last) void handleGenerate(last.mode, last.request);
+  }, [handleGenerate]);
 
   const handleToggleSave = useCallback(
     (idea: CreatorAiIdea) => {
@@ -3501,6 +3521,8 @@ function AppShell() {
           savedIdeas={savedIdeas}
           generating={generating}
           generateError={generateError}
+          generateTopic={generateTopic}
+          onRetryGenerate={retryGenerate}
           defaults={ideaDefaults}
           planStatuses={planStatuses}
           onGenerate={(mode, request) => void handleGenerate(mode, request)}

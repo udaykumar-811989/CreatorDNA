@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
   GenerateIdeasModal,
   IdeaScoreModal,
@@ -28,6 +28,8 @@ export function IdeasScreen({
   savedIdeas,
   generating,
   generateError,
+  generateTopic,
+  onRetryGenerate,
   defaults,
   onGenerate,
   onToggleSave,
@@ -39,6 +41,10 @@ export function IdeasScreen({
   savedIdeas: CreatorAiIdea[];
   generating: boolean;
   generateError: string | null;
+  /** Topic of the in-flight generation, so the list can say what it builds. */
+  generateTopic: string | null;
+  /** Re-runs the request that failed (used by the trend → idea flow). */
+  onRetryGenerate: () => void;
   defaults: IdeaRequest;
   onGenerate: (mode: 'replace' | 'append' | 'trending', request: IdeaRequest) => void;
   onToggleSave: (idea: CreatorAiIdea) => void;
@@ -126,7 +132,48 @@ export function IdeasScreen({
 
         <PillTabs options={TABS} value={tab} onChange={setTab} />
 
-        {list.length === 0 ? (
+        {/* The trend → idea jump never opens the generate modal, so the list
+            itself reports progress and failure for requests fired without it:
+            a card saying what it is building, or the error with a retry that
+            re-runs the exact same request. */}
+        {generateMode === null && generating ? (
+          <Cardish>
+            <View style={styles.statusRow}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.statusTitle}>Building ideas…</Text>
+                {generateTopic ? (
+                  <Text style={styles.statusHint} numberOfLines={2}>
+                    {generateTopic}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+          </Cardish>
+        ) : null}
+        {generateMode === null && !generating && generateError ? (
+          <Cardish>
+            <View style={styles.statusRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.statusTitle}>Couldn’t build ideas</Text>
+                <Text style={styles.statusHint} numberOfLines={3}>
+                  {generateError}
+                </Text>
+              </View>
+            </View>
+            <OutlineButton
+              label="Try again"
+              tone="light"
+              onPress={onRetryGenerate}
+              style={{ marginTop: 12, alignSelf: 'flex-start', paddingHorizontal: 22 }}
+            />
+          </Cardish>
+        ) : null}
+
+        {/* While a background request runs — or after it failed and the error
+            card above is showing — the "no ideas yet" empty state would
+            contradict it, so it steps aside. */}
+        {list.length === 0 && generateMode === null && (generating || generateError) ? null : list.length === 0 ? (
           <Cardish>
             <EmptyState
               glyph="✦"
@@ -355,6 +402,11 @@ const makeStyles = (c: typeof colors) =>
     heroActions: { flexDirection: 'row', gap: 10, marginTop: 6 },
 
     cards: { gap: 12 },
+
+    statusRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 11, padding: 13 },
+    statusTitle: { ...type.bodyBold, color: c.text, fontSize: 15 },
+    statusHint: { ...type.small, color: c.textSub, marginTop: 3, lineHeight: 18 },
+
     ideaCard: {
       flexDirection: 'row',
       gap: 13,
