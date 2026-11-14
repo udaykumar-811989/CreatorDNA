@@ -1,5 +1,5 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { NotificationIcon } from '../components/NotificationIcon';
 import { TrashIcon } from '../components/icons';
@@ -26,7 +26,10 @@ import { useTheme, useThemeColors } from '../themeContext';
 // The notification history: grouped, filterable, and honest about what it is
 // showing. Unread rows are visually heavier than read ones, every row can be
 // dismissed, and tapping one deep-links to the screen (or the specific
-// analysis) it is about.
+// analysis) it is about. The full list used to greet every visit and pushed
+// the screen past a scroll for anyone with a few days of history, so it now
+// opens collapsed — the newest notification only — and the rest appear the
+// moment "View all" is pressed.
 
 type Filter = 'all' | NotificationCategory;
 
@@ -57,6 +60,11 @@ export function NotificationsScreen({
   const tone = isDark ? ('dark' as const) : ('light' as const);
   const [filter, setFilter] = useState<Filter>('all');
   const [permission, setPermission] = useState<PushPermission>(() => getPushPermission());
+  // Collapsed by default: only the newest notification until the creator asks
+  // for the rest. The filter chips belong to the full list, so they live in
+  // the expanded state alone.
+  const [expanded, setExpanded] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
 
   // Browser settings can change outside the app; re-read when the tab is
   // focused again so the prompt never asks for something already answered.
@@ -66,6 +74,23 @@ export function NotificationsScreen({
     () => notifications.filter((item) => !item.isRead).length,
     [notifications],
   );
+  // The newest notification by creation time (not merely array order), so the
+  // collapsed card is the latest one however the store sorted or merged them.
+  const latest = useMemo(() => {
+    let newest: CreatorNotification | null = null;
+    for (const item of notifications) {
+      if (!newest || Date.parse(item.createdAt) > Date.parse(newest.createdAt)) {
+        newest = item;
+      }
+    }
+    return newest;
+  }, [notifications]);
+  const toggleList = (): void => {
+    setExpanded((value) => !value);
+    // Jump back to the top: after re-rendering the list either grows or
+    // shrinks, and a deep scroll offset would land on empty space.
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  };
   const filtered = useMemo(
     () =>
       filter === 'all'
@@ -202,6 +227,17 @@ export function NotificationsScreen({
           borderColor: c.darkBorder,
         },
         prefsLinkText: { ...type.small, color: c.onDarkSub, fontWeight: '700' },
+
+        listToggle: {
+          alignItems: 'center',
+          paddingVertical: 14,
+          borderRadius: radius.md,
+          borderWidth: 1.5,
+        },
+        viewAll: { backgroundColor: c.primarySoft, borderColor: c.primarySoft },
+        showLess: { backgroundColor: c.darkCard, borderColor: c.darkBorder },
+        viewAllLabel: { ...type.small, color: c.primary, fontWeight: '800', fontSize: 14 },
+        showLessLabel: { ...type.small, color: c.onDarkSub, fontWeight: '800', fontSize: 14 },
       }),
     [c],
   );
@@ -209,10 +245,73 @@ export function NotificationsScreen({
   const filterLabel =
     NOTIFICATION_CATEGORIES.find((entry) => entry.key === filter)?.label ?? 'All';
 
+  // One notification card, shared by the collapsed preview and the full list:
+  // tap the body to open what it is about (deep link included), a trailing
+  // action when the notification carries one, and a delete button either way.
+  const renderNotification = (item: CreatorNotification) => {
+    const meta = NOTIFICATION_TYPE_META[item.type];
+    const showAction = Boolean(item.actionLabel && item.actionTarget);
+    return (
+      <View key={item.id} style={[s.item, !item.isRead && s.itemUnread]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open notification: ${item.title}`}
+          onPress={() => onOpen(item)}
+          style={s.itemMain}
+        >
+          <NotificationIcon name={meta.icon} />
+          <View style={s.itemBody}>
+            <Text style={[s.itemTitle, !item.isRead && s.itemTitleUnread]}>
+              {item.title}
+            </Text>
+            {item.message ? <Text style={s.itemMessage}>{item.message}</Text> : null}
+            <View style={s.itemMeta}>
+              <Text style={s.itemTime}>{notificationTimeLabel(item.createdAt)}</Text>
+              {item.isRead ? (
+                <Text style={s.readTag}>Read</Text>
+              ) : (
+                <>
+                  <View style={s.unreadDot} />
+                  <Text style={s.itemTime}>Unread</Text>
+                </>
+              )}
+            </View>
+          </View>
+        </Pressable>
+        <View style={s.itemFooter}>
+          {showAction ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => onOpen(item)}
+              style={({ pressed }) => [s.actionBtn, pressed && { opacity: 0.75 }]}
+            >
+              <Text style={s.actionLabel}>{item.actionLabel}</Text>
+            </Pressable>
+          ) : (
+            <View />
+          )}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Remove notification: ${item.title}`}
+            onPress={() => onDelete(item.id)}
+            hitSlop={10}
+            style={({ pressed }) => [s.dismissBtn, pressed && { opacity: 0.7 }]}
+          >
+            <TrashIcon size={16} color={c.onDarkDim} />
+          </Pressable>
+        </View>
+      </View>
+    );
+  };
+
   return (
     <View style={s.screen}>
       <LinearGradient colors={[c.darkBg, c.darkBg2, c.darkBg3]} style={StyleSheet.absoluteFill} />
-      <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={s.content}
+        showsVerticalScrollIndicator={false}
+      >
         <ScreenHeader
           title="Notifications"
           subtitle={
@@ -262,107 +361,80 @@ export function NotificationsScreen({
           </View>
         ) : null}
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={s.chipTrack}
-        >
-          {NOTIFICATION_CATEGORIES.map((entry) => {
-            const active = filter === entry.key;
-            return (
-              <Pressable
-                key={entry.key}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                onPress={() => setFilter(entry.key)}
-                style={({ pressed }) => [s.chip, active && s.chipActive, pressed && { opacity: 0.8 }]}
-              >
-                <Text style={[s.chipLabel, active && s.chipLabelActive]}>{entry.label}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        {filtered.length === 0 ? (
+        {notifications.length === 0 ? (
           <EmptyState
             tone={tone}
-            glyph={notifications.length === 0 ? '✨' : '🔍'}
-            title={
-              notifications.length === 0
-                ? 'You’re all caught up ✨'
-                : `Nothing in ${filterLabel} yet`
-            }
-            hint={
-              notifications.length === 0
-                ? 'CreatorDNA will notify you when there’s something worth knowing.'
-                : 'Notifications for this category will appear here as soon as they happen.'
-            }
-            actionLabel={notifications.length === 0 ? 'Notification settings' : 'Show all'}
-            onAction={
-              notifications.length === 0 ? onOpenSettings : () => setFilter('all')
-            }
+            glyph="✨"
+            title="You’re all caught up ✨"
+            hint="CreatorDNA will notify you when there’s something worth knowing."
+            actionLabel="Notification settings"
+            onAction={onOpenSettings}
           />
+        ) : !expanded ? (
+          <>
+            {/* Collapsed: the newest notification alone keeps the screen
+                short; everything else waits behind "View all". */}
+            {latest ? renderNotification(latest) : null}
+            {latest && notifications.length > 1 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`View all ${notifications.length} notifications`}
+                onPress={toggleList}
+                style={({ pressed }) => [s.listToggle, s.viewAll, pressed && { opacity: 0.8 }]}
+              >
+                <Text style={s.viewAllLabel}>View all {notifications.length}</Text>
+              </Pressable>
+            ) : null}
+          </>
         ) : (
-          groups.map((group) => (
-            <View key={group.key} style={s.group}>
-              <Text style={s.groupLabel}>{group.label}</Text>
-              {group.items.map((item) => {
-                const meta = NOTIFICATION_TYPE_META[item.type];
-                const showAction = Boolean(item.actionLabel && item.actionTarget);
+          <>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={s.chipTrack}
+            >
+              {NOTIFICATION_CATEGORIES.map((entry) => {
+                const active = filter === entry.key;
                 return (
-                  <View key={item.id} style={[s.item, !item.isRead && s.itemUnread]}>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Open notification: ${item.title}`}
-                      onPress={() => onOpen(item)}
-                      style={s.itemMain}
-                    >
-                      <NotificationIcon name={meta.icon} />
-                      <View style={s.itemBody}>
-                        <Text style={[s.itemTitle, !item.isRead && s.itemTitleUnread]}>
-                          {item.title}
-                        </Text>
-                        {item.message ? <Text style={s.itemMessage}>{item.message}</Text> : null}
-                        <View style={s.itemMeta}>
-                          <Text style={s.itemTime}>{notificationTimeLabel(item.createdAt)}</Text>
-                          {item.isRead ? (
-                            <Text style={s.readTag}>Read</Text>
-                          ) : (
-                            <>
-                              <View style={s.unreadDot} />
-                              <Text style={s.itemTime}>Unread</Text>
-                            </>
-                          )}
-                        </View>
-                      </View>
-                    </Pressable>
-                    <View style={s.itemFooter}>
-                      {showAction ? (
-                        <Pressable
-                          accessibilityRole="button"
-                          onPress={() => onOpen(item)}
-                          style={({ pressed }) => [s.actionBtn, pressed && { opacity: 0.75 }]}
-                        >
-                          <Text style={s.actionLabel}>{item.actionLabel}</Text>
-                        </Pressable>
-                      ) : (
-                        <View />
-                      )}
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove notification: ${item.title}`}
-                        onPress={() => onDelete(item.id)}
-                        hitSlop={10}
-                        style={({ pressed }) => [s.dismissBtn, pressed && { opacity: 0.7 }]}
-                      >
-                        <TrashIcon size={16} color={c.onDarkDim} />
-                      </Pressable>
-                    </View>
-                  </View>
+                  <Pressable
+                    key={entry.key}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    onPress={() => setFilter(entry.key)}
+                    style={({ pressed }) => [s.chip, active && s.chipActive, pressed && { opacity: 0.8 }]}
+                  >
+                    <Text style={[s.chipLabel, active && s.chipLabelActive]}>{entry.label}</Text>
+                  </Pressable>
                 );
               })}
-            </View>
-          ))
+            </ScrollView>
+
+            {filtered.length === 0 ? (
+              <EmptyState
+                tone={tone}
+                glyph="🔍"
+                title={`Nothing in ${filterLabel} yet`}
+                hint="Notifications for this category will appear here as soon as they happen."
+                actionLabel="Show all"
+                onAction={() => setFilter('all')}
+              />
+            ) : (
+              groups.map((group) => (
+                <View key={group.key} style={s.group}>
+                  <Text style={s.groupLabel}>{group.label}</Text>
+                  {group.items.map((item) => renderNotification(item))}
+                </View>
+              ))
+            )}
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={toggleList}
+              style={({ pressed }) => [s.listToggle, s.showLess, pressed && { opacity: 0.8 }]}
+            >
+              <Text style={s.showLessLabel}>Show less</Text>
+            </Pressable>
+          </>
         )}
 
         {notifications.length > 0 ? (

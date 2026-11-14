@@ -1008,12 +1008,27 @@ function sessionDisplayName(body: Record<string, unknown>): string | null {
   return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
 }
 
+// The account's profile photo as Supabase knows it (Google's picture, or the
+// one the creator set from Edit Profile). Null when none was ever stored —
+// Profile then falls back to the initial letter instead of inventing an image.
+function sessionAvatarUrl(body: Record<string, unknown>): string | null {
+  const user = isRecord(body.user) ? body.user : null;
+  const meta = user && isRecord(user.user_metadata) ? user.user_metadata : null;
+  const candidate = meta ? meta.avatar_url : null;
+  return typeof candidate === 'string' && candidate.trim() ? candidate.trim() : null;
+}
+
 export async function signInForCreatorAi(
   supabaseUrl: string,
   anonKey: string,
   email: string,
   password: string,
-): Promise<{ accessToken: string; refreshToken: string | null; name: string | null }> {
+): Promise<{
+  accessToken: string;
+  refreshToken: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+}> {
   let response: Response;
   try {
     response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
@@ -1041,6 +1056,7 @@ export async function signInForCreatorAi(
         ? body.refresh_token
         : null,
     name: sessionDisplayName(body),
+    avatarUrl: sessionAvatarUrl(body),
   };
 }
 
@@ -1146,7 +1162,12 @@ export async function refreshCreatorAiSession(
   supabaseUrl: string,
   anonKey: string,
   refreshToken: string,
-): Promise<{ accessToken: string; refreshToken: string | null; name: string | null }> {
+): Promise<{
+  accessToken: string;
+  refreshToken: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+}> {
   let response: Response;
   try {
     response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
@@ -1188,6 +1209,7 @@ export async function refreshCreatorAiSession(
         ? session.refresh_token
         : null,
     name: sessionDisplayName(session),
+    avatarUrl: sessionAvatarUrl(session),
   };
 }
 

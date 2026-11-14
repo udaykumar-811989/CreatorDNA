@@ -39,6 +39,7 @@ import {
   adoptContentScope,
   contentKeyList,
   contentKeysFor,
+  copyContentScope,
   hydrateStorage,
   isStorageHydrated,
   preloadStorageKeys,
@@ -111,6 +112,12 @@ import {
   submitCreatorContent,
   tokenExpiry,
 } from './src/services/creatorAi';
+import {
+  requestPasswordReset,
+  saveAccountProfile,
+  type ProfileSaveInput,
+  type ProfileSaveResult,
+} from './src/services/account';
 import type { ChatMessageRecord, ChatMediaPayload } from './src/components/ChatMedia';
 import {
   clearInstagramSession,
@@ -146,6 +153,8 @@ import { VideoAnalysisScreen } from './src/screens/VideoAnalysisScreen';
 import { WeeklyReportScreen } from './src/screens/WeeklyReportScreen';
 import { MediaKitScreen } from './src/screens/MediaKitScreen';
 import { NotificationsScreen } from './src/screens/NotificationsScreen';
+import { EditProfileScreen } from './src/screens/EditProfileScreen';
+import { InstagramDetailsScreen } from './src/screens/InstagramDetailsScreen';
 import { NAV_HEIGHT } from './src/theme';
 import { ThemeProvider, useTheme, useThemeColors } from './src/themeContext';
 
@@ -191,6 +200,10 @@ type AuthSessionRecord = {
   // Display name from sign-up / Google / the user record. Optional so older
   // saved sessions keep loading — Profile fetches it once when missing.
   name?: string | null;
+  // Profile photo (Google's picture, or one set from Edit Profile), so a
+  // reload shows the same avatar without a network round trip. Optional for
+  // the same reason as `name`.
+  avatarUrl?: string | null;
 };
 
 // A remembered account: enough to sign back in without typing anything —
@@ -236,6 +249,7 @@ const loadAuthSession = (): AuthSessionRecord | null => {
         email: typeof parsed.email === 'string' ? parsed.email : null,
         refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : null,
         name: typeof parsed.name === 'string' ? parsed.name : null,
+        avatarUrl: typeof parsed.avatarUrl === 'string' ? parsed.avatarUrl : null,
       };
     }
     // Supabase access tokens are short-lived JWTs — only restore one that
@@ -356,11 +370,14 @@ const captureOAuthReturn = async (): Promise<string | null> => {
     const user = isRecord(body.user) ? body.user : null;
     const meta = user && isRecord(user.user_metadata) ? user.user_metadata : null;
     const rawName = meta ? meta.full_name ?? meta.name : null;
+    const rawAvatar = meta ? meta.avatar_url : null;
     saveAuthSession({
       token,
       email: null,
       refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : null,
       name: typeof rawName === 'string' && rawName.trim() ? rawName.trim() : null,
+      avatarUrl:
+        typeof rawAvatar === 'string' && rawAvatar.trim() ? rawAvatar.trim() : null,
     });
     return null;
   } catch {
@@ -520,6 +537,24 @@ const removeSavedAccount = (email: string): SavedAccount[] => {
   const next = loadSavedAccounts().filter(
     (account) => account.email.toLowerCase() !== email.toLowerCase(),
   );
+  persistSavedAccounts(next);
+  return next;
+};
+
+// A confirmed email change re-keys everything the account switcher matches
+// on: the remembered login keeps its credential and Instagram connection but
+// is re-saved under the new address, so one-tap sign-in still finds it. No
+// entry for the old address simply means nothing to re-key.
+const rekeySavedAccount = (fromEmail: string, toEmail: string): SavedAccount[] | null => {
+  const accounts = loadSavedAccounts();
+  const entry = accounts.find(
+    (account) => account.email.toLowerCase() === fromEmail.toLowerCase(),
+  );
+  if (!entry) return null;
+  const next = [
+    { ...entry, email: toEmail },
+    ...accounts.filter((account) => account.email.toLowerCase() !== fromEmail.toLowerCase()),
+  ].slice(0, maxSavedAccounts);
   persistSavedAccounts(next);
   return next;
 };
@@ -754,9 +789,12 @@ function AppShell() {
   const [authIdentity, setAuthIdentity] = useState<{
     name: string | null;
     email: string | null;
+    avatarUrl: string | null;
   } | null>(() => {
     const stored = loadAuthSession();
-    return stored ? { name: stored.name ?? null, email: stored.email } : null;
+    return stored
+      ? { name: stored.name ?? null, email: stored.email, avatarUrl: stored.avatarUrl ?? null }
+      : null;
   });
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -1320,22 +1358,29 @@ function AppShell() {
       if (oauthError) {
         setAuthError(oauthError);
       }
-      // Profile shows the login identity (name + email): seed it from the
-      // session the OAuth return (or a previous visit) persisted.
+      // Profile shows the login identity (name + email + photo): seed it from
+      // the session the OAuth return (or a previous visit) persisted.
       const restored = loadAuthSession();
       if (restored) {
-        setAuthIdentity({ name: restored.name ?? null, email: restored.email });
+        setAuthIdentity({
+          name: restored.name ?? null,
+          email: restored.email,
+          avatarUrl: restored.avatarUrl ?? null,
+        });
         if (
-          (!restored.name || !restored.email) &&
+          (!restored.name || !restored.email || !restored.avatarUrl) &&
           restored.token &&
           supabaseUrl &&
           supabaseAnonKey
         ) {
-          // Sessions saved before the name was kept (Google sign-in stores no
-          // email in the record either): read the user once so Profile shows
-          // real name/email instead of blanks. Only the name is written back
-          // — the record's email field keys the local data scope and must not
-          // change under an existing session.
+          // Sessions saved before a field was kept (Google sign-in stores no
+          // email in the record either; a photo may only exist server-side):
+          // read the user once so Profile shows real name/email/photo instead
+          // of blanks. What is written back follows one rule — `email` keys
+          // the local data scope, so it only ever moves from one real address
+          // to another after Supabase reports a *confirmed* change (the data
+          // scope is copied across first); a session that never had an email
+          // (Google) never gains one here.
           void (async () => {
             try {
               const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
@@ -1360,10 +1405,38 @@ function AppShell() {
                   : restored.name ?? null;
               const email =
                 typeof user.email === 'string' && user.email ? user.email : restored.email;
-              if (name && name !== restored.name) {
-                saveAuthSession({ ...restored, name });
+              const rawAvatar = meta ? meta.avatar_url : null;
+              const avatarUrl =
+                typeof rawAvatar === 'string' && rawAvatar.trim()
+                  ? rawAvatar.trim()
+                  : restored.avatarUrl ?? null;
+              const previousEmail = restored.email;
+              const emailChanged = Boolean(
+                previousEmail &&
+                  email &&
+                  email.toLowerCase() !== previousEmail.toLowerCase(),
+              );
+              if (emailChanged && previousEmail && email) {
+                // The confirmation link was clicked while this session was
+                // away: re-key the local data scope so nothing is stranded
+                // under the old address, and re-key the saved login so
+                // one-tap sign-in still matches.
+                copyContentScope(
+                  `e:${previousEmail.toLowerCase()}`,
+                  `e:${email.toLowerCase()}`,
+                );
+                const rekeyed = rekeySavedAccount(previousEmail, email.toLowerCase());
+                if (rekeyed) setSavedAccounts(rekeyed);
               }
-              setAuthIdentity({ name, email });
+              const nextEmail = emailChanged && email ? email.toLowerCase() : previousEmail;
+              if (
+                name !== (restored.name ?? null) ||
+                nextEmail !== previousEmail ||
+                avatarUrl !== (restored.avatarUrl ?? null)
+              ) {
+                saveAuthSession({ ...restored, name, email: nextEmail, avatarUrl });
+              }
+              setAuthIdentity({ name, email, avatarUrl });
             } catch {
               // Offline or expired token: Profile falls back to whatever the
               // session already had and labels anything still missing.
@@ -1571,9 +1644,14 @@ function AppShell() {
             email: account.email,
             refreshToken,
             name: session.name ?? null,
+            avatarUrl: session.avatarUrl ?? null,
           });
           setSupabaseAccessToken(session.accessToken);
-          setAuthIdentity({ name: session.name ?? null, email: account.email });
+          setAuthIdentity({
+            name: session.name ?? null,
+            email: account.email,
+            avatarUrl: session.avatarUrl ?? null,
+          });
           setSavedAccounts(upsertSavedAccount({ ...account, refreshToken, savedAt: Date.now() }));
         }
         // Swap into this account: drop the previous account's live state and
@@ -1811,8 +1889,13 @@ function AppShell() {
           email: email.trim().toLowerCase(),
           refreshToken: session.refreshToken,
           name: session.name ?? null,
+          avatarUrl: session.avatarUrl ?? null,
         });
-        setAuthIdentity({ name: session.name ?? null, email: email.trim().toLowerCase() });
+        setAuthIdentity({
+          name: session.name ?? null,
+          email: email.trim().toLowerCase(),
+          avatarUrl: session.avatarUrl ?? null,
+        });
         return true;
       } catch (error) {
         setAuthError(
@@ -1859,6 +1942,9 @@ function AppShell() {
         setAuthIdentity({
           name: result.name,
           email: email.trim().toLowerCase(),
+          // A fresh account never has a photo yet — Profile labels the
+          // initial instead of inventing one.
+          avatarUrl: null,
         });
         void clearInstagramSession();
         setSessionToken(null);
@@ -2002,6 +2088,83 @@ function AppShell() {
     // Instagram connect flow is never part of signing out.
     setScreen('auth');
   }, [dashboard, profile, sessionToken]);
+
+  // Saves name / photo / email from Edit Profile on this account's own
+  // credential — never the guest token getCreatorToken mints for signed-out
+  // callers, which would edit the wrong user. A token about to expire is
+  // refreshed first so a long-running session doesn't fail its first save;
+  // if the refresh itself is dead the save reports that plainly and nothing
+  // is signed out (only an explicit logout ever does that).
+  const handleSaveProfile = useCallback(
+    async (input: ProfileSaveInput): Promise<ProfileSaveResult> => {
+      let current = loadAuthSession();
+      if (!current) {
+        return { ok: false, error: 'Sign in again to edit your profile.' };
+      }
+      let token = supabaseAccessToken || current.token;
+      const expiry = tokenExpiry(token);
+      if (current.refreshToken && (expiry === null || expiry - Date.now() < 120_000)) {
+        try {
+          const refreshed = await refreshCreatorAiSession(
+            supabaseUrl,
+            supabaseAnonKey,
+            current.refreshToken,
+          );
+          token = refreshed.accessToken;
+          current = {
+            ...current,
+            token,
+            refreshToken: refreshed.refreshToken ?? current.refreshToken,
+            name: refreshed.name ?? current.name,
+            avatarUrl: refreshed.avatarUrl ?? current.avatarUrl,
+          };
+          saveAuthSession(current);
+          setSupabaseAccessToken(token);
+        } catch {
+          // Keep the current credential — the save below reports whether it
+          // still works instead of tearing the session down here.
+        }
+      }
+
+      const result = await saveAccountProfile(token, input);
+      if (!result.ok) return result;
+
+      // An applied email change re-keys the local data scope (`e:<email>`):
+      // copy the data across first so nothing is stranded under the old
+      // address, re-key the remembered login, then persist the new session.
+      // A change still awaiting confirmation keeps the current address
+      // everywhere until Supabase reports it applied (next launch reconciles).
+      const previousEmail = current.email;
+      const nextEmail = result.email.trim().toLowerCase() || null;
+      const applied = !result.emailPending;
+      const emailChanged = Boolean(
+        applied && previousEmail && nextEmail && nextEmail !== previousEmail.toLowerCase(),
+      );
+      if (emailChanged && previousEmail && nextEmail) {
+        copyContentScope(`e:${previousEmail.toLowerCase()}`, `e:${nextEmail}`);
+        const rekeyed = rekeySavedAccount(previousEmail, nextEmail);
+        if (rekeyed) setSavedAccounts(rekeyed);
+      }
+      const sessionEmail =
+        emailChanged && nextEmail ? nextEmail : previousEmail;
+      saveAuthSession({
+        ...current,
+        email: sessionEmail,
+        name: result.name,
+        avatarUrl: result.avatarUrl,
+      });
+      setAuthIdentity((previous) => ({
+        name: result.name,
+        email:
+          applied && nextEmail
+            ? nextEmail
+            : (previous?.email ?? previousEmail ?? null),
+        avatarUrl: result.avatarUrl,
+      }));
+      return result;
+    },
+    [supabaseAccessToken],
+  );
 
   // ---------- Creator AI: token, analysis, ideas, chat ----------
   // One sign-in at a time: two screens asking together would otherwise mint
@@ -3129,6 +3292,11 @@ function AppShell() {
       case 'notifications':
         setScreen('home');
         return true;
+      case 'editProfile':
+      case 'instagramDetails':
+        // Both are detail views entered from Profile; Back returns there.
+        setScreen('profile');
+        return true;
       case 'settings':
         setScreen('profile');
         return true;
@@ -3410,17 +3578,34 @@ function AppShell() {
           dashboard={dashboard}
           accountName={authIdentity?.name ?? null}
           accountEmail={authIdentity?.email ?? null}
+          accountAvatarUrl={authIdentity?.avatarUrl ?? null}
           recordCount={analyses.length}
           sessionWarning={sessionWarning}
           getCreatorToken={getCreatorToken}
           onOpenAnalyses={() => setScreen('analysesList')}
-          onViewDna={() => setScreen('dna')}
+          onOpenEditProfile={() => setScreen('editProfile')}
           onOpenSettings={() => setScreen('settings')}
           onSwitchAccount={() => setAccountSwitcherOpen(true)}
           onOpenMediaKit={() => setScreen('mediaKit')}
+          onOpenInstagram={() => setScreen('instagramDetails')}
           onConnect={handleConnectEntry}
           onDisconnect={() => void disconnectInstagram()}
+          onResetPassword={requestPasswordReset}
           onLogout={logout}
+        />
+      ) : screen === 'editProfile' ? (
+        <EditProfileScreen
+          name={authIdentity?.name ?? null}
+          email={authIdentity?.email ?? null}
+          avatarUrl={authIdentity?.avatarUrl ?? null}
+          onBack={() => setScreen('profile')}
+          onSave={handleSaveProfile}
+        />
+      ) : screen === 'instagramDetails' ? (
+        <InstagramDetailsScreen
+          profile={profile}
+          dashboard={dashboard}
+          onBack={() => setScreen('profile')}
         />
       ) : screen === 'notifications' ? (
         <NotificationsScreen

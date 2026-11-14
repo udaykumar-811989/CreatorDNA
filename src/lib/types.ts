@@ -30,6 +30,8 @@ const SCREEN_NAMES = [
   'ideas',
   'plan',
   'profile',
+  'editProfile',
+  'instagramDetails',
   'settings',
   'performance',
   'analysis',

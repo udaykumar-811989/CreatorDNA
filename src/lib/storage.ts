@@ -360,6 +360,33 @@ export function adoptContentScope(toScope: string): void {
 }
 
 /**
+ * Copies one account scope into another without ever overwriting: a target
+ * key that already holds something is left alone, and the source is kept
+ * intact. Used when a confirmed email change re-keys `e:<email>` — the hooks
+ * mounted right now keep reading the old keys for the rest of this run, while
+ * the next launch finds everything under the new address. Same non-destructive
+ * rule as adoptContentScope, so no data can be lost in either direction.
+ */
+export function copyContentScope(fromScope: string, toScope: string): void {
+  if (!fromScope || !toScope || fromScope === toScope) return;
+  const source = contentKeysFor(fromScope);
+  const target = contentKeysFor(toScope);
+  for (const name of CONTENT_KEY_NAMES) {
+    const toKey = target[name];
+    if (readRaw(toKey)) continue; // target already has content: never overwrite
+    const raw = readRaw(source[name]);
+    if (!raw) continue;
+    writeRaw(toKey, raw);
+  }
+  const syncFrom = scopedStorageKey(storageKeys.sync, fromScope);
+  const syncTo = scopedStorageKey(storageKeys.sync, toScope);
+  if (!readRaw(syncTo)) {
+    const raw = readRaw(syncFrom);
+    if (raw) writeRaw(syncTo, raw);
+  }
+}
+
+/**
  * Pulls keys that only exist on disk into the read cache. Web reads go
  * straight to localStorage and needs nothing; native reads hit the cache, so
  * a scope created in a previous session must be loaded before the app switches

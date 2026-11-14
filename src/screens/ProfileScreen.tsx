@@ -1,9 +1,17 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { DnaMark } from '../components/DnaMark';
 import { MilestonesCard } from '../components/MilestonesCard';
-import { ChevronRightIcon, GearIcon, LinkOutIcon, LogoutIcon, DocIcon, SparkIcon } from '../components/icons';
+import {
+  ChevronRightIcon,
+  GearIcon,
+  LinkOutIcon,
+  LogoutIcon,
+  DocIcon,
+  LockIcon,
+  PersonIcon,
+  SparkIcon,
+} from '../components/icons';
 import { Avatar, Badge, GradientButton, ListRow, ScreenHeader } from '../components/ui';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
 import { useTheme, useThemeColors } from '../themeContext';
@@ -14,39 +22,48 @@ export function ProfileScreen({
   dashboard,
   accountName,
   accountEmail,
+  accountAvatarUrl,
   recordCount,
   sessionWarning,
   getCreatorToken,
   onOpenAnalyses,
-  onViewDna,
+  onOpenEditProfile,
   onOpenSettings,
   onSwitchAccount,
   onOpenMediaKit,
+  onOpenInstagram,
   onConnect,
   onDisconnect,
+  onResetPassword,
   onLogout,
 }: {
   profile: InstagramProfile | null;
   dashboard: InstagramDashboard | null;
-  // The login this device is signed in with: name + email of the account
-  // that authenticated here (Google or email signup). Either may be null
-  // when the session never kept one — those fields are labelled, never
-  // invented.
+  // The login this device is signed in with: name + email + photo of the
+  // account that authenticated here (Google or email signup). Any of them may
+  // be null when the session never kept one — those fields are labelled,
+  // never invented.
   accountName: string | null;
   accountEmail: string | null;
+  accountAvatarUrl: string | null;
   recordCount: number;
   sessionWarning: boolean;
   getCreatorToken: () => Promise<string>;
   onOpenAnalyses: () => void;
-  onViewDna: () => void;
+  onOpenEditProfile: () => void;
   onOpenSettings: () => void;
   onSwitchAccount: () => void;
   onOpenMediaKit: () => void;
+  // Opens the Instagram-style account view (photo, counts, recent posts).
+  onOpenInstagram: () => void;
   // Instagram stays optional: connect/reconnect starts the OAuth flow,
   // disconnect removes the stored session and turns this card into the
   // prompt below.
   onConnect: () => void;
   onDisconnect: () => void;
+  // Sends Supabase's password-recovery email to the login address — the app
+  // never asks for or handles a password itself.
+  onResetPassword: (email: string) => Promise<{ ok: boolean; error: string | null }>;
   onLogout: () => void;
 }) {
   const { mode } = useTheme();
@@ -74,6 +91,24 @@ export function ProfileScreen({
           ? 'Business account'
           : null;
 
+  // Reset-password: the row reports every step, a failure keeps the row
+  // pressable as its own retry, and pressing again always clears the old
+  // state first so an error can never outlive its attempt.
+  const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [resetError, setResetError] = useState<string | null>(null);
+  const sendResetLink = useCallback(async (): Promise<void> => {
+    if (!accountEmail || resetState === 'sending') return;
+    setResetState('sending');
+    setResetError(null);
+    const result = await onResetPassword(accountEmail);
+    if (result.ok) {
+      setResetState('sent');
+      return;
+    }
+    setResetState('error');
+    setResetError(result.error ?? 'Couldn’t send the reset link. Please retry.');
+  }, [accountEmail, onResetPassword, resetState]);
+
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -85,9 +120,36 @@ export function ProfileScreen({
           gap: 16,
         },
 
-        identity: { alignItems: 'center', gap: 8, marginTop: 6 },
-        name: { ...type.h2, color: c.onDark, fontSize: 26, marginTop: 10 },
-        handle: { ...type.small, color: c.onDarkSub, fontSize: 14 },
+        // ---------- identity card: login photo, name, email, account edits
+        identityCard: {
+          backgroundColor: c.darkCard,
+          borderWidth: 1,
+          borderColor: c.darkBorder,
+          borderRadius: radius.md + 2,
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+          gap: 14,
+          marginTop: 6,
+        },
+        identityRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+        identityText: { flex: 1, gap: 3 },
+        identityName: {
+          color: c.onDark,
+          fontSize: 20,
+          fontWeight: '800',
+        },
+        identityEmail: { color: c.onDarkSub, fontSize: 14 },
+        identityDivider: { height: StyleSheet.hairlineWidth, backgroundColor: c.darkBorder },
+        resetSent: {
+          ...type.small,
+          color: c.green,
+          lineHeight: 18,
+        },
+        resetErrorText: {
+          ...type.small,
+          color: c.red,
+          lineHeight: 18,
+        },
 
         igCard: {
           backgroundColor: c.darkCard,
@@ -125,25 +187,6 @@ export function ProfileScreen({
         disconnect: { borderColor: c.red },
         disconnectLabel: { color: c.red, fontSize: 15, fontWeight: '700' },
 
-        dnaCard: {
-          borderRadius: radius.md + 4,
-          overflow: 'hidden',
-          shadowColor: '#1A56AE',
-          shadowOpacity: 0.35,
-          shadowRadius: 16,
-          shadowOffset: { width: 0, height: 7 },
-          elevation: 6,
-        },
-        dnaCardInner: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 13,
-          backgroundColor: c.primary,
-          padding: 18,
-        },
-        dnaTitle: { ...type.h4, color: '#FFFFFF', fontSize: 19 },
-        dnaSub: { ...type.small, color: 'rgba(255,255,255,0.82)', marginTop: 3 },
-
         warning: {
           ...type.small,
           color: c.amber,
@@ -180,28 +223,63 @@ export function ProfileScreen({
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <ScreenHeader title="Profile" tone={tone} />
 
-        {/* Signed-in account first: the login's own name and email, exactly
-            as they authenticated. Instagram stays optional and lives in its
-            own card below. */}
-        <View style={styles.identity}>
-          <Avatar
-            uri={connected ? igPictureUrl : null}
-            name={loginName ?? username ?? accountEmail}
-            size={88}
-            dark={isDark}
+        {/* Signed-in account first: photo on the left, the login's own name
+            beside it, the email below — then the two account-level edits
+            (profile details and the password-recovery email) in the same
+            section. Instagram stays optional and lives in its own card. */}
+        <View style={styles.identityCard}>
+          <View style={styles.identityRow}>
+            <Avatar uri={accountAvatarUrl} name={loginName ?? accountEmail} size={64} dark={isDark} />
+            <View style={styles.identityText}>
+              <Text style={styles.identityName} numberOfLines={1}>
+                {loginName ?? 'Name not available'}
+              </Text>
+              <Text style={styles.identityEmail} numberOfLines={1}>
+                {accountEmail ?? 'Email not available'}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.identityDivider} />
+          <ListRow
+            tone={tone}
+            icon={<PersonIcon size={19} color={iconColor} />}
+            label="Edit Profile"
+            onPress={onOpenEditProfile}
           />
-          <Text style={styles.name} numberOfLines={1}>
-            {loginName ?? 'Name not available'}
-          </Text>
-          <Text style={styles.handle} numberOfLines={1}>
-            {accountEmail ?? 'Email not available'}
-          </Text>
+          <View style={styles.identityDivider} />
+          <ListRow
+            tone={tone}
+            icon={<LockIcon size={19} color={iconColor} />}
+            label="Reset password"
+            value={
+              !accountEmail
+                ? 'Not available'
+                : resetState === 'sending'
+                  ? 'Sending…'
+                  : resetState === 'sent'
+                    ? 'Link sent'
+                    : undefined
+            }
+            onPress={
+              accountEmail && resetState !== 'sending' ? () => void sendResetLink() : undefined
+            }
+          />
+          {resetState === 'sent' && accountEmail ? (
+            <Text style={styles.resetSent}>
+              Reset link sent to {accountEmail}. Open it to choose a new password.
+            </Text>
+          ) : resetState === 'error' ? (
+            <Text accessibilityRole="alert" style={styles.resetErrorText}>
+              {resetError}
+            </Text>
+          ) : null}
         </View>
 
         {/* Instagram connection: picture, name, handle and status in one
-            place, with the connect / disconnect / reconnect actions. When
-            nothing is connected this is the helpful prompt — the rest of the
-            screen keeps working exactly as before. */}
+            place, with the connect / disconnect / reconnect actions. The
+            identity row opens the Instagram-style account view (photo,
+            counts, recent posts); when nothing is connected this card is the
+            helpful prompt and the rest of the screen keeps working. */}
         <View style={styles.igCard}>
           <View style={styles.igTitleRow}>
             <Text style={styles.igTitle}>Instagram</Text>
@@ -212,7 +290,15 @@ export function ProfileScreen({
           </View>
           {connected ? (
             <>
-              <View style={styles.igIdentity}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Open Instagram account details for ${username}`}
+                onPress={onOpenInstagram}
+                style={({ pressed }) => [
+                  styles.igIdentity,
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
                 <Avatar uri={igPictureUrl} name={username} size={44} dark={isDark} />
                 <View style={{ flex: 1 }}>
                   {/* The connected account's name, kept separate from the
@@ -225,7 +311,8 @@ export function ProfileScreen({
                     {accountTypeLabel ? ` · ${accountTypeLabel}` : ''}
                   </Text>
                 </View>
-              </View>
+                <ChevronRightIcon size={18} color={isDark ? c.onDarkDim : c.textDim} />
+              </Pressable>
               <View style={styles.igActions}>
                 <Pressable
                   accessibilityRole="button"
@@ -261,27 +348,6 @@ export function ProfileScreen({
             </>
           )}
         </View>
-
-        {/* DNA card */}
-        <Pressable
-          accessibilityRole="button"
-          onPress={onViewDna}
-          style={({ pressed }) => [styles.dnaCard, pressed && { opacity: 0.85 }]}
-        >
-          <View style={styles.dnaCardInner}>
-            <DnaMark size={40} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.dnaTitle}>
-                Creator<Text style={{ color: '#9FC2F0' }}>DNA</Text>
-              </Text>
-              <Text style={styles.dnaSub}>Your personalized growth plan</Text>
-            </View>
-            <ChevronRightIcon
-              size={20}
-              color={isDark ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.85)'}
-            />
-          </View>
-        </Pressable>
 
         {/* Permanent badge shelf: earned rungs stay earned, locked ones show
             exactly how far away they are. */}
