@@ -1,13 +1,38 @@
-// Discover wire format, display helpers and the client-side trend cache.
+// Discover wire format, display helpers and the client-side news cache.
 //
-// The server (supabase/functions/_shared/discover.ts) normalises Reddit, X and
-// Hacker News into one shape; this module parses that shape defensively so a
-// malformed or partial response degrades into an empty list rather than a
-// crash, and provides the small pieces of display logic the screen needs.
+// The server (supabase/functions/_shared/discover.ts) normalises nine keyless
+// sources — Hacker News, Bluesky, Mastodon, Google Trends, Google News,
+// GitHub, DEV Community, GDELT and Lobsters — into one shape; this module
+// parses that shape defensively so a malformed or partial response degrades
+// into an empty list rather than a crash, and provides the small pieces of
+// display logic the screen needs.
+//
+// Reddit and X were removed completely in Discover 2.0: no keys, no adapters,
+// no references in this file.
 
-export type TrendSourceKey = 'reddit' | 'x' | 'hackernews';
+export type TrendSourceKey =
+  | 'hackernews'
+  | 'bluesky'
+  | 'mastodon'
+  | 'googletrends'
+  | 'googlenews'
+  | 'github'
+  | 'devto'
+  | 'gdelt'
+  | 'lobsters';
 
-export type SourceStatus = 'ok' | 'needs_key' | 'unavailable' | 'rate_limited' | 'error';
+export type TrendSectionKey =
+  | 'for-you'
+  | 'top-stories'
+  | 'trending'
+  | 'videos'
+  | 'technology'
+  | 'business'
+  | 'entertainment'
+  | 'creator-trends'
+  | 'community';
+
+export type SourceStatus = 'ok' | 'rate_limited' | 'unavailable' | 'error';
 
 export type SourceReport = {
   key: TrendSourceKey;
@@ -22,61 +47,125 @@ export type TrendMetrics = {
   likes?: number;
   shares?: number;
   points?: number;
+  stars?: number;
+  forks?: number;
 };
+
+export type VideoKind = 'hls' | 'youtube' | 'file';
 
 export type TrendItem = {
   id: string;
   source: TrendSourceKey;
-  category: string;
+  /** The section this card was fetched for; also its category badge. */
+  section: TrendSectionKey;
   title: string;
   excerpt: string;
+  /** Canonical link — the original article when the source exposes one. */
   url: string;
+  /** Secondary link (the article a discussion post points at). */
   externalUrl?: string;
   author: string | null;
+  /** Publisher or channel name shown next to its logo. */
+  publisher: string | null;
+  /** Real publisher logo/avatar — a favicon or the platform's own avatar. */
+  publisherLogo: string | null;
+  /** Real photo or video thumbnail from the source; null means "no image". */
+  imageUrl: string | null;
+  imageAlt: string | null;
+  /** Playback URL when the item is a video (HLS, YouTube or a direct file). */
+  videoUrl: string | null;
+  videoKind: VideoKind | null;
+  /** Seconds, only when the upstream source actually published a duration. */
+  durationSeconds: number | null;
+  /** Free-form community tag (e.g. a Mastodon hashtag), when present. */
   community: string | null;
   createdAt: string;
   metrics: TrendMetrics;
+  /** Short provenance line, e.g. "Bluesky · @handle". */
   sourceLabel: string;
 };
 
-export type CategoryOption = { key: string; label: string };
+/** One entry in the horizontal section nav. */
+export type SectionOption = { key: string; label: string };
+
+/** @deprecated Pre-2.0 name; the chips now select sections, not categories. */
+export type CategoryOption = SectionOption;
 
 export type TrendsPayload = {
   items: TrendItem[];
   sources: SourceReport[];
-  categories: CategoryOption[];
-  category: string;
+  sections: SectionOption[];
+  section: string;
   query: string;
   fetchedAt: string;
 };
 
-export const TREND_SOURCE_KEYS: TrendSourceKey[] = ['reddit', 'x', 'hackernews'];
+export const TREND_SOURCE_KEYS: TrendSourceKey[] = [
+  'hackernews',
+  'bluesky',
+  'mastodon',
+  'googletrends',
+  'googlenews',
+  'github',
+  'devto',
+  'gdelt',
+  'lobsters',
+];
 
 export const SOURCE_LABELS: Record<TrendSourceKey, string> = {
-  reddit: 'Reddit',
-  x: 'X',
   hackernews: 'Hacker News',
+  bluesky: 'Bluesky',
+  mastodon: 'Mastodon',
+  googletrends: 'Google Trends',
+  googlenews: 'Google News',
+  github: 'GitHub',
+  devto: 'DEV Community',
+  gdelt: 'GDELT',
+  lobsters: 'Lobsters',
 };
+
+export const DISCOVER_SECTIONS: SectionOption[] = [
+  { key: 'for-you', label: 'For You' },
+  { key: 'top-stories', label: 'Top Stories' },
+  { key: 'trending', label: 'Trending' },
+  { key: 'videos', label: 'Videos' },
+  { key: 'technology', label: 'Technology' },
+  { key: 'business', label: 'Business' },
+  { key: 'entertainment', label: 'Entertainment' },
+  { key: 'creator-trends', label: 'Creator Trends' },
+  { key: 'community', label: 'Community' },
+];
 
 /**
  * Used before the first response arrives. Once the server answers, its own
- * category list replaces this — the server is authoritative, so the two can
+ * section list replaces this — the server is authoritative, so the two can
  * never drift into showing a chip that resolves to nothing.
  */
-export const DEFAULT_CATEGORIES: CategoryOption[] = [
-  { key: 'all', label: 'All' },
-  { key: 'marketing', label: 'Marketing' },
-  { key: 'business', label: 'Business' },
-  { key: 'tech', label: 'Tech' },
-  { key: 'fitness', label: 'Fitness' },
-  { key: 'food', label: 'Food' },
-  { key: 'beauty', label: 'Beauty' },
-  { key: 'travel', label: 'Travel' },
-  { key: 'gaming', label: 'Gaming' },
-  { key: 'education', label: 'Education' },
-  { key: 'entertainment', label: 'Entertainment' },
-  { key: 'design', label: 'Design' },
-];
+export const DEFAULT_SECTIONS: SectionOption[] = DISCOVER_SECTIONS;
+
+/** @deprecated Pre-2.0 name for `DEFAULT_SECTIONS`. */
+export const DEFAULT_CATEGORIES = DEFAULT_SECTIONS;
+
+const SECTION_KEYS = new Set<string>(DISCOVER_SECTIONS.map((entry) => entry.key));
+
+export function isSectionKey(value: unknown): value is TrendSectionKey {
+  return typeof value === 'string' && SECTION_KEYS.has(value);
+}
+
+export function sectionLabel(key: string): string {
+  return DISCOVER_SECTIONS.find((entry) => entry.key === key)?.label ?? '';
+}
+
+/**
+ * The category badge on a card: the section's own name, except For You (which
+ * would only repeat the nav) and Videos (which is a media type, so it reads
+ * better as "Video").
+ */
+export function categoryLabelFor(section: string): string | null {
+  if (section === 'for-you') return null;
+  if (section === 'videos') return 'Video';
+  return sectionLabel(section) || null;
+}
 
 // ------------------------------------------------------------------ parse ---
 
@@ -97,7 +186,15 @@ function count(value: unknown): number | undefined {
   return Math.round(value);
 }
 
-const STATUSES: SourceStatus[] = ['ok', 'needs_key', 'unavailable', 'rate_limited', 'error'];
+/** An http(s) URL, or null — keeps `javascript:` and junk out of the card. */
+function httpUrl(value: unknown): string | null {
+  const raw = str(value);
+  return /^https?:\/\//i.test(raw) ? raw : null;
+}
+
+const STATUSES: SourceStatus[] = ['ok', 'rate_limited', 'unavailable', 'error'];
+
+const VIDEO_KINDS: VideoKind[] = ['hls', 'youtube', 'file'];
 
 export function trendSourceFromKey(value: unknown): TrendSourceKey | null {
   return typeof value === 'string' && TREND_SOURCE_KEYS.includes(value as TrendSourceKey)
@@ -112,33 +209,45 @@ export function trendItemFromJson(value: unknown): TrendItem | null {
   const title = str(value.title).trim();
   const url = str(value.url);
   // Without a source link there is nothing to click through to, and the whole
-  // point of Discover is showing where each trend came from.
+  // point of Discover is showing where each story came from.
   if (!id || !source || !title || !/^https?:\/\//i.test(url)) return null;
 
   const rawMetrics = isRecord(value.metrics) ? value.metrics : {};
   const metrics: TrendMetrics = {};
-  const upvotes = count(rawMetrics.upvotes);
-  const comments = count(rawMetrics.comments);
-  const likes = count(rawMetrics.likes);
-  const shares = count(rawMetrics.shares);
-  const points = count(rawMetrics.points);
-  if (upvotes !== undefined) metrics.upvotes = upvotes;
-  if (comments !== undefined) metrics.comments = comments;
-  if (likes !== undefined) metrics.likes = likes;
-  if (shares !== undefined) metrics.shares = shares;
-  if (points !== undefined) metrics.points = points;
+  for (const key of ['upvotes', 'comments', 'likes', 'shares', 'points', 'stars', 'forks'] as const) {
+    const parsed = count(rawMetrics[key]);
+    if (parsed !== undefined) metrics[key] = parsed;
+  }
 
-  const external = str(value.externalUrl);
+  const rawSection = str(value.section);
+  const section: TrendSectionKey = isSectionKey(rawSection) ? rawSection : 'for-you';
+
+  const videoUrl = httpUrl(value.videoUrl);
+  const rawKind = str(value.videoKind);
+  const videoKind: VideoKind | null =
+    videoUrl && VIDEO_KINDS.includes(rawKind as VideoKind) ? (rawKind as VideoKind) : null;
+
+  const duration = count(value.durationSeconds);
+  const external = httpUrl(value.externalUrl);
   const createdAt = str(value.createdAt);
   return {
     id,
     source,
-    category: str(value.category, 'all'),
+    section,
     title,
     excerpt: str(value.excerpt).trim(),
     url,
-    ...(external && /^https?:\/\//i.test(external) ? { externalUrl: external } : {}),
+    ...(external ? { externalUrl: external } : {}),
     author: nullableStr(value.author),
+    publisher: nullableStr(value.publisher),
+    publisherLogo: httpUrl(value.publisherLogo),
+    imageUrl: httpUrl(value.imageUrl),
+    imageAlt: nullableStr(value.imageAlt),
+    videoUrl,
+    videoKind,
+    // A duration only means something when the card can actually play the
+    // video, and only as a positive whole number of seconds.
+    durationSeconds: videoKind && duration !== undefined && duration > 0 ? duration : null,
     community: nullableStr(value.community),
     // An item without a usable date cannot be aged or sorted honestly.
     createdAt: Number.isNaN(Date.parse(createdAt)) ? '' : new Date(createdAt).toISOString(),
@@ -163,9 +272,9 @@ export function sourceReportFromJson(value: unknown): SourceReport | null {
   };
 }
 
-function categoriesFromJson(value: unknown): CategoryOption[] {
+function sectionsFromJson(value: unknown): SectionOption[] {
   if (!Array.isArray(value)) return [];
-  const out: CategoryOption[] = [];
+  const out: SectionOption[] = [];
   const seen = new Set<string>();
   for (const entry of value) {
     if (!isRecord(entry)) continue;
@@ -182,6 +291,10 @@ function categoriesFromJson(value: unknown): CategoryOption[] {
  * Parses a trends response. Returns null when the payload is unusable, so the
  * caller can tell "the server said something odd" apart from "there are no
  * results" — the two need different messages on screen.
+ *
+ * Discover 2.0 sends `sections`/`section`; the pre-2.0 server sent the same
+ * data as `categories`/`category`, so both spellings parse here and a stale
+ * function still renders its chips.
  */
 export function trendsPayloadFromJson(value: unknown): TrendsPayload | null {
   if (!isRecord(value)) return null;
@@ -190,6 +303,10 @@ export function trendsPayloadFromJson(value: unknown): TrendsPayload | null {
     .map(trendItemFromJson)
     .filter((item): item is TrendItem => item !== null);
   const fetchedAt = str(value.fetchedAt);
+  const sections = sectionsFromJson(
+    Array.isArray(value.sections) ? value.sections : value.categories,
+  );
+  const section = str(value.section) || str(value.category) || 'for-you';
   return {
     items,
     sources: Array.isArray(value.sources)
@@ -197,8 +314,8 @@ export function trendsPayloadFromJson(value: unknown): TrendsPayload | null {
           .map(sourceReportFromJson)
           .filter((report): report is SourceReport => report !== null)
       : [],
-    categories: categoriesFromJson(value.categories),
-    category: str(value.category, 'all'),
+    sections: sections.length > 0 ? sections : DEFAULT_SECTIONS,
+    section,
     query: str(value.query),
     fetchedAt: Number.isNaN(Date.parse(fetchedAt)) ? '' : new Date(fetchedAt).toISOString(),
   };
@@ -208,7 +325,7 @@ export function trendsPayloadFromJson(value: unknown): TrendsPayload | null {
 
 /**
  * Narrows an already-fetched page without another network call, so the search
- * box and the source tabs respond instantly.
+ * box and the section nav respond instantly.
  */
 export function filterTrendItems(
   items: readonly TrendItem[],
@@ -222,6 +339,7 @@ export function filterTrendItems(
     return (
       item.title.toLowerCase().includes(query) ||
       item.excerpt.toLowerCase().includes(query) ||
+      (item.publisher ?? '').toLowerCase().includes(query) ||
       (item.community ?? '').toLowerCase().includes(query) ||
       (item.author ?? '').toLowerCase().includes(query)
     );
@@ -244,11 +362,13 @@ export function formatCount(value: number): string {
 
 /** Engagement line, or null when the source published no metrics at all. */
 export function engagementLabel(item: TrendItem): string | null {
-  const { upvotes, points, likes, comments, shares } = item.metrics;
+  const { upvotes, points, likes, comments, shares, stars, forks } = item.metrics;
   const parts: string[] = [];
-  if (typeof upvotes === 'number') parts.push(`${formatCount(upvotes)} upvotes`);
+  if (typeof stars === 'number') parts.push(`${formatCount(stars)} stars`);
+  else if (typeof upvotes === 'number') parts.push(`${formatCount(upvotes)} upvotes`);
   else if (typeof points === 'number') parts.push(`${formatCount(points)} points`);
   else if (typeof likes === 'number') parts.push(`${formatCount(likes)} likes`);
+  if (typeof forks === 'number') parts.push(`${formatCount(forks)} forks`);
   if (typeof comments === 'number') parts.push(`${formatCount(comments)} comments`);
   if (typeof shares === 'number') parts.push(`${formatCount(shares)} reposts`);
   return parts.length > 0 ? parts.join(' · ') : null;
@@ -269,23 +389,32 @@ export function relativeTime(iso: string, now = Date.now()): string {
   return `${Math.floor(days / 7)}w`;
 }
 
+/** 75 → "1:15", 600 → "10:00"; null when the duration is unusable. */
+export function formatDuration(seconds: number | null): string | null {
+  if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const total = Math.round(seconds);
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return `${minutes}:${String(rest).padStart(2, '0')}`;
+}
+
 // ------------------------------------------------------------------ cache ---
 
 /**
  * Fresh enough to show without a network call.
  *
- * Ten minutes matches the intent of "this week's top posts": short enough that
+ * Ten minutes matches the intent of "today's top stories": short enough that
  * re-opening Discover does not show yesterday's front page as new, long enough
- * that flipping between tabs costs nothing.
+ * that flipping between sections costs nothing.
  */
 export const TREND_TTL_MS = 10 * 60_000;
 
 export function trendCacheKey(request: {
-  category: string;
+  section: string;
   query?: string;
   limit?: number;
 }): string {
-  return `${request.category}|${(request.query ?? '').trim().toLowerCase()}|${request.limit ?? 24}`;
+  return `${request.section}|${(request.query ?? '').trim().toLowerCase()}|${request.limit ?? 24}`;
 }
 
 export function isTrendFresh(savedAt: number | string | null | undefined, now = Date.now()): boolean {
@@ -294,10 +423,10 @@ export function isTrendFresh(savedAt: number | string | null | undefined, now = 
   return now - at < TREND_TTL_MS && now - at >= 0;
 }
 
-/** One record per cache key so several categories can be cached side by side. */
+/** One record per cache key so several sections can be cached side by side. */
 export type TrendCacheFile = Record<string, { savedAt: number; payload: TrendsPayload }>;
 
-/** Keeps the stored file small when the creator browses many categories. */
+/** Keeps the stored file small when the creator browses many sections. */
 export function pruneTrendCache(file: TrendCacheFile, now = Date.now(), keep = 8): TrendCacheFile {
   const entries = Object.entries(file)
     .filter(([key, entry]) => key && isTrendFresh(entry.savedAt, now))

@@ -1039,6 +1039,511 @@ async function handleIdeas(
 }
 
 // ---------------------------------------------------------------------------
+// AI Idea Studio (Discover 2.0): the exact story a creator pressed "Turn into
+// an idea" on — headline, description, publisher, original URL, category,
+// image and video — goes in, and five insight blocks plus ten unique,
+// story-grounded ideas come out. Every field must be recognisably about this
+// one story; a generic idea with the headline swapped in is a failure, and
+// the batch is rejected rather than shown.
+// ---------------------------------------------------------------------------
+
+const STUDIO_PLATFORMS = [
+  'Instagram Reels',
+  'YouTube Shorts',
+  'YouTube Long-form',
+  'Instagram Carousel',
+  'Instagram Stories',
+  'LinkedIn',
+  'X',
+  'Blog',
+  'Podcast',
+] as const;
+
+type StudioStory = {
+  title: string;
+  description: string | null;
+  publisher: string | null;
+  url: string;
+  category: string | null;
+  imageUrl: string | null;
+  videoUrl: string | null;
+};
+
+type StudioIdeaFields = {
+  platform: string;
+  title: string;
+  angle: string;
+  hook: string;
+  outline: string[];
+  script: string;
+  caption: string;
+  hashtags: string[];
+  thumbnail_concept: string;
+};
+
+type StudioIdea = StudioIdeaFields & { id: string };
+
+const STUDIO_SYSTEM_PROMPT = `You are CreatorDNA's Idea Studio, a content strategist who turns one news story into content ideas for social media creators. You receive a single story as JSON (plus an optional audience and goal) and must return JSON only — no markdown, no commentary.
+
+Return exactly two top-level keys: "insights" and "ideas".
+
+"insights" is an object with five fields:
+- "why_it_matters": 2-3 plain sentences on why this story matters right now.
+- "audience_interest": 2-3 sentences on who cares about it and why.
+- "content_opportunities": 2-3 sentences on the content angles this story opens up.
+- "trending_angle": 2-3 sentences on the timely angle to take with it today.
+- "suggested_formats": 3 to 6 short content format names that fit this story.
+
+"ideas" is an array of exactly 10 unique ideas. Use each of these nine platforms exactly once — "Instagram Reels", "YouTube Shorts", "YouTube Long-form", "Instagram Carousel", "Instagram Stories", "LinkedIn", "X", "Blog", "Podcast" — and put the tenth idea on any one of them as a clearly different idea, not a rewording.
+
+Ground every single field in the supplied story: its real subject, people, companies, numbers and events. Never invent facts the story does not contain, never fall back to a generic topic, and never borrow from a different story. Every idea must be recognisably about this story.
+
+Field rules for every idea:
+- "platform": exactly one of the nine platform names above.
+- "title": at most 12 words; all ten titles must be different.
+- "angle": one sentence naming the specific take for this platform.
+- "hook": the exact opening line the creator says or shows, in their voice — not a description of a hook.
+- "outline": 3 to 6 ordered steps, each one short sentence.
+- "script": a ready-to-record script of about 120 to 180 words. For a Blog idea write the opening draft of the article; for a Podcast idea write the intro segment with the host's lines.
+- "caption": 1 to 3 sentences ending with a light call to action.
+- "hashtags": 5 to 8 discoverable tags as plain words without the # symbol.
+- "thumbnail_concept": 1 to 2 sentences describing the cover image — subject, text overlay (3 to 6 words), composition, colors.
+
+Write plain, everyday English a busy creator can read at a glance: short sentences of about 15 words or fewer, common words, no jargon, no marketing buzzwords.`;
+
+const STUDIO_SCRIPT_PROMPT = `You are CreatorDNA's Idea Studio scriptwriter. You receive one exact story and one content idea that was built from it. Return JSON with a single "script" key holding the full, ready-to-record script for that idea on that platform: the complete spoken lines and on-screen directions in order, about 250 to 450 words. Stay on this exact story and this exact idea — same subject, same angle, same hook — and never drift to a different story or a generic version of the idea. For a Blog idea write the full article draft; for a Podcast idea write the complete segment with the host's lines. Plain spoken English, short sentences, no jargon. JSON only, no markdown.`;
+
+const STUDIO_VARIANT_PROMPT = `You are CreatorDNA's Idea Studio. You receive one exact story and one existing content idea that was built from it. Return JSON with a single "idea" key: another version of the SAME idea — same platform, same story, same core angle — but genuinely different: new title, new hook, new outline, new script, new caption, new hashtags and a new thumbnail concept. Do not rephrase the original; give it a distinct take a creator could publish alongside the first. Ground every field in this exact story and follow the studio's field rules: title at most 12 words, angle one sentence, hook the exact opening line, outline 3 to 6 short ordered steps, script about 120 to 180 words, caption 1 to 3 sentences ending with a light call to action, hashtags 5 to 8 plain words without the # symbol, thumbnail_concept 1 to 2 sentences. "platform" must stay the platform of the idea you received. Plain, everyday English. JSON only, no markdown.`;
+
+const STUDIO_THUMBNAIL_PROMPT = `You are CreatorDNA's Idea Studio. You receive one exact story and one content idea that was built from it. Return JSON with a single "thumbnail_concept" key holding 2 to 3 sentences that describe the cover image for this idea: the main subject or scene, the exact text overlay (3 to 6 words), the composition, and the colors — grounded in this story and readable at small size on a phone. JSON only, no markdown.`;
+
+const studioIdeaSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'platform',
+    'title',
+    'angle',
+    'hook',
+    'outline',
+    'script',
+    'caption',
+    'hashtags',
+    'thumbnail_concept',
+  ],
+  properties: {
+    platform: { type: 'string', enum: [...STUDIO_PLATFORMS] },
+    title: { type: 'string', minLength: 1, maxLength: 150 },
+    angle: { type: 'string', minLength: 1, maxLength: 300 },
+    hook: { type: 'string', minLength: 1, maxLength: 250 },
+    outline: {
+      type: 'array',
+      minItems: 3,
+      maxItems: 8,
+      items: { type: 'string', minLength: 1, maxLength: 160 },
+    },
+    script: { type: 'string', minLength: 1, maxLength: 2000 },
+    caption: { type: 'string', minLength: 1, maxLength: 600 },
+    hashtags: {
+      type: 'array',
+      minItems: 3,
+      maxItems: 12,
+      items: { type: 'string', minLength: 1, maxLength: 40 },
+    },
+    thumbnail_concept: { type: 'string', minLength: 1, maxLength: 400 },
+  },
+} as const;
+
+const studioSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['insights', 'ideas'],
+  properties: {
+    insights: {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'why_it_matters',
+        'audience_interest',
+        'content_opportunities',
+        'trending_angle',
+        'suggested_formats',
+      ],
+      properties: {
+        why_it_matters: { type: 'string', minLength: 1, maxLength: 700 },
+        audience_interest: { type: 'string', minLength: 1, maxLength: 700 },
+        content_opportunities: { type: 'string', minLength: 1, maxLength: 700 },
+        trending_angle: { type: 'string', minLength: 1, maxLength: 700 },
+        suggested_formats: {
+          type: 'array',
+          minItems: 3,
+          maxItems: 6,
+          items: { type: 'string', minLength: 1, maxLength: 120 },
+        },
+      },
+    },
+    ideas: {
+      type: 'array',
+      minItems: 10,
+      maxItems: 10,
+      items: studioIdeaSchema,
+    },
+  },
+} as const;
+
+const studioScriptSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['script'],
+  properties: { script: { type: 'string', minLength: 1, maxLength: 6000 } },
+} as const;
+
+const studioThumbnailSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['thumbnail_concept'],
+  properties: {
+    thumbnail_concept: { type: 'string', minLength: 1, maxLength: 1200 },
+  },
+} as const;
+
+/** An http(s) URL or null — anything else (including javascript:) is rejected. */
+function optionalHttpUrl(value: unknown, field: string, maxLength: number): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (
+    typeof value !== 'string' ||
+    value.trim().length > maxLength ||
+    !/^https?:\/\//i.test(value.trim())
+  ) {
+    throw new Error(`invalid_${field}`);
+  }
+  return value.trim();
+}
+
+/**
+ * The story exactly as the card sent it. The original URL is required — an
+ * idea studio that cannot cite its source is worthless — and everything else
+ * is optional because several sources publish no image or summary.
+ */
+function parseStudioStory(value: unknown): StudioStory {
+  if (!isRecord(value)) throw new Error('story_required');
+  const title = optionalText(value.title, 'title', 400);
+  const url = optionalHttpUrl(value.url, 'url', 2000);
+  if (!title || !url) throw new Error('story_required');
+  return {
+    title,
+    description: optionalText(value.description, 'description', 4000),
+    publisher: optionalText(value.publisher, 'publisher', 200),
+    url,
+    category: optionalText(value.category, 'category', 120),
+    imageUrl: optionalHttpUrl(value.imageUrl, 'image_url', 2000),
+    videoUrl: optionalHttpUrl(value.videoUrl, 'video_url', 2000),
+  };
+}
+
+/** A non-empty model string within `max` chars, or null when it is not usable. */
+function studioText(record: Record<string, unknown>, key: string, max: number): string | null {
+  const value = record[key];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= max ? trimmed : null;
+}
+
+/** A model string array of `min`..`max` non-empty items, or null. */
+function studioList(
+  value: unknown,
+  min: number,
+  max: number,
+  itemMax: number,
+): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== 'string') return null;
+    const trimmed = entry.trim();
+    if (!trimmed || trimmed.length > itemMax) return null;
+    out.push(trimmed);
+  }
+  return out.length >= min && out.length <= max ? out : null;
+}
+
+function validateStudioInsights(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const why = studioText(value, 'why_it_matters', 700);
+  const interest = studioText(value, 'audience_interest', 700);
+  const opportunities = studioText(value, 'content_opportunities', 700);
+  const trending = studioText(value, 'trending_angle', 700);
+  const formats = studioList(value.suggested_formats, 3, 6, 120);
+  if (!why || !interest || !opportunities || !trending || !formats) return null;
+  return {
+    why_it_matters: why,
+    audience_interest: interest,
+    content_opportunities: opportunities,
+    trending_angle: trending,
+    suggested_formats: formats,
+  };
+}
+
+/** One idea exactly as the studio contract promises, or null when broken. */
+function validateStudioIdea(value: unknown): StudioIdeaFields | null {
+  if (!isRecord(value)) return null;
+  const platform =
+    typeof value.platform === 'string' &&
+    (STUDIO_PLATFORMS as readonly string[]).includes(value.platform)
+      ? value.platform
+      : null;
+  const title = studioText(value, 'title', 150);
+  const angle = studioText(value, 'angle', 300);
+  const hook = studioText(value, 'hook', 250);
+  const outline = studioList(value.outline, 3, 8, 160);
+  const script = studioText(value, 'script', 2000);
+  const caption = studioText(value, 'caption', 600);
+  const hashtags = studioList(value.hashtags, 3, 12, 40);
+  const thumbnail = studioText(value, 'thumbnail_concept', 400);
+  if (
+    !platform || !title || !angle || !hook || !outline ||
+    !script || !caption || !hashtags || !thumbnail
+  ) {
+    return null;
+  }
+  return {
+    platform,
+    title,
+    angle,
+    hook,
+    outline,
+    script,
+    caption,
+    hashtags,
+    thumbnail_concept: thumbnail,
+  };
+}
+
+/** `optionalText` that drops a bad optional field instead of failing the call. */
+function safeOptionalText(value: unknown, field: string, maxLength: number): string | null {
+  try {
+    return optionalText(value, field, maxLength);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The idea the creator acted on, as the studio sent it. Lenient by design —
+ * the client may hold a saved copy — so only the headline is required and
+ * every other field is carried along when present and well-formed.
+ */
+type ActionIdea = {
+  id: string | null;
+  platform: string | null;
+  title: string;
+  angle: string | null;
+  hook: string | null;
+  outline: string[] | null;
+  script: string | null;
+  caption: string | null;
+  hashtags: string[] | null;
+  thumbnail_concept: string | null;
+};
+
+function parseActionIdea(value: unknown): ActionIdea | null {
+  if (!isRecord(value)) return null;
+  const title = optionalText(value.title, 'title', 300);
+  if (!title) return null;
+  return {
+    id: safeOptionalText(value.id, 'id', 60),
+    platform:
+      typeof value.platform === 'string' &&
+      (STUDIO_PLATFORMS as readonly string[]).includes(value.platform)
+        ? value.platform
+        : null,
+    title,
+    angle: safeOptionalText(value.angle, 'angle', 400),
+    hook: safeOptionalText(value.hook, 'hook', 400),
+    outline:
+      value.outline === undefined || value.outline === null
+        ? null
+        : studioList(value.outline, 0, 10, 300),
+    script: safeOptionalText(value.script, 'script', 8000),
+    caption: safeOptionalText(value.caption, 'caption', 1000),
+    hashtags:
+      value.hashtags === undefined || value.hashtags === null
+        ? null
+        : studioList(value.hashtags, 0, 15, 60),
+    thumbnail_concept: safeOptionalText(value.thumbnail_concept, 'thumbnail_concept', 1200),
+  };
+}
+
+/**
+ * One studio-sized model call. Ten ideas need far more output room than a
+ * normal request, so the call asks for a raised token ceiling — and if the
+ * model rejects that hint with HTTP 400, the same call runs once more without
+ * it rather than failing the creator outright.
+ */
+async function callStudioModel(
+  config: FunctionConfig,
+  systemPrompt: string,
+  context: string,
+  schema: unknown,
+): Promise<unknown> {
+  const provider = configuredProvider(config);
+  try {
+    return await provider.generateJson(systemPrompt, context, schema, undefined, {
+      maxOutputTokens: 16_384,
+    });
+  } catch (error) {
+    if (error instanceof CreatorAiError && error.code === 'provider_rejected') {
+      return await provider.generateJson(systemPrompt, context, schema);
+    }
+    throw error;
+  }
+}
+
+async function handleIdeasStudio(
+  request: Request,
+  config: FunctionConfig,
+  headers: Headers,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await readRequestJson(request, 40_000);
+  } catch {
+    return jsonResponse({ error: 'invalid_studio_request' }, 400, headers);
+  }
+  if (!isRecord(body)) {
+    return jsonResponse({ error: 'invalid_studio_request' }, 400, headers);
+  }
+
+  let story: StudioStory;
+  let audience: string | null;
+  let goal: string | null;
+  try {
+    story = parseStudioStory(body.story);
+    audience = optionalText(body.audience, 'audience', 300);
+    goal = optionalText(body.goal, 'goal', 300);
+  } catch {
+    return jsonResponse({ error: 'invalid_studio_story' }, 400, headers);
+  }
+
+  try {
+    const result = await callStudioModel(
+      config,
+      STUDIO_SYSTEM_PROMPT,
+      JSON.stringify({ story, audience, goal }),
+      studioSchema,
+    );
+    if (!isRecord(result)) throw new CreatorAiError('malformed_model_response');
+    const insights = validateStudioInsights(result.insights);
+    if (!insights || !Array.isArray(result.ideas) || result.ideas.length !== 10) {
+      throw new CreatorAiError('malformed_model_response');
+    }
+
+    const ideas: Omit<StudioIdea, 'id'>[] = [];
+    const seenTitles = new Set<string>();
+    for (const entry of result.ideas) {
+      const idea = validateStudioIdea(entry);
+      if (!idea) throw new CreatorAiError('malformed_model_response');
+      // Ten unique ideas is the promise on screen: a repeated headline means
+      // the batch is not usable, so it is rejected rather than shown twice.
+      const titleKey = idea.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      if (seenTitles.has(titleKey)) throw new CreatorAiError('malformed_model_response');
+      seenTitles.add(titleKey);
+      ideas.push(idea);
+    }
+    // All nine formats must appear — the tenth idea repeats exactly one of
+    // them. Coverage across the studio's formats is part of the contract.
+    if (new Set(ideas.map((idea) => idea.platform)).size !== STUDIO_PLATFORMS.length) {
+      throw new CreatorAiError('malformed_model_response');
+    }
+
+    return jsonResponse(
+      {
+        insights,
+        ideas: ideas.map((idea, index) => ({ id: `idea-${index + 1}`, ...idea })),
+      },
+      200,
+      headers,
+    );
+  } catch (error) {
+    const code = error instanceof CreatorAiError ? error.code : 'studio_failed';
+    return jsonResponse({ error: code }, 502, headers);
+  }
+}
+
+async function handleStudioAction(
+  request: Request,
+  config: FunctionConfig,
+  headers: Headers,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await readRequestJson(request, 60_000);
+  } catch {
+    return jsonResponse({ error: 'invalid_studio_action' }, 400, headers);
+  }
+  if (!isRecord(body)) {
+    return jsonResponse({ error: 'invalid_studio_action' }, 400, headers);
+  }
+  const action = body.action;
+  if (action !== 'script' && action !== 'variant' && action !== 'thumbnail') {
+    return jsonResponse({ error: 'invalid_studio_action' }, 400, headers);
+  }
+
+  let story: StudioStory;
+  try {
+    story = parseStudioStory(body.story);
+  } catch {
+    return jsonResponse({ error: 'invalid_studio_story' }, 400, headers);
+  }
+
+  const idea = parseActionIdea(body.idea);
+  if (!idea) {
+    return jsonResponse({ error: 'invalid_studio_idea' }, 400, headers);
+  }
+
+  try {
+    const context = JSON.stringify({ story, idea });
+
+    if (action === 'script') {
+      const result = await callStudioModel(config, STUDIO_SCRIPT_PROMPT, context, studioScriptSchema);
+      const script = isRecord(result) ? studioText(result, 'script', 6000) : null;
+      if (!script) throw new CreatorAiError('malformed_model_response');
+      return jsonResponse({ script }, 200, headers);
+    }
+
+    if (action === 'thumbnail') {
+      const result = await callStudioModel(
+        config,
+        STUDIO_THUMBNAIL_PROMPT,
+        context,
+        studioThumbnailSchema,
+      );
+      const thumbnail = isRecord(result)
+        ? studioText(result, 'thumbnail_concept', 1200)
+        : null;
+      if (!thumbnail) throw new CreatorAiError('malformed_model_response');
+      return jsonResponse({ thumbnail_concept: thumbnail }, 200, headers);
+    }
+
+    // "variant": another version of this exact idea. The id and the platform
+    // are pinned to what the creator tapped, so the card they acted on is the
+    // one that updates in place — never a switch to a different idea.
+    const result = await callStudioModel(config, STUDIO_VARIANT_PROMPT, context, studioIdeaSchema);
+    const next = validateStudioIdea(result);
+    if (!next) throw new CreatorAiError('malformed_model_response');
+    const variant: StudioIdea = {
+      id: idea.id ?? 'idea',
+      ...next,
+      platform: idea.platform ?? next.platform,
+    };
+    return jsonResponse({ idea: variant }, 200, headers);
+  } catch (error) {
+    const code = error instanceof CreatorAiError ? error.code : 'studio_failed';
+    return jsonResponse({ error: code }, 502, headers);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Idea scoring: the "Analyze my idea" flow. Six dimensions plus one blended
 // score, all of them an estimate of fit for this creator's own audience —
 // never a forecast of views, and always labelled as such in the client.
@@ -1158,7 +1663,7 @@ async function handleIdeaScores(
           cta_strength: score('cta_strength'),
         },
         overall: score('overall'),
-        improvements: result.improvements.map((item) => String(item).trim()),
+        improvements: (result.improvements as string[]).map((item) => item.trim()),
         why: String(result.why).trim(),
       },
       200,
@@ -1954,6 +2459,27 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
   if (request.method === 'POST' && route.length === 1 && route[0] === 'ideas') {
     return await handleIdeas(request, config, headers);
+  }
+
+  // Discover 2.0's Idea Studio: one exact story in, ten ideas out — then the
+  // per-idea follow-ups (full script, another version, thumbnail concept).
+  if (
+    request.method === 'POST' &&
+    route.length === 2 &&
+    route[0] === 'ideas' &&
+    route[1] === 'studio'
+  ) {
+    return await handleIdeasStudio(request, config, headers);
+  }
+
+  if (
+    request.method === 'POST' &&
+    route.length === 3 &&
+    route[0] === 'ideas' &&
+    route[1] === 'studio' &&
+    route[2] === 'action'
+  ) {
+    return await handleStudioAction(request, config, headers);
   }
 
   if (request.method === 'POST' && route.length === 1 && route[0] === 'idea-scores') {

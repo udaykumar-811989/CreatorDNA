@@ -4,9 +4,10 @@ import {
   isTrendFresh,
   pruneTrendCache,
   trendCacheKey,
+  trendItemFromJson,
   trendsPayloadFromJson,
   type TrendCacheFile,
-  type TrendSourceKey,
+  type TrendItem,
   type TrendsPayload,
 } from '../lib/discover/model';
 import { readJson, storageKeys, writeJson } from '../lib/storage';
@@ -16,7 +17,8 @@ import { readJson, storageKeys, writeJson } from '../lib/storage';
 // Caching lives here, on the device, because that is the only place a hit can
 // be guaranteed: the server-side cache was measured at 0 hits over 10
 // back-to-back requests (Supabase does not promise isolate reuse), so relying
-// on it would mean re-hitting Reddit/X on every tab switch. Here a repeat load
+// on it would mean re-hitting the nine sources on every tab switch. Here a
+// repeat load
 // costs nothing and still shows a truthful "saved 4m ago" stamp.
 //
 // Only the publishable anon key and the creator's own session token are sent.
@@ -25,10 +27,9 @@ const FUNCTION_URL = `${supabaseUrl}/functions/v1/discover/trends`;
 const TIMEOUT_MS = 25_000;
 
 export type TrendsRequest = {
-  category: string;
+  section: string;
   query?: string;
   limit?: number;
-  sources?: TrendSourceKey[];
 };
 
 export type TrendsFailureKind = 'offline' | 'unauthorized' | 'rejected' | 'invalid';
@@ -88,7 +89,7 @@ export function peekCachedTrends(request: TrendsRequest): {
 // ----------------------------------------------------------------- fetch ----
 
 /**
- * Loads trends for a category/search.
+ * Loads stories for a section/search.
  *
  * With `force` (pull-to-refresh, the refresh button) the network is always
  * used. Otherwise a cache entry younger than the TTL is returned untouched.
@@ -101,10 +102,9 @@ export async function fetchTrends(
   options: { force?: boolean } = {},
 ): Promise<TrendsResult> {
   const normalized: TrendsRequest = {
-    category: request.category || 'all',
+    section: request.section || 'for-you',
     query: (request.query ?? '').trim(),
     limit: Math.max(6, Math.min(40, Math.round(request.limit ?? 24))),
-    ...(request.sources && request.sources.length > 0 ? { sources: request.sources } : {}),
   };
 
   if (!options.force) {
@@ -196,6 +196,49 @@ export function trendsAgeLabel(savedAt: number | null, now = Date.now()): string
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+// ------------------------------------------------------------- bookmarks ---
+
+// Bookmarked stories live on the device: the "Saved" section shows them
+// across every source and while offline, and nothing about a creator's
+// reading list needs to leave the phone. The full card is stored (capped at
+// 50) so a saved story keeps its image, publisher and link, and each entry is
+// re-parsed on read so an older stored shape degrades instead of crashing.
+
+type BookmarkFile = Record<string, { savedAt: number; item: TrendItem }>;
+
+function readBookmarkFile(): BookmarkFile {
+  const file = readJson<BookmarkFile>(storageKeys.discoverBookmarks, {});
+  return file && typeof file === 'object' && !Array.isArray(file) ? file : {};
+}
+
+/** Saved stories, newest first; an unreadable file reads as "nothing saved". */
+export function loadBookmarks(): TrendItem[] {
+  const entries = Object.values(readBookmarkFile())
+    .filter((entry) => entry && typeof entry.savedAt === 'number')
+    .sort((a, b) => b.savedAt - a.savedAt)
+    .map((entry) => trendItemFromJson(entry.item))
+    .filter((item): item is TrendItem => item !== null);
+  return entries;
+}
+
+export function saveBookmark(item: TrendItem): void {
+  const now = Date.now();
+  const file = readBookmarkFile();
+  file[item.id] = { savedAt: now, item };
+  const pruned = Object.entries(file)
+    .filter(([id, entry]) => id && entry && typeof entry.savedAt === 'number')
+    .sort((a, b) => b[1].savedAt - a[1].savedAt)
+    .slice(0, 50);
+  writeJson(storageKeys.discoverBookmarks, Object.fromEntries(pruned));
+}
+
+export function clearBookmark(id: string): void {
+  const file = readBookmarkFile();
+  if (!(id in file)) return;
+  delete file[id];
+  writeJson(storageKeys.discoverBookmarks, file);
 }
 
 export { TREND_TTL_MS };

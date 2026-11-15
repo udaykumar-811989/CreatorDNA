@@ -259,7 +259,7 @@ export type ContentAnalysis = {
     current_opening: string | null;
     improved_opening: string | null;
   };
-  evidence: { source: 'transcript' | 'caption'; quote: string }[];
+  evidence: { source: 'transcript' | 'caption' | 'media'; quote: string }[];
   confidence: 'insufficient' | 'early' | 'moderate' | 'strong';
   limitations: string[];
   duration_seconds: number | null;
@@ -320,6 +320,16 @@ async function generateJsonWithRetry(
   throw lastError;
 }
 
+export type GenerateJsonOptions = {
+  /**
+   * Upper bound on output tokens, for calls that legitimately need more than
+   * the provider's default (the Idea Studio writes ten full ideas in one
+   * response). A model that caps lower rejects the parameter with HTTP 400;
+   * callers that can afford it may then retry once without this hint.
+   */
+  maxOutputTokens?: number;
+};
+
 export interface AiProvider {
   readonly model: string;
   generateJson(
@@ -327,6 +337,7 @@ export interface AiProvider {
     userPrompt: string,
     schema?: unknown,
     media?: CreatorAiMedia | null,
+    options?: GenerateJsonOptions,
   ): Promise<unknown>;
 }
 
@@ -345,12 +356,13 @@ export class OpenAiCompatibleProvider implements AiProvider {
     userPrompt: string,
     _schema?: unknown,
     media?: CreatorAiMedia | null,
+    options?: GenerateJsonOptions,
   ): Promise<unknown> {
     if (media && (media.kind !== 'image' || media.fileUri || !media.base64)) {
       throw new CreatorAiError('provider_rejected');
     }
     return await generateJsonWithRetry((timeoutMs) =>
-      this.generateJsonOnce(systemPrompt, userPrompt, media, timeoutMs)
+      this.generateJsonOnce(systemPrompt, userPrompt, media, options, timeoutMs)
     );
   }
 
@@ -358,6 +370,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
     systemPrompt: string,
     userPrompt: string,
     media: CreatorAiMedia | null | undefined,
+    options: GenerateJsonOptions | undefined,
     timeoutMs: number,
   ): Promise<unknown> {
     let response: Response;
@@ -371,6 +384,9 @@ export class OpenAiCompatibleProvider implements AiProvider {
         body: JSON.stringify({
           model: this.config.model,
           temperature: 0.2,
+          ...(typeof options?.maxOutputTokens === 'number'
+            ? { max_tokens: options.maxOutputTokens }
+            : {}),
           messages: [
             { role: 'system', content: systemPrompt },
             {
@@ -453,9 +469,10 @@ export class GeminiProvider implements AiProvider {
     userPrompt: string,
     schema?: unknown,
     media?: CreatorAiMedia | null,
+    options?: GenerateJsonOptions,
   ): Promise<unknown> {
     return await generateJsonWithRetry((timeoutMs) =>
-      this.generateJsonOnce(systemPrompt, userPrompt, schema, media, timeoutMs)
+      this.generateJsonOnce(systemPrompt, userPrompt, schema, media, options, timeoutMs)
     );
   }
 
@@ -464,6 +481,7 @@ export class GeminiProvider implements AiProvider {
     userPrompt: string,
     schema: unknown,
     media: CreatorAiMedia | null | undefined,
+    options: GenerateJsonOptions | undefined,
     timeoutMs: number,
   ): Promise<unknown> {
     let endpoint: URL;
@@ -532,6 +550,9 @@ export class GeminiProvider implements AiProvider {
           generationConfig: {
             temperature: 0.2,
             responseMimeType: 'application/json',
+            ...(typeof options?.maxOutputTokens === 'number'
+              ? { maxOutputTokens: options.maxOutputTokens }
+              : {}),
             ...(schema
               ? { responseSchema: toGeminiSchema(schema) }
               : {}),

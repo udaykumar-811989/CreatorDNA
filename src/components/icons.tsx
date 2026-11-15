@@ -245,6 +245,24 @@ export function PlusIcon({ size = 20, color: colorProp, strokeWidth = 2.2 }: Ico
   );
 }
 
+// Two offset sheets: the universal "copy this to the clipboard" glyph, used by
+// the Idea Studio where a creator lifts a script out to another app.
+export function CopyIcon({ size = 20, color: colorProp, strokeWidth = 1.9 }: IconProps) {
+  const color = useIconColor(colorProp);
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        d="M9.4 8.6A2.1 2.1 0 0 1 11.5 6.5h6.9a2.1 2.1 0 0 1 2.1 2.1v6.9a2.1 2.1 0 0 1-2.1 2.1h-6.9a2.1 2.1 0 0 1-2.1-2.1z"
+        {...stroke(color, strokeWidth)}
+      />
+      <Path
+        d="M6.6 15.4H5.6A2.1 2.1 0 0 1 3.5 13.3V6.4a2.1 2.1 0 0 1 2.1-2.1h6.9a2.1 2.1 0 0 1 2.1 2.1v1"
+        {...stroke(color, strokeWidth)}
+      />
+    </Svg>
+  );
+}
+
 export function ChartIcon({ size = 20, color: colorProp, strokeWidth = 1.9 }: IconProps) {
   const color = useIconColor(colorProp);
   return (
@@ -342,6 +360,16 @@ export function CompassIcon({ size = 24, color: colorProp, strokeWidth = 1.9 }: 
       <Circle cx="12" cy="12" r="8.8" {...stroke(color, strokeWidth)} />
       {/* The needle: an offset diamond, so it reads as a compass at 20px. */}
       <Path d="M15.7 8.3 13.5 13.5 8.3 15.7 10.5 10.5z" {...stroke(color, strokeWidth)} />
+    </Svg>
+  );
+}
+
+export function SearchIcon({ size = 20, color: colorProp, strokeWidth = 1.9 }: IconProps) {
+  const color = useIconColor(colorProp);
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Circle cx="11" cy="11" r="6.8" {...stroke(color, strokeWidth)} />
+      <Path d="M16.2 16.2 20.5 20.5" {...stroke(color, strokeWidth)} />
     </Svg>
   );
 }

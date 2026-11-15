@@ -33,6 +33,14 @@ import {
   supabaseUrl,
 } from './src/lib/config';
 import { type AchievementMilestone } from './src/lib/community/model';
+import type { TrendItem } from './src/lib/discover/model';
+import {
+  deleteSavedIdea,
+  listSavedIdeas,
+  updateSavedIdea,
+  type SavedIdea,
+  type SavedIdeaStatus,
+} from './src/services/savedIdeas';
 import { syncVerifiedFollowers } from './src/services/milestones';
 import {
   AnalysisRecord,
@@ -141,6 +149,7 @@ import { CreatorProfileScreen } from './src/screens/CreatorProfileScreen';
 import { DnaScreen } from './src/screens/DnaScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ContentScreen } from './src/screens/ContentScreen';
+import { IdeaStudioScreen } from './src/screens/IdeaStudioScreen';
 import { OnboardingScreen } from './src/screens/OnboardingScreen';
 import { PerformanceScreen } from './src/screens/PerformanceScreen';
 import { PrivacyScreen } from './src/screens/PrivacyScreen';
@@ -572,6 +581,9 @@ const NO_FAB: ReadonlySet<Screen> = new Set<Screen>([
   'chat',
   'help',
   'privacy',
+  // The Idea Studio owns its own action row; a floating button would sit on
+  // top of the idea cards it is meant to act on.
+  'ideaStudio',
 ]);
 
 // How often the app re-reads the verified follower count from Instagram. The
@@ -755,6 +767,13 @@ function AppShell() {
   // the creator was on has to survive the round trip.
   const discoverTabRef = useRef<DiscoverTab>('trends');
   const [creatorProfileId, setCreatorProfileId] = useState<string>('');
+  // The exact Discover card open in the AI Idea Studio. It travels with the
+  // screen so every generation and per-idea action is grounded in this one
+  // story — never a different card.
+  const [ideaStudioStory, setIdeaStudioStory] = useState<TrendItem | null>(null);
+  // Which Ideas sub-tab the next visit to Content opens on; the studio's
+  // "Saved ideas" link lands creators straight on that list.
+  const [ideasInitialTab, setIdeasInitialTab] = useState<string | undefined>(undefined);
 
   // Replace the current history entry instead of adding one. Used by the
   // one-time transitions on load (session restore) so Back never walks back
@@ -2252,6 +2271,80 @@ function AppShell() {
     );
   }, [supabaseAccessToken]);
 
+  // ---------- Saved from Discover (the Idea Studio) ----------
+  // Ideas saved in the studio live in the signed-in account's `saved_ideas`
+  // rows; this is the Content tab's read, edit and delete over them. The list
+  // is refreshed on every visit to the Content tab so a save made in the
+  // studio is already there when the creator arrives.
+  const [discoverSavedIdeas, setDiscoverSavedIdeas] = useState<SavedIdea[]>([]);
+  const [discoverSavedLoading, setDiscoverSavedLoading] = useState(false);
+  const [discoverSavedError, setDiscoverSavedError] = useState<string | null>(null);
+
+  const loadDiscoverSaved = useCallback(async () => {
+    setDiscoverSavedLoading(true);
+    setDiscoverSavedError(null);
+    try {
+      const token = await getCreatorToken();
+      const result = await listSavedIdeas(token);
+      if (!result.ok) {
+        setDiscoverSavedError(result.message);
+        return;
+      }
+      setDiscoverSavedIdeas(result.data);
+    } catch (err) {
+      setDiscoverSavedError(
+        err instanceof Error ? err.message : 'Could not load your saved ideas. Please retry.',
+      );
+    } finally {
+      setDiscoverSavedLoading(false);
+    }
+  }, [getCreatorToken]);
+
+  const deleteDiscoverSaved = useCallback(
+    async (id: string): Promise<string | null> => {
+      try {
+        const token = await getCreatorToken();
+        const result = await deleteSavedIdea(token, id);
+        if (!result.ok) return result.message;
+        setDiscoverSavedIdeas((previous) => previous.filter((idea) => idea.id !== id));
+        return null;
+      } catch (err) {
+        return err instanceof Error
+          ? err.message
+          : 'That saved idea could not be deleted. Please retry.';
+      }
+    },
+    [getCreatorToken],
+  );
+
+  const updateDiscoverSaved = useCallback(
+    async (
+      id: string,
+      patch: { title: string; script: string; caption: string; status: SavedIdeaStatus },
+    ): Promise<string | null> => {
+      try {
+        const token = await getCreatorToken();
+        const result = await updateSavedIdea(token, id, patch);
+        if (!result.ok) return result.message;
+        setDiscoverSavedIdeas((previous) =>
+          previous.map((idea) => (idea.id === id ? result.data : idea)),
+        );
+        return null;
+      } catch (err) {
+        return err instanceof Error
+          ? err.message
+          : 'That saved idea could not be updated. Please retry.';
+      }
+    },
+    [getCreatorToken],
+  );
+
+  useEffect(() => {
+    if (screen === 'ideas' || screen === 'plan') {
+      void loadDiscoverSaved();
+    }
+  }, [screen, loadDiscoverSaved]);
+
   // ---------- Verified follower milestones ----------
   //
   // The count comes back from Instagram via the `community` edge function, so
@@ -3157,24 +3250,15 @@ function AppShell() {
   };
 
   /**
-   * Hands a Discover trend to the Ideas tab. The trend's headline becomes the
-   * topic, so the AI writes about what is genuinely being discussed right now
-   * rather than a generic prompt — and the result lands in the main ideas list
-   * where the creator will actually see it.
+   * Hands one exact Discover story to the AI Idea Studio. The whole card —
+   * headline, description, publisher, original link, category, image and
+   * video — travels together, so every idea the studio writes is grounded in
+   * this story and never a different one.
    */
-  const turnTrendIntoIdea = useCallback(
-    (topic: string) => {
-      const trimmed = topic.trim().slice(0, 200);
-      if (!trimmed) return;
-      setScreen('ideas');
-      void handleGenerate('append', {
-        topic: `${trimmed} — short-form content ideas`,
-        audience: ideaDefaults.audience,
-        goal: ideaDefaults.goal,
-      });
-    },
-    [ideaDefaults, handleGenerate],
-  );
+  const openIdeaStudio = useCallback((item: TrendItem) => {
+    setIdeaStudioStory(item);
+    setScreen('ideaStudio');
+  }, []);
 
   const jobBusy =
     submitting || (job !== null && job.status !== 'completed' && job.status !== 'failed');
@@ -3270,6 +3354,11 @@ function AppShell() {
       return true;
     }
     switch (current) {
+      case 'ideaStudio':
+        // The studio is always entered from a Discover card, so Back returns
+        // to the feed it came from with its section intact.
+        setScreen('discover');
+        return true;
       case 'plan':
         // Plan is a route into the Content tab now, so it backs out exactly
         // like the tab it belongs to instead of dropping to the system default.
@@ -3484,7 +3573,8 @@ function AppShell() {
       ) : screen === 'discover' ? (
         <DiscoverScreen
           getCreatorToken={getCreatorToken}
-          onTurnToIdea={turnTrendIntoIdea}
+          onTurnToIdea={openIdeaStudio}
+          onOpenNotifications={() => setScreen('notifications')}
           initialTab={discoverTabRef.current}
           onTabChange={(next) => {
             discoverTabRef.current = next;
@@ -3501,6 +3591,17 @@ function AppShell() {
           getCreatorToken={getCreatorToken}
           onBack={() => setScreen('discover')}
         />
+      ) : screen === 'ideaStudio' && ideaStudioStory ? (
+        <IdeaStudioScreen
+          story={ideaStudioStory}
+          onBack={() => setScreen('discover')}
+          getCreatorToken={getCreatorToken}
+          onAddToPlanner={addCustomIdea}
+          onViewSaved={() => {
+            setIdeasInitialTab('Saved');
+            setScreen('ideas');
+          }}
+        />
       ) : screen === 'dna' ? (
         <DnaScreen
           profile={profile}
@@ -3516,9 +3617,18 @@ function AppShell() {
         // the Plan half already selected.
         <ContentScreen
           initialView={screen === 'plan' ? 'Plan' : 'Ideas'}
+          initialIdeasTab={ideasInitialTab}
           ideas={ideas}
           trendingIdeas={trendingIdeas}
           savedIdeas={savedIdeas}
+          discoverSaved={{
+            ideas: discoverSavedIdeas,
+            loading: discoverSavedLoading,
+            error: discoverSavedError,
+            onRetry: () => void loadDiscoverSaved(),
+            onDelete: deleteDiscoverSaved,
+            onUpdate: updateDiscoverSaved,
+          }}
           generating={generating}
           generateError={generateError}
           generateTopic={generateTopic}

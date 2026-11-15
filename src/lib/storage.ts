@@ -45,9 +45,10 @@ export const storageKeys = {
   // anonymous user and stranded that user's posts, likes and badges.
   guestSession: 'creatordna.guestSession.v1',
   // Discover trends are public, device-level data (like the theme): every
-  // account on this install sees the same Reddit/X/HN front page, so this key
+  // account on this install sees the same nine-source news feed, so this key
   // is deliberately NOT account-scoped.
-  discoverTrends: 'creatordna.discoverTrends.v1',
+  discoverTrends: 'creatordna.discoverTrends.v2',
+  discoverBookmarks: 'creatordna.discoverBookmarks.v1',
   // Device-level preference, like the theme: it belongs to whoever uses this
   // install, not to any one signed-in account.
   notificationPrefs: 'creatordna.notificationPrefs.v1',

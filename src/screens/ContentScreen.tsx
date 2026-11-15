@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { PillTabs } from '../components/ui';
-import { IdeasScreen } from './IdeasScreen';
+import { IdeasScreen, type DiscoverSavedSection } from './IdeasScreen';
 import { PlanScreen } from './PlanScreen';
 import { useStyles, useThemeColors } from '../themeContext';
 import type { CreatorAiIdea, IdeaScoreResult } from '../services/creatorAi';
@@ -28,6 +28,8 @@ export type ContentView = ContentHalf;
 
 export function ContentScreen({
   initialView = 'Ideas',
+  initialIdeasTab,
+  discoverSaved,
   ideas,
   trendingIdeas,
   savedIdeas,
@@ -46,6 +48,10 @@ export function ContentScreen({
 }: {
   /** Which half opens first — the `plan` route passes "Plan". */
   initialView?: ContentView;
+  /** Which Ideas sub-tab opens first (the studio's Saved link passes it). */
+  initialIdeasTab?: string;
+  /** Ideas saved from the Idea Studio, with their edit and delete actions. */
+  discoverSaved: DiscoverSavedSection;
   ideas: CreatorAiIdea[];
   trendingIdeas: CreatorAiIdea[];
   savedIdeas: CreatorAiIdea[];
@@ -106,6 +112,8 @@ export function ContentScreen({
         />
       ) : (
         <IdeasScreen
+          initialTab={initialIdeasTab}
+          discoverSaved={discoverSaved}
           ideas={ideas}
           trendingIdeas={trendingIdeas}
           savedIdeas={savedIdeas}

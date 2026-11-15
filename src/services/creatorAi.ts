@@ -1394,3 +1394,291 @@ function friendlyJobError(value: unknown): string | undefined {
       return 'Analysis failed. Please retry.';
   }
 }
+
+// ---------- AI Idea Studio (Discover 2.0) ----------
+//
+// One exact story from Discover goes in; five insight blocks and ten unique,
+// story-grounded ideas come back. The story travels verbatim on every call —
+// including the per-idea follow-ups — so a script or a new version is always
+// built from the same source material as the card it came from.
+
+/** The story exactly as the Discover card holds it; sent unchanged. */
+export type StudioStory = {
+  title: string;
+  description: string | null;
+  publisher: string | null;
+  url: string;
+  category: string | null;
+  imageUrl: string | null;
+  videoUrl: string | null;
+};
+
+export type StudioIdea = {
+  id: string;
+  platform: string;
+  title: string;
+  angle: string;
+  hook: string;
+  outline: string[];
+  script: string;
+  caption: string;
+  hashtags: string[];
+  thumbnail_concept: string;
+};
+
+export type StudioInsights = {
+  why_it_matters: string;
+  audience_interest: string;
+  content_opportunities: string;
+  trending_angle: string;
+  suggested_formats: string[];
+};
+
+export type StudioIdeasResult = {
+  insights: StudioInsights;
+  ideas: StudioIdea[];
+};
+
+export type StudioAction = 'script' | 'variant' | 'thumbnail';
+
+export type StudioActionResult =
+  | { action: 'script'; script: string }
+  | { action: 'variant'; idea: StudioIdea }
+  | { action: 'thumbnail'; thumbnail: string };
+
+/** A non-empty, bounded string from the server, or null when it is not usable. */
+function studioText(value: unknown, max: number): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= max ? trimmed : null;
+}
+
+function studioTextList(value: unknown, min: number, max: number): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const items: string[] = [];
+  for (const entry of value) {
+    const text = typeof entry === 'string' ? entry.trim() : '';
+    if (!text) return null;
+    items.push(text);
+  }
+  return items.length >= min && items.length <= max ? items : null;
+}
+
+function parseStudioIdea(value: unknown): StudioIdea | null {
+  if (!isRecord(value)) return null;
+  const id = studioText(value.id, 60);
+  const platform = studioText(value.platform, 60);
+  const title = studioText(value.title, 200);
+  const angle = studioText(value.angle, 400);
+  const hook = studioText(value.hook, 400);
+  const outline = studioTextList(value.outline, 1, 10);
+  const script = studioText(value.script, 6000);
+  const caption = studioText(value.caption, 1000);
+  const hashtags = studioTextList(value.hashtags, 1, 15);
+  const thumbnail = studioText(value.thumbnail_concept, 1200);
+  if (
+    !id || !platform || !title || !angle || !hook ||
+    !outline || !script || !caption || !hashtags || !thumbnail
+  ) {
+    return null;
+  }
+  return {
+    id,
+    platform,
+    title,
+    angle,
+    hook,
+    outline,
+    script,
+    caption,
+    hashtags,
+    thumbnail_concept: thumbnail,
+  };
+}
+
+function parseStudioInsights(value: unknown): StudioInsights | null {
+  if (!isRecord(value)) return null;
+  const why = studioText(value.why_it_matters, 700);
+  const interest = studioText(value.audience_interest, 700);
+  const opportunities = studioText(value.content_opportunities, 700);
+  const trending = studioText(value.trending_angle, 700);
+  const formats = studioTextList(value.suggested_formats, 1, 8);
+  if (!why || !interest || !opportunities || !trending || !formats) return null;
+  return {
+    why_it_matters: why,
+    audience_interest: interest,
+    content_opportunities: opportunities,
+    trending_angle: trending,
+    suggested_formats: formats,
+  };
+}
+
+function studioStoryPayload(story: StudioStory): Record<string, unknown> {
+  return {
+    title: story.title,
+    description: story.description,
+    publisher: story.publisher,
+    url: story.url,
+    category: story.category,
+    imageUrl: story.imageUrl,
+    videoUrl: story.videoUrl,
+  };
+}
+
+/**
+ * One studio request with its own error wording. These calls can run for a
+ * minute or more (ten ideas is a large answer), and every failure the studio
+ * can see — busy provider, unusable answer, dropped connection — is something
+ * a retry genuinely fixes, so the screen pairs each message with a Retry
+ * button rather than dead-ending the creator.
+ */
+async function postStudio(
+  functionUrl: string,
+  anonKey: string,
+  accessToken: string,
+  route: 'ideas/studio' | 'ideas/studio/action',
+  payload: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<Record<string, unknown>> {
+  let response: Response;
+  try {
+    response = await fetch(`${functionUrl}/${route}`, {
+      method: 'POST',
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    throw new Error('Could not reach CreatorDNA AI. Check your connection and retry.');
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error('CreatorDNA returned an unreadable response. Please try again.');
+  }
+  if (!isRecord(body)) {
+    throw new Error('CreatorDNA returned an invalid response. Please try again.');
+  }
+  if (!response.ok) {
+    const code = typeof body.error === 'string' ? body.error : '';
+    if (response.status === 401 || code === 'unauthorized') {
+      throw new Error('Your session has expired. Sign in again to continue.');
+    }
+    if (code === 'ai_not_configured') {
+      throw new Error("CreatorDNA AI isn't configured yet.");
+    }
+    if (code === 'provider_unavailable') {
+      throw new Error('The AI service is busy right now. Give it a moment and retry.');
+    }
+    if (code === 'provider_rejected') {
+      throw new Error('The AI service could not answer that. Please retry.');
+    }
+    if (code === 'malformed_model_response' || code === 'studio_failed') {
+      throw new Error('CreatorDNA could not build ideas from that story. Please retry.');
+    }
+    if (code.startsWith('invalid_') || code === 'story_required') {
+      throw new Error('That story could not be read. Go back and pick another.');
+    }
+    throw new Error('CreatorDNA AI is temporarily unavailable. Please try again.');
+  }
+  return body;
+}
+
+/**
+ * Builds the studio's full answer for one story: five insight blocks plus
+ * exactly ten ideas across the nine content formats. A response that is
+ * missing an idea or a block is rejected here, so the screen never renders a
+ * half-finished batch as if it were complete.
+ */
+export async function generateStudioIdeas(
+  functionUrl: string,
+  anonKey: string,
+  accessToken: string,
+  input: { story: StudioStory; audience?: string; goal?: string },
+): Promise<StudioIdeasResult> {
+  const body = await postStudio(
+    functionUrl,
+    anonKey,
+    accessToken,
+    'ideas/studio',
+    {
+      story: studioStoryPayload(input.story),
+      ...(input.audience ? { audience: input.audience } : {}),
+      ...(input.goal ? { goal: input.goal } : {}),
+    },
+    // The provider may take over two minutes to write ten full ideas; the
+    // timeout sits just above its own retry budget so a slow-but-valid answer
+    // is never cut off mid-stream.
+    180_000,
+  );
+  const insights = parseStudioInsights(body.insights);
+  const ideas = Array.isArray(body.ideas)
+    ? body.ideas.map(parseStudioIdea)
+    : null;
+  if (!insights || !ideas || ideas.length !== 10 || ideas.some((idea) => idea === null)) {
+    throw new Error('CreatorDNA returned an invalid idea list. Please try again.');
+  }
+  return { insights, ideas: ideas as StudioIdea[] };
+}
+
+/**
+ * One per-idea follow-up: the full script, another version of the idea, or a
+ * fresh thumbnail concept — always with the same story attached, so the
+ * result can never belong to a different card than the one it was asked for.
+ */
+export async function runStudioAction(
+  functionUrl: string,
+  anonKey: string,
+  accessToken: string,
+  input: { action: StudioAction; story: StudioStory; idea: StudioIdea },
+): Promise<StudioActionResult> {
+  const body = await postStudio(
+    functionUrl,
+    anonKey,
+    accessToken,
+    'ideas/studio/action',
+    {
+      action: input.action,
+      story: studioStoryPayload(input.story),
+      idea: {
+        id: input.idea.id,
+        platform: input.idea.platform,
+        title: input.idea.title,
+        angle: input.idea.angle,
+        hook: input.idea.hook,
+        outline: input.idea.outline,
+        script: input.idea.script,
+        caption: input.idea.caption,
+        hashtags: input.idea.hashtags,
+        thumbnail_concept: input.idea.thumbnail_concept,
+      },
+    },
+    // A single idea's expansion is a much smaller answer than the studio's
+    // ten — this stays inside one provider attempt.
+    175_000,
+  );
+  if (input.action === 'script') {
+    const script = studioText(body.script, 6000);
+    if (!script) {
+      throw new Error('CreatorDNA returned an invalid script. Please try again.');
+    }
+    return { action: 'script', script };
+  }
+  if (input.action === 'thumbnail') {
+    const thumbnail = studioText(body.thumbnail_concept, 1200);
+    if (!thumbnail) {
+      throw new Error('CreatorDNA returned an invalid thumbnail concept. Please try again.');
+    }
+    return { action: 'thumbnail', thumbnail };
+  }
+  const idea = parseStudioIdea(body.idea);
+  if (!idea) {
+    throw new Error('CreatorDNA returned an invalid idea version. Please try again.');
+  }
+  return { action: 'variant', idea };
+}
