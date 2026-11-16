@@ -3,8 +3,9 @@ import { storageKeys, usePersistentState } from './lib/storage';
 import { colors, darkColors, lightColors, type ThemeMode } from './theme';
 
 // App-wide light/dark mode. Screens read `useThemeColors()` for a palette with
-// the exact same keys as `colors` — light mode is the landing look, dark mode
-// is its navy twin. The choice is persisted on the device.
+// the exact same keys as `colors` — light mode is the branded light look, dark
+// mode is the jungle-night twin of the landing and login pages. The choice is
+// persisted on the device.
 
 type ThemeValue = {
   mode: ThemeMode;

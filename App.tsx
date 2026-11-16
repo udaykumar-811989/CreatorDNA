@@ -236,7 +236,9 @@ const saveAuthSession = (session: AuthSessionRecord): void => {
   }
 };
 
-const loadAuthSession = (): AuthSessionRecord | null => {
+// Parse the stored record as-is, with no expiry gate — renewal needs the
+// refresh token that sits beside an expired access token.
+const readStoredAuthSession = (): AuthSessionRecord | null => {
   try {
     if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
       return null;
@@ -260,13 +262,65 @@ const loadAuthSession = (): AuthSessionRecord | null => {
         avatarUrl: typeof parsed.avatarUrl === 'string' ? parsed.avatarUrl : null,
       };
     }
-    // Supabase access tokens are short-lived JWTs — only restore one that
-    // hasn't expired (`exp`, seconds since epoch).
-    const payload = session.token.split('.')[1] ?? '';
-    const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as { exp?: unknown };
-    return typeof decoded.exp === 'number' && decoded.exp * 1000 > Date.now() ? session : null;
+    return session;
   } catch {
     return null;
+  }
+};
+
+const loadAuthSession = (): AuthSessionRecord | null => {
+  const session = readStoredAuthSession();
+  if (!session) {
+    return null;
+  }
+  // Supabase access tokens are short-lived JWTs — only restore one that
+  // hasn't expired (`exp`, seconds since epoch).
+  const exp = tokenExpiry(session.token);
+  return exp !== null && exp > Date.now() ? session : null;
+};
+
+// Renew an expired (or about-to-expire) access token with the refresh
+// token stored beside it. Supabase access tokens live one hour while the
+// refresh token lasts weeks — without this, a browser reload after that
+// hour read as an automatic logout even though the creator never signed
+// out. Only a rejected grant (400/401) ever ends the session; a network
+// blip keeps the record untouched and the next tick retries.
+const renewAuthSession = async (): Promise<AuthSessionRecord | null> => {
+  const stored = readStoredAuthSession();
+  if (!stored) {
+    return null;
+  }
+  const exp = tokenExpiry(stored.token);
+  if (exp !== null && exp - Date.now() > 60_000) {
+    return stored;
+  }
+  if (!stored.refreshToken || !supabaseUrl || !supabaseAnonKey) {
+    return null;
+  }
+  try {
+    const refreshed = await refreshCreatorAiSession(
+      supabaseUrl,
+      supabaseAnonKey,
+      stored.refreshToken,
+    );
+    const next: AuthSessionRecord = {
+      ...stored,
+      token: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken ?? stored.refreshToken,
+      name: refreshed.name ?? stored.name ?? null,
+      avatarUrl: refreshed.avatarUrl ?? stored.avatarUrl ?? null,
+    };
+    saveAuthSession(next);
+    return next;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message === 'saved_login_revoked') {
+      clearAuthSession();
+      return null;
+    }
+    // Transient failure (offline, Supabase hiccup): keep the record as it
+    // is — nothing is deleted — and report whatever still works.
+    return exp !== null && exp > Date.now() ? stored : null;
   }
 };
 
@@ -1335,9 +1389,11 @@ function AppShell() {
         setSessionWarning(true);
       }
       // The Instagram connection IS the sign-in moment in this app — no
-      // password is typed anywhere. Offer "Save this account?" right here;
-      // a match on THIS Instagram account (handle or token) refreshes the
-      // stored connection silently instead. Never match on email: that let
+      // password is typed anywhere. A match on THIS Instagram account
+      // (handle or token) refreshes the stored connection silently; a
+      // first-time connection never raises the "Save this account?" prompt
+      // (removed here at the creator's request — the option is gone from
+      // the Instagram flow entirely). Never match on email: that let
       // connecting a different account hijack the saved entry, so the list
       // could never grow past a single row and switching seemed impossible.
       const igHandle = actualProfile.username;
@@ -1354,8 +1410,6 @@ function AppShell() {
           instagramPictureUrl:
             actualProfile.profilePictureUrl ?? stored.instagramPictureUrl,
         }));
-      } else {
-        setSaveAccountPrompt({ email: null, handle: igHandle });
       }
     } catch {
       setConnectionError('receipt_expired_or_used');
@@ -1387,6 +1441,14 @@ function AppShell() {
       const oauthError = await captureOAuthReturn();
       if (oauthError) {
         setAuthError(oauthError);
+      }
+      // An access token that ran out while the tab was closed is renewed
+      // from the stored refresh token before anything reads it — that is
+      // what keeps a browser reload after an hour from looking like an
+      // automatic logout.
+      const renewed = await renewAuthSession();
+      if (renewed) {
+        setSupabaseAccessToken(renewed.token);
       }
       // Profile shows the login identity (name + email + photo): seed it from
       // the session the OAuth return (or a previous visit) persisted.
@@ -1581,12 +1643,30 @@ function AppShell() {
     }
   }, []);
 
+  // Keep the access token fresh while the tab stays open. The check is a
+  // cheap local expiry read every minute; the network renewal happens only
+  // in the last minute of the token's hour, so requests never fail with
+  // "session expired" underneath a creator who never signed out.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void renewAuthSession().then((next) => {
+        if (next) {
+          setSupabaseAccessToken(next.token);
+        }
+      });
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   // Accounts remembered on this device (email + Instagram connection) so
   // logout doesn't cost a password re-type — swap with one tap.
   const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>(() => loadSavedAccounts());
-  // Non-null = show the "Save this account?" prompt. `email` is set when a
-  // password login created the session; `handle` is the connected Instagram
-  // identity — the sign-in path in this app usually has no password at all.
+  // Non-null = show the "Save this account?" prompt — raised only when a
+  // password login creates the session; the Instagram connect flow no
+  // longer asks (its save option was removed).
   const [saveAccountPrompt, setSaveAccountPrompt] = useState<{
     email: string | null;
     handle: string;
@@ -3851,9 +3931,8 @@ function AppShell() {
         />
       ) : null}
 
-      {/* Instagram-style "Save login info?" — asked the moment the account
-          signs in here: a password login or (the usual case) an Instagram
-          connect. */}
+      {/* "Save this account?" — asked when a password login creates the
+          session. The Instagram connect flow no longer raises it. */}
       {saveAccountPrompt ? (
         <SaveAccountPrompt
           email={saveAccountPrompt.email ?? `@${saveAccountPrompt.handle}`}

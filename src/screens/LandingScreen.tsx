@@ -154,8 +154,18 @@ export function LandingScreen({
       });
     };
 
+    // One frame at a time: writing --sy on every scroll event forced a
+    // style pass per event (and a backdrop re-blur behind it), which is
+    // what made scrolling feel heavy.
+    let scrollFrame = 0;
     const onScroll = () => {
-      root.style.setProperty('--sy', String(root.scrollTop));
+      if (scrollFrame) {
+        return;
+      }
+      scrollFrame = requestAnimationFrame(() => {
+        scrollFrame = 0;
+        root.style.setProperty('--sy', String(root.scrollTop));
+      });
     };
 
     const observer = new IntersectionObserver(
@@ -185,6 +195,9 @@ export function LandingScreen({
     return () => {
       if (frame) {
         cancelAnimationFrame(frame);
+      }
+      if (scrollFrame) {
+        cancelAnimationFrame(scrollFrame);
       }
       window.removeEventListener('mousemove', onPointer);
       root.removeEventListener('scroll', onScroll);
@@ -645,7 +658,7 @@ const LP_CSS = `
 /* ------------------------------------------------------------- nav */
 .lp-nav {
   position: sticky; top: 0; z-index: 40;
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   background: var(--nav-bg);
   border-bottom: 1px solid rgba(255,255,255,0.08);
 }
@@ -847,7 +860,7 @@ const LP_CSS = `
 .lp-card {
   background: linear-gradient(160deg, rgba(255,255,255,0.14), rgba(255,255,255,0.05));
   border: 1px solid rgba(255,255,255,0.20); border-radius: 26px;
-  padding: 30px; backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+  padding: 30px; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   box-shadow: 0 40px 90px rgba(0,0,0,0.45);
   transform-style: preserve-3d;
   transform: translateZ(46px);

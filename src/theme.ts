@@ -90,50 +90,52 @@ export const lightColors: typeof colors = { ...colors };
 // Asserted to `typeof colors` so literal tuples (`gradient`, `entryBg`) keep
 // the exact tuple type LinearGradient and friends require.
 export const darkColors = {
-  // Surfaces (page + cards). Deep navy page, one step lighter for cards, so
-  // elevation still reads without shadows.
-  darkBg: '#0A1020',
-  darkBg2: '#0D1526',
-  darkBg3: '#0B1224',
-  onboardingBg: ['#0A1020', '#0D1526', '#111C33'] as [string, string, string],
-  darkCard: '#121B2E',
-  darkCard2: '#17223A',
-  darkBorder: 'rgba(148,178,232,0.16)',
-  onDark: '#E9F0FF',
-  onDarkSub: '#A7B9DA',
-  onDarkDim: '#7C8FB4',
+  // Surfaces (page + cards). The jungle-night page from the landing and
+  // login (#06140D), one step lighter for cards, so elevation still reads
+  // without shadows.
+  darkBg: '#06140D',
+  darkBg2: '#0A1D13',
+  darkBg3: '#08180F',
+  onboardingBg: ['#06140D', '#0A1D13', '#0E2718'] as [string, string, string],
+  darkCard: '#0D1F16',
+  darkCard2: '#12281B',
+  darkBorder: 'rgba(148,233,190,0.16)',
+  onDark: '#F2FFF9',
+  onDarkSub: '#A5CDB8',
+  onDarkDim: '#7FA791',
 
   // The "light palette" keys — in dark mode these carry the dark surfaces.
-  white: '#121B2E',
-  lightCard: '#16203A',
-  lightCard2: '#0F1729',
-  lightBorder: 'rgba(148,178,232,0.16)',
-  text: '#E9F0FF',
-  textSub: '#A7B9DA',
-  textDim: '#7C8FB4',
+  white: '#0D1F16',
+  lightCard: '#0F2419',
+  lightCard2: '#0A1B12',
+  lightBorder: 'rgba(148,233,190,0.16)',
+  text: '#F2FFF9',
+  textSub: '#A5CDB8',
+  textDim: '#7FA791',
 
-  // Brand: the same blue family, lifted so it still passes contrast on navy.
-  primary: '#4C92E8',
-  primarySoft: '#15294A',
-  primaryDeep: '#A8CCFF',
-  gradient: ['#2A6AC0', '#3B82D8', '#4C92E8'] as [string, string, string],
-  ringGradient: ['#4C92E8', '#8FC0FF'] as [string, string],
+  // Brand: the login page's green, at the depth of its button gradient so
+  // white labels keep their contrast.
+  primary: '#16A85E',
+  primarySoft: '#0F3B27',
+  primaryDeep: '#3AD07E',
+  gradient: ['#3AD07E', '#25BE6F', '#16A85E'] as [string, string, string],
+  ringGradient: ['#16A85E', '#4ADE80'] as [string, string],
 
   // Status: same meanings, brighter values (the light versions sit too dark
-  // on navy and stop reading as green/amber/red).
-  green: '#2FD48F',
-  greenSoft: '#0E2A20',
+  // on the jungle page and stop reading as green/amber/red).
+  green: '#3AD07E',
+  greenSoft: '#10301F',
   amber: '#FBBF24',
-  amberSoft: '#2C2412',
+  amberSoft: '#2E2513',
   red: '#F87171',
-  redSoft: '#2E1618',
+  redSoft: '#331A1A',
   blue: '#5AA0F0',
-  blueSoft: '#15294A',
-  graySoft: '#141C2C',
-  gray: '#8FA2BC',
+  blueSoft: '#123049',
+  graySoft: '#0F1F16',
+  gray: '#8FA99B',
 
   onStatus: '#FFFFFF',
-  track: '#1E293F',
+  track: '#173626',
 
   // Instagram's own gradient — platform branding, identical in both modes.
   igGradient: ['#7438E8', '#C135BD', '#F56040', '#FFBD45'] as [
@@ -143,14 +145,14 @@ export const darkColors = {
     string,
   ],
 
-  pageBg: '#0A1020',
-  entryBg: ['#0A1020', '#0D1526', '#111C33'] as [string, string, string],
-  surface1: 'rgba(148,178,232,0.07)',
-  surface2: 'rgba(148,178,232,0.10)',
-  surface3: 'rgba(148,178,232,0.15)',
-  outlineSoft: 'rgba(148,178,232,0.36)',
-  footerBg: 'rgba(10,16,32,0.94)',
-  insightCard: '#14243F',
+  pageBg: '#06140D',
+  entryBg: ['#06140D', '#0A1D13', '#0E2718'] as [string, string, string],
+  surface1: 'rgba(148,233,190,0.07)',
+  surface2: 'rgba(148,233,190,0.10)',
+  surface3: 'rgba(148,233,190,0.15)',
+  outlineSoft: 'rgba(148,233,190,0.36)',
+  footerBg: 'rgba(6,20,13,0.94)',
+  insightCard: '#0F3B27',
 } as typeof colors;
 
 export const spacing = {
