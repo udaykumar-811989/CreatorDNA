@@ -144,8 +144,7 @@ import { ChatScreen } from './src/screens/ChatScreen';
 import { SaveAccountPrompt, SavedAccountsSheet } from './src/components/AccountModals';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { ConnectedScreen } from './src/screens/ConnectedScreen';
-import { DiscoverScreen, type DiscoverTab } from './src/screens/DiscoverScreen';
-import { CreatorProfileScreen } from './src/screens/CreatorProfileScreen';
+import { DiscoverScreen } from './src/screens/DiscoverScreen';
 import { DnaScreen } from './src/screens/DnaScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { ContentScreen } from './src/screens/ContentScreen';
@@ -818,10 +817,6 @@ function AppShell() {
   const screenRef = useRef<Screen>(screen);
   screenRef.current = screen;
   const goBackRef = useRef<(() => boolean) | null>(null);
-  // Creator profile is opened from Discover and returns there, so the sub-tab
-  // the creator was on has to survive the round trip.
-  const discoverTabRef = useRef<DiscoverTab>('trends');
-  const [creatorProfileId, setCreatorProfileId] = useState<string>('');
   // The exact Discover card open in the AI Idea Studio. It travels with the
   // screen so every generation and per-idea action is grounded in this one
   // story — never a different card.
@@ -3669,21 +3664,6 @@ function AppShell() {
           getCreatorToken={getCreatorToken}
           onTurnToIdea={openIdeaStudio}
           onOpenNotifications={() => setScreen('notifications')}
-          initialTab={discoverTabRef.current}
-          onTabChange={(next) => {
-            discoverTabRef.current = next;
-          }}
-          onOpenCreator={(userId) => {
-            setCreatorProfileId(userId);
-            setScreen('creatorProfile');
-          }}
-          onConnect={handleConnectEntry}
-        />
-      ) : screen === 'creatorProfile' ? (
-        <CreatorProfileScreen
-          userId={creatorProfileId}
-          getCreatorToken={getCreatorToken}
-          onBack={() => setScreen('discover')}
         />
       ) : screen === 'ideaStudio' && ideaStudioStory ? (
         <IdeaStudioScreen
