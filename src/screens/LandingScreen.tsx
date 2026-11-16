@@ -71,7 +71,7 @@ const FAQS = [
   },
   {
     q: 'How do I get started?',
-    a: 'Join the waitlist with your email, connect Instagram when your account is ready, and your first DNA score appears right after the first analyses.',
+    a: 'Get started with your email, connect Instagram when your account is ready, and your first DNA score appears right after the first analyses.',
   },
 ] as const;
 
@@ -223,7 +223,7 @@ export function LandingScreen({
   }));
   const pricingItems: MenuItem[] = [
     { label: 'Free during beta', onClick: () => scrollTo('pricing') },
-    { label: 'Join the waitlist', onClick: () => (signedIn ? onEnterApp() : onAuth('signup')) },
+    { label: 'Get started', onClick: () => (signedIn ? onEnterApp() : onAuth('signup')) },
   ];
   const resourceItems: MenuItem[] = [
     { label: 'Privacy Policy', onClick: () => { setOpenMenu(null); setMobileOpen(false); onOpenPrivacy(); } },
@@ -437,7 +437,7 @@ export function LandingScreen({
                   className="lp-btn-primary"
                   onClick={() => (signedIn ? onEnterApp() : onAuth('signup'))}
                 >
-                  Join Waitlist
+                  Get Started
                   <span aria-hidden="true">→</span>
                 </button>
                 <button type="button" className="lp-btn-ghost" onClick={() => scrollTo('how')}>
@@ -538,7 +538,7 @@ export function LandingScreen({
           <div className="lp-section-inner lp-price">
             <h2 className="lp-section-title lp-reveal">Free during beta</h2>
             <p className="lp-section-sub lp-reveal">
-              Every tool in the stack, no credit card, no trial timer. Join the waitlist and your
+              Every tool in the stack, no credit card, no trial timer. Get started and your
               account is ready the moment your slot opens.
             </p>
             <ul className="lp-price-list lp-reveal">
@@ -552,7 +552,7 @@ export function LandingScreen({
               className="lp-btn-primary lp-reveal"
               onClick={() => (signedIn ? onEnterApp() : onAuth('signup'))}
             >
-              Join Waitlist
+              Get Started
               <span aria-hidden="true">→</span>
             </button>
           </div>
@@ -612,7 +612,8 @@ export function LandingScreen({
 const LP_CSS = `
 .lp, .lp * { box-sizing: border-box; }
 .lp {
-  --mx: 0; --my: 0; --sy: 0;
+  /* Default tilt so the 3D card reads as depth before the pointer moves. */
+  --mx: 0.3; --my: -0.1; --sy: 0;
   --green: #3ee08a;
   --green-deep: #17b866;
   --ink: #ffffff;
@@ -785,9 +786,9 @@ const LP_CSS = `
   display: grid; grid-template-columns: 1.04fr 0.96fr; gap: 54px; align-items: center;
   transform-style: preserve-3d;
 }
-.lp-hero-copy {
-  transform: translate3d(calc(var(--mx) * 7px), calc(var(--my) * 5px), 24px);
-}
+/* The hero copy stays static: parallax on text re-renders glyphs at
+   fractional offsets every mousemove, which reads as shaking/blur. */
+.lp-hero-copy { position: relative; }
 .lp-badge {
   display: inline-flex; align-items: center; gap: 9px;
   padding: 9px 17px; border-radius: 999px;
@@ -834,25 +835,33 @@ const LP_CSS = `
 .lp-btn-ghost:hover { background: rgba(255,255,255,0.18); transform: translateY(-3px); }
 
 /* hero tool card */
+/* Hero tool card — the 3D piece: the scene carries its own perspective so
+   the card and its chips render with real depth as the pointer moves. */
 .lp-card-scene {
   transform-style: preserve-3d;
-  transform: rotateY(calc(var(--mx) * 7deg)) rotateX(calc(var(--my) * -5deg));
-  transition: transform .12s ease-out;
+  perspective: 1100px;
+  will-change: transform;
+  transform: rotateY(calc(var(--mx) * 11deg)) rotateX(calc(var(--my) * -8deg));
+  transition: transform .18s ease-out;
 }
 .lp-card {
   background: linear-gradient(160deg, rgba(255,255,255,0.14), rgba(255,255,255,0.05));
   border: 1px solid rgba(255,255,255,0.20); border-radius: 26px;
   padding: 30px; backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
   box-shadow: 0 40px 90px rgba(0,0,0,0.45);
+  transform-style: preserve-3d;
   transform: translateZ(46px);
   animation: lp-bob 7s ease-in-out infinite alternate;
 }
-@keyframes lp-bob { from { margin-top: 0; } to { margin-top: -14px; } }
+@keyframes lp-bob {
+  from { transform: translateZ(46px) translateY(0); }
+  to { transform: translateZ(46px) translateY(-14px); }
+}
 .lp-card-title {
   margin: 0 0 20px; font-size: clamp(20px, 2vw, 25px);
   font-weight: 800; letter-spacing: -0.5px; color: #fff;
 }
-.lp-chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.lp-chips { display: flex; flex-wrap: wrap; gap: 10px; transform-style: preserve-3d; }
 .lp-chip {
   display: inline-flex; align-items: center; gap: 9px;
   background: var(--chip); border: 1px solid var(--chip-border);
@@ -917,8 +926,6 @@ const LP_CSS = `
   border: 1px solid rgba(255,255,255,0.16); border-radius: 30px;
   padding: 46px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   box-shadow: 0 40px 90px rgba(0,0,0,0.4);
-  transform: rotateY(calc(var(--mx) * 2.2deg)) rotateX(calc(var(--my) * -1.6deg));
-  transition: transform .12s ease-out;
 }
 .lp-ring { position: relative; width: 240px; max-width: 100%; margin: 0 auto; aspect-ratio: 1; }
 .lp-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
@@ -1017,12 +1024,9 @@ const LP_CSS = `
 /* reveal */
 .lp-reveal { opacity: 0; transform: translateY(30px); transition: opacity .7s ease, transform .7s ease; }
 .lp-reveal.in { opacity: 1; transform: none; }
-.lp-card-scene.lp-reveal { transition: opacity .7s ease, transform .7s ease; }
-.lp-card-scene.lp-reveal:not(.in) { transform: rotateY(calc(var(--mx) * 7deg)) rotateX(calc(var(--my) * -5deg)) translateY(30px); }
-.lp-card-scene.lp-reveal.in { transform: rotateY(calc(var(--mx) * 7deg)) rotateX(calc(var(--my) * -5deg)); }
-.lp-dna.lp-reveal { transition: opacity .7s ease, transform .7s ease; }
-.lp-dna.lp-reveal:not(.in) { transform: rotateY(calc(var(--mx) * 2.2deg)) rotateX(calc(var(--my) * -1.6deg)) translateY(30px); }
-.lp-dna.lp-reveal.in { transform: rotateY(calc(var(--mx) * 2.2deg)) rotateX(calc(var(--my) * -1.6deg)); }
+.lp-card-scene.lp-reveal { transition: opacity .7s ease, transform .18s ease-out; }
+.lp-card-scene.lp-reveal:not(.in) { transform: rotateY(calc(var(--mx) * 11deg)) rotateX(calc(var(--my) * -8deg)) translateY(30px); }
+.lp-card-scene.lp-reveal.in { transform: rotateY(calc(var(--mx) * 11deg)) rotateX(calc(var(--my) * -8deg)); }
 
 @media (max-width: 1080px) {
   .lp-links { display: none; }
