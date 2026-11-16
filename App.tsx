@@ -171,11 +171,10 @@ WebBrowser.maybeCompleteAuthSession();
 
 const pendingOAuthStorageKey = 'veyyra.instagram.oauth-state';
 
-// SCREEN_PATHS maps "/" to the marketing landing, but the app itself opens
-// on Login / Sign Up: only the standalone linked routes (/privacy-policy,
-// /help) count as an entry that must keep its own screen. "/" resolves to
-// null everywhere an entry screen is decided, so the auth front door wins —
-// and a session-restoring refresh of "/" still lands on Home.
+// The standalone linked routes (/privacy-policy, /help) count as an entry
+// that must keep its own screen; "/" resolves to null here so a
+// session-restoring refresh of the site root still lands on Home — the
+// initial load decides between the marketing landing and Home instead.
 const linkedScreenForPath = (pathname: string): Screen | null => {
   const found = screenForPath(pathname);
   return found && found !== 'landing' ? found : null;
@@ -741,12 +740,11 @@ function AppShell() {
   // ---------- Navigation & entry flow ----------
   // A linked /privacy or /help URL opens straight on that screen — that is
   // what makes the routes shareable from a store listing or a support reply.
-  // The app's front door is Login / Sign Up. Linked /privacy and /help URLs
-  // still open straight on their screen; everything else starts at auth —
-  // except a full-page Instagram OAuth return, which has no route of its own
-  // and must open on the screen the return handler writes to. Starting that
-  // load on the sign-in screen is what made a cancelled Instagram connection
-  // look like an automatic logout.
+  // On web the front door is the marketing landing ("/"); native still
+  // opens on Login / Sign Up. A full-page Instagram OAuth return has no
+  // route of its own and must open on the screen the return handler writes
+  // to — starting that load on the sign-in screen is what made a cancelled
+  // Instagram connection look like an automatic logout.
   const [screen, setScreen] = useState<Screen>(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') {
       return 'auth';
@@ -754,10 +752,13 @@ function AppShell() {
     if (instagramReturnStatus(window.location.href) !== null) {
       return 'connect';
     }
-    return linkedScreenForPath(window.location.pathname) ?? 'auth';
+    return screenForPath(window.location.pathname) ?? 'auth';
   });
   // Screen to return to when the browser back button leaves a linked route.
   const legalReturn = useRef<Screen>('settings');
+  // Where the auth screen's Back goes: the marketing landing when Login /
+  // Sign Up was opened from there, the welcome flow otherwise (native).
+  const authReturn = useRef<Screen>('onboarding');
   // Current screen for the listeners that register once (browser history,
   // Android hardware back) and therefore can't close over fresh state.
   const screenRef = useRef<Screen>(screen);
@@ -1492,10 +1493,13 @@ function AppShell() {
         setConnectionError('session_restore_failed');
         setConnectionState('failed');
         if (!legalEntry) {
-          // Only a creator with no session at all belongs on the sign-in
-          // page: a failed Instagram restore must never drop an email
-          // session back to Login — that reads as being logged out.
-          settleOnScreen(loadAuthSession() ? 'home' : 'auth');
+          // Only a creator with no session at all belongs on the front door:
+          // a failed Instagram restore must never drop an email session back
+          // to Login — that reads as being logged out. With no session, web
+          // stays on the marketing landing; native still opens auth.
+          settleOnScreen(
+            loadAuthSession() ? 'home' : Platform.OS === 'web' ? 'landing' : 'auth',
+          );
         }
       }
     })();
@@ -3372,7 +3376,9 @@ function AppShell() {
         }
         return false;
       case 'auth':
-        setScreen('onboarding');
+        // Back returns to wherever Login / Sign Up was opened from — the
+        // marketing landing on web, the welcome flow on native.
+        setScreen(authReturn.current);
         return true;
       case 'connect':
         setScreen(sessionToken ? 'home' : 'onboarding');
@@ -3457,13 +3463,20 @@ function AppShell() {
       ]}
       {...panResponder.panHandlers}
     >
-      {/* The landing page keeps the branded light look; everywhere else the
-          status-bar glyph colour follows the appearance toggle. */}
-      <StatusBar style={screen === 'landing' || mode !== 'dark' ? 'dark' : 'light'} />
+      {/* The landing is a dark jungle scene; everywhere else the status-bar
+          glyph colour follows the appearance toggle. */}
+      <StatusBar style={screen === 'landing' ? 'light' : mode !== 'dark' ? 'dark' : 'light'} />
       {screen === 'landing' ? (
         <LandingScreen
           signedIn={signedInEntry}
           onEnterApp={() => setScreen(signedInEntry ? 'home' : 'onboarding')}
+          onAuth={(mode) => {
+            authReturn.current = 'landing';
+            setAuthMode(mode);
+            setAuthError(null);
+            setScreen('auth');
+          }}
+          onOpenTool={(target) => setScreen(target)}
           onOpenPrivacy={() => {
             legalReturn.current = 'landing';
             setScreen('privacy');
@@ -3481,6 +3494,7 @@ function AppShell() {
             setOnboardingStep(0);
             // The welcome flow's CTA leads to account creation — Instagram
             // stays an optional add-on from the dashboard or Profile.
+            authReturn.current = 'onboarding';
             setAuthMode('signup');
             setAuthError(null);
             setScreen('auth');
@@ -3491,7 +3505,7 @@ function AppShell() {
         />
       ) : screen === 'auth' ? (
         <AuthScreen
-          onBack={() => setScreen('onboarding')}
+          onBack={() => setScreen(authReturn.current)}
           onSignIn={async (email, password) => {
             const signedIn = await authenticate(email, password);
             if (!signedIn) {

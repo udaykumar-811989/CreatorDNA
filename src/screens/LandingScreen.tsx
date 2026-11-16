@@ -1,1143 +1,1065 @@
-import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useRef, type ReactNode } from 'react';
-import {
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-  type LayoutChangeEvent,
-  type StyleProp,
-  type ViewStyle,
-} from 'react-native';
-import Svg, { Circle, Path, Rect } from 'react-native-svg';
-import { DnaIcon, IdeasIcon, PersonIcon, PlanIcon, PlayIcon } from '../components/icons';
-import { ScoreRing } from '../components/ScoreRing';
+import { useEffect, useRef, useState } from 'react';
+import { Image, Platform } from 'react-native';
+import type { Screen } from '../lib/types';
+import { useTheme } from '../themeContext';
 
-// The public front door: a marketing page in the app's own white + blue
-// language (hand-lettered accents, chunky display type, polaroid collage).
-// It only ever renders on web — native keeps the welcome flow.
-export const LANDING_BG = '#FFFFFF';
+// The public front door: a jungle-scene marketing page with a real 3D hero
+// (pointer + scroll parallax, depth layers, animated DNA panel). Web only —
+// native keeps the welcome flow, so every render here is DOM.
+export const LANDING_BG = '#06140D';
 
-const C = {
-  cream: '#FFFFFF',
-  blue: '#1A56AE',
-  blue2: '#163F85',
-  pale: '#EBF0FB',
-  fg: '#0D2E6B',
-  muted: '#5068A0',
-  line: 'rgba(26,86,174,0.13)',
-  white: '#FFFFFF',
-};
+// Where each hero tool chip takes a signed-in creator (signed-out visitors
+// get the sign-up flow instead — no chip is ever a dead end).
+const TOOLS: ReadonlyArray<{ name: string; screen: Screen }> = [
+  { name: 'Instagram DNA', screen: 'dna' },
+  { name: 'Reels Autopsy', screen: 'analysesList' },
+  { name: 'Next Move Engine', screen: 'recommendations' },
+  { name: 'Creator Style DNA', screen: 'dna' },
+  { name: 'Trend Radar', screen: 'discover' },
+  { name: 'Content Gap Finder', screen: 'ideas' },
+  { name: 'Upload Predictor', screen: 'plan' },
+  { name: 'Thumbnail DNA', screen: 'analysisForm' },
+  { name: 'Caption Laboratory', screen: 'ideas' },
+  { name: 'Audience Persona Engine', screen: 'performance' },
+  { name: 'Creator Clone', screen: 'chat' },
+];
 
-const DISPLAY = 'Jua';
-const HAND = 'Caveat';
-const BODY =
-  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+// Marketing illustration numbers (the sample dashboard in the reference
+// design) — product imagery, not a data response.
+const DNA_BARS = [
+  { label: 'Engagement', value: 96 },
+  { label: 'Trend Alignment', value: 93 },
+  { label: 'Content Quality', value: 95 },
+  { label: 'Audience Fit', value: 94 },
+] as const;
 
-const CARD_SHADOW = {
-  shadowColor: 'rgba(26,86,174,0.20)',
-  shadowOpacity: 1,
-  shadowRadius: 14,
-  shadowOffset: { width: 0, height: 6 },
-  elevation: 4,
-};
-
-// ---------------------------------------------------------------- primitives
-
-// The app's own mark (src/components/DnaMark), same shape and same three
-// strokes — passed `color` it becomes a single-colour version for use on a
-// blue chip, otherwise it *is* the app logo.
-const MARK_LIGHT = '#bc77ff';
-const MARK_MID = '#8959ed';
-const MARK_RUNG = '#a86af5';
-
-function BrandMark({ size = 40, color }: { size?: number; color?: string }) {
-  return (
-    <Svg
-      width={size}
-      height={size}
-      viewBox="0 0 48 48"
-      accessible
-      accessibilityRole={color ? undefined : 'image'}
-      accessibilityLabel={color ? undefined : 'CreatorDNA logo'}
-    >
-      <Path
-        d="M12 5c0 9 24 10 24 19S12 34 12 43"
-        fill="none"
-        stroke={color ?? MARK_LIGHT}
-        strokeLinecap="round"
-        strokeWidth={3.4}
-      />
-      <Path
-        d="M36 5c0 9-24 10-24 19s24 10 24 19"
-        fill="none"
-        stroke={color ?? MARK_MID}
-        strokeLinecap="round"
-        strokeWidth={3.4}
-      />
-      <Path
-        d="M16 11h16M13 20h22M13 29h22M16 38h16"
-        fill="none"
-        stroke={color ?? MARK_RUNG}
-        strokeLinecap="round"
-        strokeWidth={2.5}
-      />
-    </Svg>
-  );
-}
-
-function Smiley({ size = 46, color = C.blue }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 46 46" fill="none">
-      <Circle cx={23} cy={23} r={20} stroke={color} strokeWidth={2.5} />
-      <Circle cx={16} cy={18} r={2.5} fill={color} />
-      <Circle cx={30} cy={18} r={2.5} fill={color} />
-      <Path d="M13 29 Q23 38 33 29" stroke={color} strokeWidth={2.5} strokeLinecap="round" fill="none" />
-    </Svg>
-  );
-}
-
-function Squiggle({ width = 20, color = C.blue }: { width?: number; color?: string }) {
-  return (
-    <Svg width={width} height={(width * 14) / 20} viewBox="0 0 20 14" fill="none">
-      <Path d="M2 7C4.5 2 8 1 10 7C12 13 15.5 13 18 7" stroke={color} strokeWidth={2} strokeLinecap="round" />
-    </Svg>
-  );
-}
-
-function Crown({ size = 52, color = C.blue }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size * 0.74} viewBox="0 0 34 25">
-      <Path d="M2 21 4.5 5 11 12 17 3 23 12 29.5 5 32 21Z" fill={color} />
-      <Rect x={2} y={19.5} width={30} height={3.6} rx={1.8} fill={color} />
-    </Svg>
-  );
-}
-
-function Sparkle({ size = 40, color = C.white }: { size?: number; color?: string }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24">
-      <Path
-        d="M12 1c1.1 7.1 4.8 10.8 11 11-6.2 1.1-9.9 4.8-11 11-1.1-6.2-4.8-9.9-11-11 6.2-.2 9.9-3.9 11-11z"
-        fill={color}
-      />
-    </Svg>
-  );
-}
-
-function Wrap({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  return <View style={[s.wrap, style]}>{children}</View>;
-}
-
-type PillVariant = 'primary' | 'outline' | 'cream' | 'whiteOutline';
-
-function Pill({
-  label,
-  onPress,
-  variant = 'primary',
-  small = false,
-  style,
-}: {
-  label: string;
-  onPress: () => void;
-  variant?: PillVariant;
-  small?: boolean;
-  style?: StyleProp<ViewStyle>;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [
-        s.pill,
-        small && s.pillSmall,
-        variant === 'primary' && s.pillPrimary,
-        variant === 'outline' && s.pillOutline,
-        variant === 'cream' && s.pillCream,
-        variant === 'whiteOutline' && s.pillWhiteOutline,
-        style,
-        pressed && { opacity: 0.85, transform: [{ scale: 0.975 }] },
-      ]}
-    >
-      <Text
-        style={[
-          s.pillText,
-          small && { fontSize: 13 },
-          variant === 'primary' && { color: C.white },
-          variant === 'outline' && { color: C.blue },
-          variant === 'cream' && { color: C.blue },
-          variant === 'whiteOutline' && { color: C.white },
-        ]}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-function Polaroid({
-  w,
-  h,
-  rot = 0,
-  z = 2,
-  style,
-  children,
-}: {
-  w: number;
-  h: number;
-  rot?: number;
-  z?: number;
-  style?: StyleProp<ViewStyle>;
-  children: ReactNode;
-}) {
-  return (
-    <View
-      style={[
-        s.polaroid,
-        { width: w, height: h, zIndex: z, transform: [{ rotate: `${rot}deg` }] },
-        style,
-      ]}
-    >
-      <View style={[s.polaroidInner, { width: w - 14, height: h - 29 }]}>{children}</View>
-    </View>
-  );
-}
-
-function Tag({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
-  return (
-    <View style={[s.tag, style]}>
-      <Text style={s.tagText}>{children}</Text>
-    </View>
-  );
-}
-
-// ------------------------------------------------------------- hero collage
-
-function HeroVisual({ compact }: { compact: boolean }) {
-  if (compact) {
-    return (
-      <View style={[s.visual, s.visualCompact]} collapsable={false}>
-        <View style={[s.blob, { top: -6, right: -40, width: 300, height: 290 }]} />
-        <View style={{ position: 'absolute', top: 4, right: 166, zIndex: 5 }}>
-          <Crown size={44} />
-        </View>
-        <Polaroid w={150} h={200} z={3} style={{ top: 24, right: 40 }}>
-          <ReelArt />
-        </Polaroid>
-        <Polaroid w={96} h={92} rot={-4} style={{ top: 18, right: 210 }}>
-          <ScoreArt size={54} />
-        </Polaroid>
-        <Polaroid w={88} h={86} rot={-2} style={{ top: 236, right: 36 }}>
-          <HookArt rows={2} />
-        </Polaroid>
-        <View style={{ position: 'absolute', top: 252, right: 150, zIndex: 3, opacity: 0.5 }}>
-          <Smiley size={40} />
-        </View>
-        <ProfileCard style={{ top: 340, right: 0 }} />
-      </View>
-    );
-  }
-
-  return (
-    <View style={[s.visual, s.visualWide]} collapsable={false}>
-      <View style={[s.blob, { top: -10, right: -60, width: 400, height: 390, transform: [{ rotate: '6deg' }] }]} />
-      <View style={{ position: 'absolute', top: -16, right: 196, zIndex: 5 }}>
-        <Crown size={52} />
-      </View>
-      <Polaroid w={186} h={248} z={3} style={{ top: 34, right: 76 }}>
-        <ReelArt />
-      </Polaroid>
-      <Polaroid w={116} h={112} rot={-4} style={{ top: 26, right: 300 }}>
-        <ScoreArt />
-      </Polaroid>
-      <Polaroid w={120} h={112} rot={2.5} style={{ top: 258, right: 306 }}>
-        <BarsArt />
-      </Polaroid>
-      <Polaroid w={104} h={100} rot={-2} style={{ top: 312, right: 64 }}>
-        <HookArt />
-      </Polaroid>
-      <View style={{ position: 'absolute', top: 170, right: 430, zIndex: 3, opacity: 0.5 }}>
-        <Smiley size={44} />
-      </View>
-      <Text style={s.annot} numberOfLines={4}>
-        {'GOOD CONTENT\nBUILDS\nAN AUDIENCE ↘'}
-      </Text>
-      <ProfileCard style={{ bottom: 0, left: 0 }} />
-    </View>
-  );
-}
-
-function ReelArt() {
-  return (
-    <LinearGradient
-      colors={['#7438E8', '#C135BD', '#F56040', '#FFBD45'] as const}
-      start={{ x: 0.1, y: 0 }}
-      end={{ x: 0.9, y: 1 }}
-      style={s.reel}
-    >
-      <View style={s.reelChip}>
-        <Text style={s.reelChipText}>REEL</Text>
-      </View>
-      <View style={s.playBtn}>
-        <PlayIcon size={18} color={C.blue} />
-      </View>
-      <View style={s.reelLines}>
-        <View style={[s.reelLine, { width: '72%' }]} />
-        <View style={[s.reelLine, { width: '46%', marginTop: 5, backgroundColor: 'rgba(255,255,255,0.55)' }]} />
-      </View>
-    </LinearGradient>
-  );
-}
-
-function ScoreArt({ size = 74 }: { size?: number }) {
-  return (
-    <View style={s.artCenter}>
-      <ScoreRing value={8.6} size={size} stroke={size > 60 ? 7 : 5.5} />
-    </View>
-  );
-}
-
-function BarsArt() {
-  const bars = [16, 30, 21, 42, 27, 36, 50];
-  return (
-    <View style={s.artPad}>
-      <Text style={s.tinyLabel}>VIEWS</Text>
-      <View style={s.bars}>
-        {bars.map((height, index) => (
-          <View
-            key={index}
-            style={[
-              s.bar,
-              { height, backgroundColor: index === bars.length - 1 ? C.blue : 'rgba(26,86,174,0.35)' },
-            ]}
-          />
-        ))}
-      </View>
-    </View>
-  );
-}
-
-function HookArt({ rows = 3 }: { rows?: number }) {
-  const widths = [80, 64, 72].slice(0, rows);
-  return (
-    <View style={s.artPad}>
-      <Text style={s.hookTitle}>HOOKS</Text>
-      {widths.map((width, index) => (
-        <View key={index} style={s.hookRow}>
-          <View style={s.hookDot} />
-          <View style={[s.hookLine, { width: `${width}%` }]} />
-        </View>
-      ))}
-      <Text style={s.hookNote}>{rows > 2 ? '3 new' : 'new'}</Text>
-    </View>
-  );
-}
-
-function ProfileCard({ style }: { style?: StyleProp<ViewStyle> }) {
-  return (
-    <View style={[s.profileCard, style]}>
-      <View style={s.pcHead}>
-        <View style={s.pcAv}>
-          <BrandMark size={18} color={C.white} />
-        </View>
-        <View style={{ flexShrink: 1 }}>
-          <Text style={s.pcName} numberOfLines={1}>
-            Your channel ✓
-          </Text>
-          <Text style={s.pcHandle} numberOfLines={1}>
-            @yourhandle
-          </Text>
-        </View>
-      </View>
-      <View style={s.pcTags}>
-        <Tag>Reels</Tag>
-        <Tag>Education</Tag>
-        <Tag>Short-form</Tag>
-      </View>
-      <View style={s.pcStats}>
-        <View>
-          <Text style={s.pcVal}>8.6</Text>
-          <Text style={s.pcLbl}>DNA score</Text>
-        </View>
-        <View>
-          <Text style={s.pcVal}>4.2%</Text>
-          <Text style={s.pcLbl}>engagement</Text>
-        </View>
-        <View>
-          <Text style={s.pcVal}>↑12%</Text>
-          <Text style={s.pcLbl}>reach</Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-// -------------------------------------------------------------------- page
-
-const FEATURES = [
+const STEPS = [
   {
-    Icon: PersonIcon,
-    title: 'Connect Instagram',
+    title: 'Connect your Instagram',
     copy: 'One secure login brings your real performance in. Your tokens stay encrypted and your posts stay yours.',
   },
   {
-    Icon: DnaIcon,
-    title: 'Your Creator DNA',
+    title: 'Get your DNA score',
     copy: 'A single score for the topics, hooks, formats and styles your audience actually responds to.',
   },
   {
-    Icon: IdeasIcon,
-    title: 'Hooks & ideas',
-    copy: 'Fresh hooks, topics and captions built from your own patterns — never generic templates.',
+    title: 'See what is working',
+    copy: 'A reel-by-reel autopsy: what landed, what dragged, and the exact fix for the next one.',
   },
   {
-    Icon: PlanIcon,
-    title: 'Plan & track',
-    copy: 'Turn ideas into a week of posts, then watch what the next one does.',
+    title: 'Post your next move',
+    copy: 'Turn ideas into a week of posts, then watch what the next one does and adjust.',
   },
-];
+] as const;
 
-const STATS = [
-  { value: '1', label: 'Instagram login' },
-  { value: '4', label: 'Content signals' },
-  { value: '24/7', label: 'AI coach' },
-];
+const FAQS = [
+  {
+    q: 'What is CreatorDNA?',
+    a: 'An AI coach for Instagram creators. It scores your account, autopsies your reels, tracks trends, and tells you exactly what to post next.',
+  },
+  {
+    q: 'Does CreatorDNA post for me?',
+    a: 'No. You stay in control — CreatorDNA tells you what to do next, and you post it yourself.',
+  },
+  {
+    q: 'Is my Instagram data safe?',
+    a: 'You connect through Instagram’s official login. We only read the performance you approve, the token stays encrypted, and you can disconnect any time.',
+  },
+  {
+    q: 'How much does it cost?',
+    a: 'CreatorDNA is free while it is in beta. No credit card, no trial timer.',
+  },
+  {
+    q: 'How do I get started?',
+    a: 'Join the waitlist with your email, connect Instagram when your account is ready, and your first DNA score appears right after the first analyses.',
+  },
+] as const;
+
+type MenuKey = 'features' | 'tools' | 'pricing' | 'resources';
+
+type MenuItem = { label: string; onClick: () => void };
+
+type Props = {
+  signedIn: boolean;
+  onEnterApp: () => void;
+  onAuth: (mode: 'login' | 'signup') => void;
+  onOpenTool: (screen: Screen) => void;
+  onOpenPrivacy: () => void;
+  onOpenHelp: () => void;
+};
+
+// Resolve a Metro asset require() to a usable URL on web (require returns a
+// string, a number id, or an asset object depending on the bundler).
+function assetUrl(mod: unknown): string {
+  if (typeof mod === 'string') {
+    return mod;
+  }
+  if (typeof mod === 'number') {
+    const resolved = Image.resolveAssetSource(mod);
+    return resolved?.uri ?? '';
+  }
+  if (mod && typeof mod === 'object' && 'uri' in mod) {
+    return String((mod as { uri: unknown }).uri);
+  }
+  return '';
+}
+
+const JUNGLE_URL = assetUrl(require('../../assets/landing-jungle.jpg'));
 
 export function LandingScreen({
   signedIn,
   onEnterApp,
+  onAuth,
+  onOpenTool,
   onOpenPrivacy,
   onOpenHelp,
-}: {
-  signedIn: boolean;
-  onEnterApp: () => void;
-  onOpenPrivacy: () => void;
-  onOpenHelp: () => void;
-}) {
-  const { width } = useWindowDimensions();
-  const twoCol = width >= 960;
-  const showLinks = width >= 780;
-  const compact = !twoCol;
-  const h1 = width >= 1240 ? 60 : twoCol ? 46 : width >= 480 ? 44 : 38;
-  const enterLabel = signedIn ? 'Open my app →' : 'Get started →';
+}: Props) {
+  const { mode, setMode } = useTheme();
+  const isDay = mode === 'light';
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  const scrollRef = useRef<ScrollView>(null);
-  const offsets = useRef<Record<string, number>>({});
-
-  // Display + hand-lettered faces are loaded once, on web only.
+  // Pointer parallax, scroll depth and section reveals for the 3D scene.
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
       return;
     }
-    if (document.getElementById('creatordna-landing-fonts')) {
+    const root = rootRef.current;
+    if (!root) {
       return;
     }
-    const link = document.createElement('link');
-    link.id = 'creatordna-landing-fonts';
-    link.rel = 'stylesheet';
-    link.href =
-      'https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Jua&display=swap';
-    document.head.appendChild(link);
+
+    // Display face for the hero type (falls back to the system stack).
+    if (!document.getElementById('creatordna-landing-fonts')) {
+      const link = document.createElement('link');
+      link.id = 'creatordna-landing-fonts';
+      link.rel = 'stylesheet';
+      link.href =
+        'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap';
+      document.head.appendChild(link);
+    }
+
+    let frame = 0;
+    const onPointer = (event: MouseEvent) => {
+      if (frame) {
+        return;
+      }
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const x = (event.clientX / window.innerWidth) * 2 - 1;
+        const y = (event.clientY / window.innerHeight) * 2 - 1;
+        root.style.setProperty('--mx', x.toFixed(3));
+        root.style.setProperty('--my', y.toFixed(3));
+      });
+    };
+
+    const onScroll = () => {
+      root.style.setProperty('--sy', String(root.scrollTop));
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('in');
+            observer.unobserve(entry.target);
+          }
+        }
+      },
+      { root, threshold: 0.18 },
+    );
+    root.querySelectorAll('.lp-reveal').forEach((node) => observer.observe(node));
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenMenu(null);
+        setMobileOpen(false);
+      }
+    };
+
+    window.addEventListener('mousemove', onPointer, { passive: true });
+    root.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('keydown', onKey);
+    onScroll();
+    return () => {
+      if (frame) {
+        cancelAnimationFrame(frame);
+      }
+      window.removeEventListener('mousemove', onPointer);
+      root.removeEventListener('scroll', onScroll);
+      window.removeEventListener('keydown', onKey);
+      observer.disconnect();
+    };
   }, []);
 
-  const track = (key: string) => (event: LayoutChangeEvent) => {
-    offsets.current[key] = event.nativeEvent.layout.y;
-  };
-  const jump = (key: string) => {
-    const y = offsets.current[key];
-    if (typeof y === 'number') {
-      scrollRef.current?.scrollTo({ y: Math.max(0, y - 4), animated: true });
+  const scrollTo = (id: string) => {
+    setOpenMenu(null);
+    setMobileOpen(false);
+    const root = rootRef.current;
+    const target = root?.querySelector<HTMLElement>(`#${id}`);
+    if (root && target) {
+      root.scrollTo({ top: target.offsetTop - 76, behavior: 'smooth' });
     }
   };
 
-  return (
-    <View style={s.root}>
-      {/* Nav sits above the scroller, so it stays pinned like the sticky bar. */}
-      <View style={s.nav}>
-        <Wrap style={s.navRow}>
-          <View style={s.navLeft}>
-            <Pressable
-              accessibilityRole="link"
-              accessibilityLabel="CreatorDNA home"
-              onPress={() => jump('top')}
-              style={({ pressed }) => [s.brand, pressed && { opacity: 0.75 }]}
-            >
-              <BrandMark size={38} />
-              <Text style={s.wordmark}>CreatorDNA</Text>
-            </Pressable>
-            {showLinks ? (
-              <View style={s.navLinks}>
-                <Pressable accessibilityRole="link" onPress={() => jump('features')}>
-                  {({ pressed }) => (
-                    <Text style={[s.navLink, pressed && { opacity: 1 }]}>Features</Text>
-                  )}
-                </Pressable>
-                <Pressable accessibilityRole="link" onPress={() => jump('creators')}>
-                  {({ pressed }) => (
-                    <Text style={[s.navLink, pressed && { opacity: 1 }]}>For creators</Text>
-                  )}
-                </Pressable>
-                <Pressable accessibilityRole="link" onPress={onOpenPrivacy}>
-                  {({ pressed }) => (
-                    <Text style={[s.navLink, pressed && { opacity: 1 }]}>Privacy</Text>
-                  )}
-                </Pressable>
-                <Pressable accessibilityRole="link" onPress={onOpenHelp}>
-                  {({ pressed }) => (
-                    <Text style={[s.navLink, pressed && { opacity: 1 }]}>Help</Text>
-                  )}
-                </Pressable>
-              </View>
-            ) : null}
-          </View>
-        </Wrap>
-      </View>
+  const activateTool = (tool: { name: string; screen: Screen }) => {
+    setOpenMenu(null);
+    setMobileOpen(false);
+    if (signedIn) {
+      onOpenTool(tool.screen);
+    } else {
+      onAuth('signup');
+    }
+  };
 
-      <ScrollView
-        ref={scrollRef}
-        style={s.scroll}
-        contentContainerStyle={s.scrollContent}
-        showsVerticalScrollIndicator={false}
+  const featureItems: MenuItem[] = [
+    { label: 'How It Works', onClick: () => scrollTo('how') },
+    { label: 'Your Instagram DNA', onClick: () => scrollTo('dna') },
+  ];
+  const toolItems: MenuItem[] = TOOLS.map((tool) => ({
+    label: tool.name,
+    onClick: () => activateTool(tool),
+  }));
+  const pricingItems: MenuItem[] = [
+    { label: 'Free during beta', onClick: () => scrollTo('pricing') },
+    { label: 'Join the waitlist', onClick: () => (signedIn ? onEnterApp() : onAuth('signup')) },
+  ];
+  const resourceItems: MenuItem[] = [
+    { label: 'Privacy Policy', onClick: () => { setOpenMenu(null); setMobileOpen(false); onOpenPrivacy(); } },
+    { label: 'Help Center', onClick: () => { setOpenMenu(null); setMobileOpen(false); onOpenHelp(); } },
+  ];
+
+  // The sun shows the current scene: day (the reference look) is the default
+  // light theme; tapping it swaps the whole page — and the persisted app
+  // theme — to the night scene.
+  const toggleTheme = () => setMode(isDay ? 'dark' : 'light');
+
+  if (Platform.OS !== 'web') {
+    return null;
+  }
+
+  const renderMenu = (key: MenuKey, items: MenuItem[], wide = false) => (
+    <div
+      className={`lp-menu-wrap ${openMenu === key ? 'open' : ''} ${wide ? 'lp-menu-wide' : ''}`}
+      onMouseEnter={() => setOpenMenu(key)}
+      onMouseLeave={() => setOpenMenu(null)}
+    >
+      <button
+        type="button"
+        className="lp-link"
+        aria-haspopup="menu"
+        aria-expanded={openMenu === key}
+        onClick={() => setOpenMenu(openMenu === key ? null : key)}
       >
-        {/* ---------------------------------------------------------- hero */}
-        <View onLayout={track('top')} style={s.hero}>
-          {/* Soft blue wash: palest under the nav, fading back to white so the
-              features section below still starts on a clean edge. */}
-          <LinearGradient
-            colors={['#E9F0FB', '#F6FAFF', '#FFFFFF']}
-            start={{ x: 0.5, y: 0 }}
-            end={{ x: 0.5, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-          <Wrap>
-            <View style={[s.heroRow, !twoCol && { flexDirection: 'column' }]}>
-              <View style={twoCol ? { flex: 1, paddingRight: 24 } : undefined}>
-                <View style={s.heroTag}>
-                  <Squiggle width={22} />
-                  <Text style={s.heroTagText}>Real posts. Real signals.</Text>
-                </View>
-                <Text style={[s.h1, { fontSize: h1, lineHeight: h1 * 0.98 }]}>
-                  {'FIND YOUR\nCREATOR DNA.'}
-                </Text>
-                <Text style={s.heroSub}>
-                  Connect Instagram, get your Creator DNA score, and see which hooks, topics and
-                  formats your audience actually responds to — then turn it into a plan you can
-                  actually post.
-                </Text>
-                <View style={s.heroBtns}>
-                  <Pill label={enterLabel} onPress={onEnterApp} />
-                  <Pill label="See how it works" variant="outline" onPress={() => jump('features')} />
-                </View>
-              </View>
-              <View style={twoCol ? { width: 500 } : { marginTop: 36 }}>
-                <HeroVisual compact={compact} />
-              </View>
-        </View>
-          </Wrap>
-        </View>
+        {key.charAt(0).toUpperCase() + key.slice(1)}
+        <svg className="lp-caret" width="10" height="7" viewBox="0 0 10 7" aria-hidden="true">
+          <path d="M1 1.5 5 5.5 9 1.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <div className="lp-menu" role="menu">
+        {items.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            role="menuitem"
+            className="lp-menu-item"
+            onClick={item.onClick}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 
-        {/* ------------------------------------------------------ features */}
-        <View onLayout={track('features')} style={s.features}>
-          <Wrap>
-            <View style={s.featGrid}>
-              {FEATURES.map(({ Icon, title, copy }) => (
-                <View
-                  key={title}
-                  style={[
-                    s.feat,
-                    {
-                      width:
-                        width >= 1040 ? '23%' : width >= 640 ? '47%' : '100%',
-                    },
-                  ]}
-                >
-                  <View style={s.featIco}>
-                    <Icon size={24} color={C.white} strokeWidth={2} />
-                  </View>
-                  <Text style={s.featTitle}>{title}</Text>
-                  <Text style={s.featCopy}>{copy}</Text>
-                </View>
-              ))}
-            </View>
-          </Wrap>
-        </View>
+  const navActions = signedIn ? (
+    <button type="button" className="lp-signup" onClick={onEnterApp}>
+      Open App
+    </button>
+  ) : (
+    <>
+      <button type="button" className="lp-login" onClick={() => onAuth('login')}>
+        Login
+      </button>
+      <button type="button" className="lp-signup" onClick={() => onAuth('signup')}>
+        Sign Up
+      </button>
+    </>
+  );
 
-        {/* ----------------------------------------------------- stats band */}
-        <View style={s.band}>
-          <Wrap style={s.bandRow}>
-            <View style={s.bandNoteWrap}>
-              <Text style={s.bandNote}>{'MORE SIGNALS.\nBETTER POSTS.'}</Text>
-              <Squiggle width={30} color="rgba(255,255,255,0.4)" />
-            </View>
-            {STATS.map((stat, index) => (
-              <View key={stat.label} style={s.statWrap}>
-                <View style={s.bandSep} />
-                <View style={s.stat}>
-                  <Text style={s.statVal}>{stat.value}</Text>
-                  <Text style={s.statLbl}>{stat.label}</Text>
-                </View>
-                {index === STATS.length - 1 && width >= 720 ? (
-                  <View style={s.bandSep} />
-                ) : null}
-              </View>
+  return (
+    <div
+      ref={rootRef}
+      className={`lp ${isDay ? 'lp--day' : 'lp--night'}`}
+      style={{ backgroundImage: JUNGLE_URL ? undefined : 'linear-gradient(#0b2416, #06140d)' }}
+    >
+      <style>{LP_CSS}</style>
+
+      {/* ------------------------------------------------------------ nav */}
+      <header className="lp-nav">
+        <div className="lp-nav-inner">
+          <button type="button" className="lp-brand" onClick={() => scrollTo('top')}>
+            <svg width="26" height="26" viewBox="0 0 48 48" aria-hidden="true">
+              <path d="M14 5c0 9 20 10 20 19S14 34 14 43" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" />
+              <path d="M34 5c0 9-20 10-20 19s20 9 20 19" fill="none" stroke="#3ee08a" strokeWidth="4" strokeLinecap="round" />
+              <path d="M17 12h14M14.5 24h19M17 36h14" fill="none" stroke="rgba(255,255,255,0.75)" strokeWidth="3" strokeLinecap="round" />
+            </svg>
+            <span>CreatorDNA</span>
+          </button>
+
+          <nav className="lp-links" aria-label="Primary">
+            {renderMenu('features', featureItems)}
+            {renderMenu('tools', toolItems, true)}
+            {renderMenu('pricing', pricingItems)}
+            {renderMenu('resources', resourceItems)}
+            <button type="button" className="lp-link" onClick={() => scrollTo('faq')}>
+              FAQ
+            </button>
+            <a className="lp-link" href="mailto:support@creatordna.app">
+              Contact
+            </a>
+          </nav>
+
+          <div className="lp-nav-right">
+            <button
+              type="button"
+              className="lp-icon-btn"
+              onClick={toggleTheme}
+              aria-label={isDay ? 'Switch to the night scene' : 'Switch to the day scene'}
+              title={isDay ? 'Night scene' : 'Day scene'}
+            >
+              {isDay ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="4.4" fill="currentColor" />
+                  <path d="M12 2.5v2.6M12 18.9v2.6M2.5 12h2.6M18.9 12h2.6M5.2 5.2l1.9 1.9M16.9 16.9l1.9 1.9M18.8 5.2l-1.9 1.9M7.1 16.9l-1.9 1.9" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 14.5A8.3 8.3 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z" fill="currentColor" />
+                </svg>
+              )}
+            </button>
+            <div className="lp-nav-actions">{navActions}</div>
+            <button
+              type="button"
+              className="lp-burger"
+              aria-label="Menu"
+              aria-expanded={mobileOpen}
+              onClick={() => setMobileOpen((open) => !open)}
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+          </div>
+        </div>
+
+        {mobileOpen ? (
+          <div className="lp-mobile" role="menu">
+            <p className="lp-mobile-label">Features</p>
+            {featureItems.map((item) => (
+              <button key={item.label} type="button" className="lp-mobile-item" onClick={item.onClick}>
+                {item.label}
+              </button>
             ))}
-            {width >= 720 ? (
-              <View style={s.bandBlob}>
-                <BrandMark size={54} />
-              </View>
-            ) : null}
-          </Wrap>
-        </View>
+            <p className="lp-mobile-label">Tools</p>
+            {toolItems.map((item) => (
+              <button key={item.label} type="button" className="lp-mobile-item" onClick={item.onClick}>
+                {item.label}
+              </button>
+            ))}
+            <p className="lp-mobile-label">Pricing</p>
+            {pricingItems.map((item) => (
+              <button key={item.label} type="button" className="lp-mobile-item" onClick={item.onClick}>
+                {item.label}
+              </button>
+            ))}
+            <p className="lp-mobile-label">Resources</p>
+            {resourceItems.map((item) => (
+              <button key={item.label} type="button" className="lp-mobile-item" onClick={item.onClick}>
+                {item.label}
+              </button>
+            ))}
+            <button type="button" className="lp-mobile-item" onClick={() => scrollTo('faq')}>
+              FAQ
+            </button>
+            <a className="lp-mobile-item" href="mailto:support@creatordna.app">
+              Contact
+            </a>
+            <div className="lp-mobile-actions">
+              {signedIn ? (
+                <button type="button" className="lp-signup" onClick={onEnterApp}>
+                  Open App
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="lp-login" onClick={() => onAuth('login')}>
+                    Login
+                  </button>
+                  <button type="button" className="lp-signup" onClick={() => onAuth('signup')}>
+                    Sign Up
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </header>
 
-        {/* --------------------------------------------------- for creators */}
-        <View onLayout={track('creators')} style={s.creators}>
-          <Wrap>
-            <View style={[s.sGrid, !twoCol && { flexDirection: 'column' }]}>
-              <View style={twoCol ? { flex: 1 } : { marginBottom: 40, alignSelf: 'stretch' }}>
-                <View style={s.doodleRow}>
-                  <Text style={s.doodleText}>{'REAL POSTS.\nREAL SIGNALS.'}</Text>
-                  <Svg width={18} height={20} viewBox="0 0 18 20" fill="none">
-                    <Path d="M4 18 9 3M12 18 17 3" stroke={C.blue} strokeWidth={2.2} strokeLinecap="round" />
-                  </Svg>
-                </View>
-                <View style={s.creatorStack}>
-                  <View style={[s.creatorCard, { zIndex: 2 }]}>
-                    <View style={s.ccHead}>
-                      <View style={s.ccAv}>
-                        <BrandMark size={22} color={C.white} />
-                      </View>
-                      <View style={{ flexShrink: 1 }}>
-                        <Text style={s.ccName} numberOfLines={1}>
-                          Your channel ✓
-                        </Text>
-                        <Text style={s.ccHandle} numberOfLines={1}>
-                          @yourhandle
-                        </Text>
-                      </View>
-                    </View>
-                    <View style={s.pcTags}>
-                      <Tag>Reels</Tag>
-                      <Tag>Education</Tag>
-                      <Tag>Short-form</Tag>
-                    </View>
-                    <View style={s.ccStats}>
-                      <View>
-                        <Text style={s.ccSv}>8.6</Text>
-                        <Text style={s.ccSl}>DNA score</Text>
-                      </View>
-                      <View>
-                        <Text style={s.ccSv}>4.2%</Text>
-                        <Text style={s.ccSl}>engagement</Text>
-                      </View>
-                      <View>
-                        <Text style={s.ccSv}>61K</Text>
-                        <Text style={s.ccSl}>reach</Text>
-                      </View>
-                    </View>
-                    <Text style={s.ccBio}>
-                      Your posts, scored. See which hooks, topics and formats land — then get the
-                      next one written for your voice.
-                    </Text>
-                    <Pill label="See your DNA →" onPress={onEnterApp} small />
-                  </View>
-                  <View style={s.creatorMini}>
-                    <Text style={s.tinyLabel}>THIS WEEK</Text>
-                    <View style={s.bars}>
-                      {[18, 26, 20, 38, 30, 46].map((height, index) => (
-                        <View
-                          key={index}
-                          style={[
-                            s.bar,
-                            { height, backgroundColor: index === 5 ? C.blue : 'rgba(26,86,174,0.35)' },
-                          ]}
-                        />
-                      ))}
-                    </View>
-                  </View>
-                </View>
-              </View>
-              <View style={twoCol ? { flex: 1, paddingLeft: 24 } : undefined}>
-                <Text style={s.sLabel}>FOR CREATORS</Text>
-                <Text style={[s.h2, { fontSize: width >= 1240 ? 46 : twoCol ? 40 : 34, lineHeight: width >= 1240 ? 48 : twoCol ? 42 : 36 }]}>
-                  {'GET BETTER AT\nEVERY POST'}
-                </Text>
-                <Text style={s.sP}>
-                  Stop guessing what to post. CreatorDNA reads the patterns already in your
-                  account, tells you what is working and why, and hands you the next hook, topic
-                  and plan to match it.
-                </Text>
-                <Pill label="Get started →" variant="outline" onPress={onEnterApp} />
-              </View>
-            </View>
-          </Wrap>
-        </View>
+      <main id="top">
+        {/* ---------------------------------------------------------- hero */}
+        <section className="lp-hero">
+          <img className="lp-hero-bg" src={JUNGLE_URL} alt="" aria-hidden="true" />
+          <div className="lp-hero-overlay" />
+          <div className="lp-rays" aria-hidden="true" />
+          <div className="lp-fly lp-fly-1" aria-hidden="true" />
+          <div className="lp-fly lp-fly-2" aria-hidden="true" />
+          <div className="lp-fly lp-fly-3" aria-hidden="true" />
 
-        {/* -------------------------------------------------------- wave */}
-        <View style={s.wave}>
-          <Svg width="100%" height={80} viewBox="0 0 1440 80" preserveAspectRatio="none">
-            <Path
-              d="M0 0 L1440 0 L1440 32 C1360 54 1240 12 1100 44 C960 72 820 18 680 50 C540 76 400 24 260 54 C180 66 90 50 0 60 Z"
-              fill={C.cream}
-            />
-          </Svg>
-        </View>
+          <div className="lp-hero-inner">
+            <div className="lp-hero-copy">
+              <span className="lp-badge lp-reveal">
+                <span className="lp-badge-dot" />
+                Instagram · Creator Intelligence Platform
+              </span>
+              <h1 className="lp-h1 lp-reveal">
+                Creator<span>DNA</span>
+              </h1>
+              <p className="lp-sub lp-reveal">Decode. Optimize. Grow.</p>
+              <p className="lp-lead lp-reveal">
+                Your AI creator coach reads your Instagram like data — DNA scores, reel autopsies,
+                trend radar and a next-move plan that tells you exactly what to post next.
+              </p>
+              <div className="lp-ctas lp-reveal">
+                <button
+                  type="button"
+                  className="lp-btn-primary"
+                  onClick={() => (signedIn ? onEnterApp() : onAuth('signup'))}
+                >
+                  Join Waitlist
+                  <span aria-hidden="true">→</span>
+                </button>
+                <button type="button" className="lp-btn-ghost" onClick={() => scrollTo('how')}>
+                  <svg width="13" height="14" viewBox="0 0 13 14" aria-hidden="true">
+                    <path d="M1.5 1.6v10.8L11.5 7Z" fill="currentColor" />
+                  </svg>
+                  Watch Demo
+                </button>
+              </div>
+            </div>
 
-        {/* -------------------------------------------------------- cta */}
-        <View style={s.cta}>
-          <Wrap>
-            <View style={[s.ctaRow, !twoCol && { flexDirection: 'column', alignItems: 'flex-start' }]}>
-              <Sparkle size={44} />
-              <Text style={[s.ctaH2, { fontSize: width >= 1240 ? 52 : twoCol ? 44 : 34, lineHeight: width >= 1240 ? 56 : twoCol ? 48 : 38 }]}>
-                {'READY TO FIND YOUR\nCREATOR DNA?'}
-              </Text>
-              <View style={s.ctaRight}>
-                <Text style={s.ctaSub}>
-                  Your first score takes one Instagram login — no card, no setup call.
-                </Text>
-                <View style={s.heroBtns}>
-                  <Pill label={enterLabel} variant="cream" onPress={onEnterApp} />
-                  <Pill
-                    label="See how it works"
-                    variant="whiteOutline"
-                    onPress={() => jump('features')}
+            <div className="lp-card-scene lp-reveal">
+              <div className="lp-card">
+                <h2 className="lp-card-title">Grow Your Instagram 10x Faster</h2>
+                <div className="lp-chips">
+                  {TOOLS.map((tool, index) => (
+                    <button
+                      key={tool.name}
+                      type="button"
+                      className="lp-chip"
+                      style={{ ['--chip-hue' as string]: String((index * 47) % 360) }}
+                      onClick={() => activateTool(tool)}
+                    >
+                      <span className="lp-chip-ico" aria-hidden="true" />
+                      {tool.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* --------------------------------------------------- how it works */}
+        <section className="lp-section" id="how">
+          <div className="lp-section-inner">
+            <h2 className="lp-section-title lp-reveal">How It Works</h2>
+            <div className="lp-steps">
+              {STEPS.map((step, index) => (
+                <article key={step.title} className="lp-step lp-reveal">
+                  <span className="lp-step-num">{index + 1}</span>
+                  <h3>{step.title}</h3>
+                  <p>{step.copy}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ------------------------------------------------------- DNA panel */}
+        <section className="lp-section lp-section-dna" id="dna">
+          <div className="lp-section-inner">
+            <div className="lp-dna lp-reveal">
+              <div className="lp-dna-left">
+                <div className="lp-ring">
+                  <svg viewBox="0 0 140 140" aria-hidden="true">
+                    <circle cx="70" cy="70" r="60" className="lp-ring-track" />
+                    <circle cx="70" cy="70" r="60" className="lp-ring-arc" />
+                  </svg>
+                  <div className="lp-ring-center">
+                    <strong>95%</strong>
+                    <span>Growth Potential</span>
+                  </div>
+                </div>
+              </div>
+              <div className="lp-dna-right">
+                <h2 className="lp-dna-title">Your Instagram DNA</h2>
+                <div className="lp-bars">
+                  {DNA_BARS.map((bar) => (
+                    <div key={bar.label} className="lp-bar">
+                      <div className="lp-bar-top">
+                        <span>{bar.label}</span>
+                        <strong>{bar.value}%</strong>
+                      </div>
+                      <div className="lp-bar-track">
+                        <div className="lp-bar-fill" style={{ ['--w' as string]: `${bar.value}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <svg className="lp-spark" viewBox="0 0 320 72" preserveAspectRatio="none" aria-hidden="true">
+                  <path
+                    className="lp-spark-area"
+                    d="M0,58 L0,52 40,46 80,50 120,36 160,40 200,28 240,32 280,18 320,12 L320,72 L0,72 Z"
                   />
-                </View>
-              </View>
-              <Smiley size={48} color="rgba(255,255,255,0.85)" />
-            </View>
-          </Wrap>
-        </View>
+                  <path
+                    className="lp-spark-line"
+                    d="M0,52 40,46 80,50 120,36 160,40 200,28 240,32 280,18 320,12"
+                  />
+                </svg>
+              </div>
+            </div>
+          </div>
+        </section>
 
-        {/* ----------------------------------------------------- footer */}
-        <View style={s.footer}>
-          <Wrap style={s.footRow}>
-            <View style={s.footBrand}>
-              <BrandMark size={30} />
-              <Text style={[s.wordmark, { fontSize: 16 }]}>CreatorDNA</Text>
-            </View>
-            <View style={s.footLinks}>
-              <Pressable accessibilityRole="link" onPress={() => jump('features')}>
-                <Text style={s.footLink}>Features</Text>
-              </Pressable>
-              {/* A real anchor (web) so the policy is linkable/crawlable, but
-                  the click stays in the SPA: preventDefault stops the browser
-                  from doing a full page load after onPress has routed us. */}
-              <Text
-                accessibilityRole="link"
-                {...(Platform.OS === 'web' ? { href: '/privacy-policy' } : null)}
-                onPress={(event) => {
-                  event.preventDefault?.();
-                  onOpenPrivacy();
-                }}
-                style={s.footLink}
-              >
-                Privacy Policy
-              </Text>
-              <Pressable accessibilityRole="link" onPress={onOpenHelp}>
-                <Text style={s.footLink}>Help</Text>
-              </Pressable>
-            </View>
-            <Text style={s.footCopy}>© 2026 CreatorDNA · Built for creators.</Text>
-          </Wrap>
-        </View>
-      </ScrollView>
-    </View>
+        {/* -------------------------------------------------------- pricing */}
+        <section className="lp-section" id="pricing">
+          <div className="lp-section-inner lp-price">
+            <h2 className="lp-section-title lp-reveal">Free during beta</h2>
+            <p className="lp-section-sub lp-reveal">
+              Every tool in the stack, no credit card, no trial timer. Join the waitlist and your
+              account is ready the moment your slot opens.
+            </p>
+            <ul className="lp-price-list lp-reveal">
+              <li>Full Instagram DNA scoring</li>
+              <li>Reels autopsy &amp; next-move plans</li>
+              <li>Trend radar and idea studio</li>
+              <li>Cancel any time — you own your data</li>
+            </ul>
+            <button
+              type="button"
+              className="lp-btn-primary lp-reveal"
+              onClick={() => (signedIn ? onEnterApp() : onAuth('signup'))}
+            >
+              Join Waitlist
+              <span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </section>
+
+        {/* ------------------------------------------------------------ FAQ */}
+        <section className="lp-section" id="faq">
+          <div className="lp-section-inner lp-narrow">
+            <h2 className="lp-section-title lp-reveal">FAQ</h2>
+            <div className="lp-faq">
+              {FAQS.map((item) => (
+                <details key={item.q} className="lp-faq-item lp-reveal">
+                  <summary>{item.q}</summary>
+                  <p>{item.a}</p>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* -------------------------------------------------------- contact */}
+        <section className="lp-section lp-contact" id="contact">
+          <div className="lp-section-inner lp-narrow lp-reveal">
+            <h2 className="lp-section-title">Talk to a human</h2>
+            <p className="lp-section-sub">
+              Questions about your account, the beta, or your data — we answer every message.
+            </p>
+            <a className="lp-btn-primary lp-btn-as-link" href="mailto:support@creatordna.app">
+              support@creatordna.app
+            </a>
+          </div>
+        </section>
+      </main>
+
+      <footer className="lp-footer">
+        <div className="lp-footer-inner">
+          <span className="lp-footer-brand">CreatorDNA</span>
+          <div className="lp-footer-links">
+            <button type="button" onClick={onOpenPrivacy}>
+              Privacy Policy
+            </button>
+            <button type="button" onClick={onOpenHelp}>
+              Help Center
+            </button>
+            <button type="button" onClick={() => scrollTo('faq')}>
+              FAQ
+            </button>
+            <a href="mailto:support@creatordna.app">Contact</a>
+          </div>
+          <span className="lp-footer-copy">© 2026 CreatorDNA · Built for creators.</span>
+        </div>
+      </footer>
+    </div>
   );
 }
 
-const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: LANDING_BG },
-  scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 8 },
-  wrap: {
-    width: '100%',
-    maxWidth: 1160,
-    alignSelf: 'center',
-    paddingHorizontal: 28,
-  },
+const LP_CSS = `
+.lp, .lp * { box-sizing: border-box; }
+.lp {
+  --mx: 0; --my: 0; --sy: 0;
+  --green: #3ee08a;
+  --green-deep: #17b866;
+  --ink: #ffffff;
+  --muted: rgba(255,255,255,0.68);
+  --panel: rgba(255,255,255,0.07);
+  --panel-border: rgba(255,255,255,0.14);
+  --chip: rgba(255,255,255,0.10);
+  --chip-border: rgba(255,255,255,0.18);
+  --section-bg: #06140d;
+  --nav-bg: rgba(6,20,13,0.62);
+  position: absolute; inset: 0;
+  overflow-y: auto; overflow-x: hidden;
+  background-color: var(--section-bg);
+  color: var(--ink);
+  font-family: Inter, 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+}
+.lp--night {
+  --panel: rgba(255,255,255,0.05);
+  --chip: rgba(255,255,255,0.07);
+  --section-bg: #04100a;
+  --nav-bg: rgba(4,14,9,0.72);
+}
+.lp::-webkit-scrollbar { width: 10px; }
+.lp::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }
+.lp button { font-family: inherit; }
 
-  // ---- nav
-  nav: {
-    backgroundColor: C.cream,
-    paddingBottom: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: C.line,
-  },
-  navRow: { flexDirection: 'row', alignItems: 'center', minHeight: 66 },
-  navLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingRight: 6 },
-  navLinks: { flexDirection: 'row', alignItems: 'center', gap: 24, marginLeft: 18 },
-  navLink: {
-    fontFamily: BODY,
-    fontSize: 14.5,
-    color: C.fg,
-    opacity: 0.6,
-    paddingHorizontal: 2,
-    paddingVertical: 6,
-  },
-  wordmark: { fontFamily: DISPLAY, fontSize: 21, color: C.blue, letterSpacing: 0.2 },
+/* ------------------------------------------------------------- nav */
+.lp-nav {
+  position: sticky; top: 0; z-index: 40;
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  background: var(--nav-bg);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.lp-nav-inner {
+  max-width: 1240px; margin: 0 auto; padding: 0 26px;
+  height: 68px; display: flex; align-items: center; gap: 26px;
+}
+.lp-brand {
+  display: flex; align-items: center; gap: 9px;
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: #fff; font-size: 19px; font-weight: 800; letter-spacing: -0.2px;
+}
+.lp-links { display: flex; align-items: center; gap: 4px; flex: 1; }
+.lp-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: 0; cursor: pointer;
+  color: rgba(255,255,255,0.82); font-size: 14.5px; font-weight: 500;
+  padding: 9px 13px; border-radius: 10px; text-decoration: none;
+  transition: color .18s, background .18s;
+}
+.lp-link:hover, .lp-menu-wrap.open > .lp-link { color: #fff; background: rgba(255,255,255,0.09); }
+.lp-caret { opacity: 0.7; transition: transform .18s; }
+.lp-menu-wrap { position: relative; }
+.lp-menu-wrap.open .lp-caret { transform: rotate(180deg); }
+.lp-menu {
+  position: absolute; top: calc(100% + 8px); left: 0; min-width: 216px;
+  background: rgba(8,24,15,0.96); border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 14px; padding: 7px; display: none;
+  box-shadow: 0 22px 50px rgba(0,0,0,0.45);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+}
+.lp-menu-wrap.open .lp-menu { display: block; animation: lp-pop .16s ease; }
+.lp-menu-wide .lp-menu { min-width: 252px; }
+@keyframes lp-pop { from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: none; } }
+.lp-menu-item {
+  display: block; width: 100%; text-align: left;
+  background: none; border: 0; cursor: pointer;
+  color: rgba(255,255,255,0.85); font-size: 14px; font-weight: 500;
+  padding: 9px 11px; border-radius: 9px;
+}
+.lp-menu-item:hover { background: rgba(62,224,138,0.16); color: #fff; }
+.lp-nav-right { display: flex; align-items: center; gap: 12px; }
+.lp-nav-actions { display: flex; align-items: center; gap: 10px; }
+.lp-icon-btn {
+  width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer;
+  background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.16);
+  color: #ffe9a8; transition: transform .2s, background .2s;
+}
+.lp-icon-btn:hover { background: rgba(255,255,255,0.18); transform: rotate(18deg); }
+.lp-login {
+  background: none; border: 0; cursor: pointer; white-space: nowrap;
+  color: #fff; font-size: 14.5px; font-weight: 600; padding: 10px 12px; border-radius: 10px;
+}
+.lp-login:hover { background: rgba(255,255,255,0.09); }
+.lp-signup {
+  background: linear-gradient(135deg, var(--green), var(--green-deep));
+  border: 0; cursor: pointer; color: #04150c; white-space: nowrap;
+  font-size: 14.5px; font-weight: 700; padding: 11px 22px; border-radius: 999px;
+  box-shadow: 0 8px 22px rgba(62,224,138,0.30);
+  transition: transform .2s, box-shadow .2s;
+}
+.lp-signup:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(62,224,138,0.4); }
+.lp-burger { display: none; }
 
-  // ---- pills
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 100,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    alignSelf: 'flex-start',
-  },
-  pillSmall: { paddingVertical: 9, paddingHorizontal: 19 },
-  pillPrimary: { backgroundColor: C.blue },
-  pillOutline: { borderWidth: 2, borderColor: C.blue, paddingVertical: 10, paddingHorizontal: 23 },
-  pillCream: { backgroundColor: C.cream },
-  pillWhiteOutline: {
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.85)',
-    paddingVertical: 10,
-    paddingHorizontal: 23,
-  },
-  pillText: { fontFamily: BODY, fontSize: 14.5, fontWeight: '700', letterSpacing: 0.2 },
+/* ------------------------------------------------------ mobile nav */
+.lp-mobile {
+  display: none; flex-direction: column; gap: 2px; padding: 12px 22px 20px;
+  background: rgba(6,20,13,0.97); border-bottom: 1px solid rgba(255,255,255,0.1);
+  max-height: calc(100vh - 68px); overflow-y: auto;
+}
+.lp-mobile-label {
+  margin: 12px 0 4px; font-size: 11.5px; font-weight: 700; letter-spacing: 1.3px;
+  text-transform: uppercase; color: var(--green);
+}
+.lp-mobile-item {
+  background: none; border: 0; cursor: pointer; text-align: left;
+  color: rgba(255,255,255,0.88); font-size: 15px; font-weight: 500;
+  padding: 11px 6px; text-decoration: none; border-radius: 9px;
+}
+.lp-mobile-item:hover { background: rgba(255,255,255,0.08); }
+.lp-mobile-actions { display: flex; gap: 12px; margin-top: 16px; }
 
-  // ---- hero
-  hero: { paddingTop: 44, paddingBottom: 64 },
-  heroRow: { flexDirection: 'row', alignItems: 'center', gap: 32 },
-  heroTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    transform: [{ rotate: '-1.5deg' }],
-    opacity: 0.85,
-    marginBottom: 14,
-  },
-  heroTagText: { fontFamily: HAND, fontSize: 22, fontWeight: '700', color: C.blue },
-  h1: { fontFamily: DISPLAY, color: C.blue, marginBottom: 20, letterSpacing: -0.5 },
-  heroSub: {
-    fontFamily: BODY,
-    fontSize: 16,
-    color: C.muted,
-    lineHeight: 27,
-    maxWidth: 420,
-    marginBottom: 30,
-  },
-  heroBtns: { flexDirection: 'row', flexWrap: 'wrap', gap: 11, alignItems: 'center' },
+/* ------------------------------------------------------------- hero */
+.lp-hero {
+  position: relative; min-height: calc(100vh - 68px);
+  display: flex; align-items: center; overflow: hidden;
+  perspective: 1400px;
+}
+.lp-hero-bg {
+  position: absolute; inset: -8% -6%; width: 112%; height: 116%;
+  object-fit: cover; object-position: center;
+  transform: translate3d(
+    calc(var(--mx) * -16px),
+    calc(var(--my) * -12px + var(--sy) * 0.14px),
+    0) scale(1.06);
+  will-change: transform;
+}
+.lp--night .lp-hero-bg { filter: brightness(0.62) saturate(0.9); }
+.lp-hero-overlay {
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(180deg, rgba(4,16,10,0.55) 0%, rgba(4,16,10,0.30) 42%, rgba(4,16,10,0.88) 100%),
+    radial-gradient(90% 70% at 78% 12%, rgba(180,255,214,0.18), transparent 60%);
+}
+.lp--night .lp-hero-overlay {
+  background:
+    linear-gradient(180deg, rgba(2,10,6,0.74) 0%, rgba(2,10,6,0.55) 42%, rgba(2,10,6,0.94) 100%),
+    radial-gradient(90% 70% at 78% 12%, rgba(120,230,175,0.10), transparent 60%);
+}
+.lp-rays {
+  position: absolute; top: -34%; right: -12%; width: 70%; height: 130%;
+  background:
+    linear-gradient(102deg, transparent 44%, rgba(220,255,235,0.16) 47%, transparent 52%),
+    linear-gradient(96deg, transparent 56%, rgba(220,255,235,0.12) 60%, transparent 65%),
+    linear-gradient(108deg, transparent 66%, rgba(220,255,235,0.10) 70%, transparent 76%);
+  transform: translate3d(calc(var(--mx) * 22px), calc(var(--my) * 10px), 0);
+  animation: lp-sway 11s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes lp-sway { from { opacity: 0.75; } to { opacity: 1; } }
+.lp-fly {
+  position: absolute; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, rgba(170,255,210,0.95), rgba(62,224,138,0) 70%);
+  filter: blur(1px);
+  animation: lp-float 7s ease-in-out infinite alternate;
+}
+.lp-fly-1 { width: 9px; height: 9px; top: 24%; left: 56%; animation-duration: 6s; }
+.lp-fly-2 { width: 6px; height: 6px; top: 62%; left: 71%; animation-duration: 8.5s; animation-delay: 1.4s; }
+.lp-fly-3 { width: 7px; height: 7px; top: 38%; left: 88%; animation-duration: 7.4s; animation-delay: 0.7s; }
+@keyframes lp-float {
+  from { transform: translate3d(0, 0, 0); opacity: 0.55; }
+  to { transform: translate3d(16px, -26px, 0); opacity: 1; }
+}
+.lp-hero-inner {
+  position: relative; z-index: 2; width: 100%; max-width: 1240px;
+  margin: 0 auto; padding: 84px 26px 96px;
+  display: grid; grid-template-columns: 1.04fr 0.96fr; gap: 54px; align-items: center;
+  transform-style: preserve-3d;
+}
+.lp-hero-copy {
+  transform: translate3d(calc(var(--mx) * 7px), calc(var(--my) * 5px), 24px);
+}
+.lp-badge {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 9px 17px; border-radius: 999px;
+  background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.22);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  font-size: 13px; font-weight: 600; letter-spacing: 0.2px; color: rgba(255,255,255,0.92);
+}
+.lp-badge-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green); box-shadow: 0 0 10px var(--green);
+}
+.lp-h1 {
+  margin: 24px 0 0; font-size: clamp(46px, 7vw, 86px);
+  font-weight: 800; letter-spacing: -2.4px; line-height: 1.02; color: #fff;
+}
+.lp-h1 span { color: var(--green); }
+.lp-sub {
+  margin: 16px 0 0; font-size: clamp(21px, 2.4vw, 30px);
+  font-weight: 700; letter-spacing: -0.4px; color: #fff;
+}
+.lp-lead {
+  margin: 18px 0 0; max-width: 540px;
+  font-size: 16.5px; line-height: 1.65; color: var(--muted);
+}
+.lp-ctas { display: flex; gap: 15px; margin-top: 32px; flex-wrap: wrap; }
+.lp-btn-primary {
+  display: inline-flex; align-items: center; gap: 9px;
+  background: linear-gradient(135deg, var(--green), var(--green-deep));
+  border: 0; cursor: pointer; color: #04150c;
+  font-size: 15.5px; font-weight: 700; padding: 16px 30px; border-radius: 999px;
+  box-shadow: 0 14px 34px rgba(62,224,138,0.34);
+  text-decoration: none;
+  transition: transform .2s, box-shadow .2s;
+}
+.lp-btn-primary:hover { transform: translateY(-3px); box-shadow: 0 18px 40px rgba(62,224,138,0.44); }
+.lp-btn-ghost {
+  display: inline-flex; align-items: center; gap: 10px;
+  background: rgba(255,255,255,0.10); cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.28); color: #fff;
+  font-size: 15.5px; font-weight: 600; padding: 16px 26px; border-radius: 999px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  transition: background .2s, transform .2s;
+}
+.lp-btn-ghost:hover { background: rgba(255,255,255,0.18); transform: translateY(-3px); }
 
-  // ---- hero collage
-  visual: { position: 'relative' },
-  visualWide: { width: 500, height: 520, alignSelf: 'center' },
-  visualCompact: { width: '100%', height: 460 },
-  blob: {
-    position: 'absolute',
-    zIndex: 0,
-    backgroundColor: C.blue,
-    borderTopLeftRadius: 190,
-    borderTopRightRadius: 70,
-    borderBottomRightRadius: 210,
-    borderBottomLeftRadius: 95,
-  },
-  polaroid: {
-    position: 'absolute',
-    backgroundColor: C.white,
-    paddingTop: 7,
-    paddingLeft: 7,
-    paddingRight: 7,
-    paddingBottom: 22,
-    borderRadius: 3,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.24,
-    shadowRadius: 11,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 6,
-  },
-  polaroidInner: { borderRadius: 1, overflow: 'hidden', backgroundColor: C.white },
-  artCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: C.white },
-  artPad: { flex: 1, backgroundColor: C.white, paddingTop: 7, paddingHorizontal: 8, paddingBottom: 5 },
-  tinyLabel: {
-    fontFamily: BODY,
-    fontSize: 8.5,
-    fontWeight: '800',
-    letterSpacing: 1,
-    color: C.muted,
-  },
-  bars: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    paddingTop: 6,
-  },
-  bar: { width: 8, borderRadius: 2 },
-  hookTitle: { fontFamily: DISPLAY, fontSize: 12, color: C.blue, marginBottom: 5 },
-  hookRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 5 },
-  hookDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: C.blue },
-  hookLine: { height: 5, borderRadius: 3, backgroundColor: 'rgba(26,86,174,0.22)' },
-  hookNote: { fontFamily: HAND, fontSize: 13, fontWeight: '700', color: C.blue, marginTop: 1 },
-  reel: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  reelChip: {
-    position: 'absolute',
-    top: 7,
-    left: 7,
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    borderRadius: 100,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  reelChipText: { fontFamily: BODY, fontSize: 8, fontWeight: '800', letterSpacing: 0.8, color: C.blue },
-  playBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingLeft: 3,
-  },
-  reelLines: { position: 'absolute', left: 9, right: 9, bottom: 9 },
-  reelLine: { height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.85)' },
-  annot: {
-    position: 'absolute',
-    top: 430,
-    right: 8,
-    width: 150,
-    zIndex: 5,
-    fontFamily: HAND,
-    fontSize: 17,
-    fontWeight: '700',
-    lineHeight: 23,
-    color: 'rgba(255,255,255,0.92)',
-    textAlign: 'right',
-    transform: [{ rotate: '5deg' }],
-  },
+/* hero tool card */
+.lp-card-scene {
+  transform-style: preserve-3d;
+  transform: rotateY(calc(var(--mx) * 7deg)) rotateX(calc(var(--my) * -5deg));
+  transition: transform .12s ease-out;
+}
+.lp-card {
+  background: linear-gradient(160deg, rgba(255,255,255,0.14), rgba(255,255,255,0.05));
+  border: 1px solid rgba(255,255,255,0.20); border-radius: 26px;
+  padding: 30px; backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+  box-shadow: 0 40px 90px rgba(0,0,0,0.45);
+  transform: translateZ(46px);
+  animation: lp-bob 7s ease-in-out infinite alternate;
+}
+@keyframes lp-bob { from { margin-top: 0; } to { margin-top: -14px; } }
+.lp-card-title {
+  margin: 0 0 20px; font-size: clamp(20px, 2vw, 25px);
+  font-weight: 800; letter-spacing: -0.5px; color: #fff;
+}
+.lp-chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.lp-chip {
+  display: inline-flex; align-items: center; gap: 9px;
+  background: var(--chip); border: 1px solid var(--chip-border);
+  color: rgba(255,255,255,0.9); border-radius: 999px;
+  padding: 10px 16px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  transform: translateZ(18px);
+  transition: transform .22s, background .22s, border-color .22s;
+}
+.lp-chip:hover {
+  background: rgba(62,224,138,0.18); border-color: rgba(62,224,138,0.55);
+  color: #fff; transform: translateZ(46px) translateY(-2px);
+}
+.lp-chip-ico {
+  width: 9px; height: 9px; border-radius: 3px; flex: none;
+  background: hsl(var(--chip-hue, 150), 72%, 58%);
+  box-shadow: 0 0 8px hsl(var(--chip-hue, 150), 72%, 58%, 0.7);
+}
 
-  // ---- profile / creator cards
-  profileCard: {
-    position: 'absolute',
-    zIndex: 6,
-    backgroundColor: C.white,
-    borderRadius: 16,
-    padding: 13,
-    width: 216,
-    borderWidth: 1,
-    borderColor: C.line,
-    ...CARD_SHADOW,
-  },
-  pcHead: { flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 8 },
-  pcAv: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: C.blue,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pcName: { fontFamily: BODY, fontSize: 13, fontWeight: '700', color: C.fg },
-  pcHandle: { fontFamily: BODY, fontSize: 11, color: C.muted },
-  tag: {
-    backgroundColor: C.pale,
-    borderRadius: 100,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-  },
-  tagText: { fontFamily: BODY, fontSize: 11, fontWeight: '700', color: C.blue },
-  pcTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 9 },
-  pcStats: { flexDirection: 'row', gap: 12 },
-  pcVal: { fontFamily: DISPLAY, fontSize: 15, color: C.fg },
-  pcLbl: { fontFamily: BODY, fontSize: 9.5, color: C.muted },
+/* --------------------------------------------------------- sections */
+.lp-section { position: relative; padding: 96px 26px; background: var(--section-bg); }
+.lp-section-inner { max-width: 1240px; margin: 0 auto; }
+.lp-narrow { max-width: 820px; }
+.lp-section-title {
+  margin: 0 0 44px; text-align: center;
+  font-size: clamp(30px, 3.6vw, 46px); font-weight: 800;
+  letter-spacing: -1.2px; color: #fff;
+}
+.lp-section-sub {
+  margin: -26px auto 34px; max-width: 640px; text-align: center;
+  font-size: 16.5px; line-height: 1.65; color: var(--muted);
+}
+.lp-steps {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px;
+  perspective: 1100px;
+}
+.lp-step {
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 22px; padding: 30px 26px;
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  transform-style: preserve-3d;
+  transition: transform .3s ease, border-color .3s ease, background .3s ease;
+}
+.lp-step:hover {
+  transform: translateZ(34px) translateY(-6px);
+  border-color: rgba(62,224,138,0.5); background: rgba(62,224,138,0.08);
+}
+.lp-step-num {
+  display: grid; place-items: center; width: 46px; height: 46px;
+  border-radius: 50%; margin-bottom: 18px;
+  background: linear-gradient(135deg, var(--green), var(--green-deep));
+  color: #04150c; font-size: 18px; font-weight: 800;
+  box-shadow: 0 10px 26px rgba(62,224,138,0.32);
+}
+.lp-step h3 { margin: 0 0 10px; font-size: 18px; font-weight: 700; letter-spacing: -0.3px; color: #fff; }
+.lp-step p { margin: 0; font-size: 14.5px; line-height: 1.6; color: var(--muted); }
 
-  // ---- features
-  features: { paddingTop: 64, paddingBottom: 64, borderTopWidth: 1, borderTopColor: C.line },
-  featGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 36 },
-  feat: {
-    alignItems: 'center',
-    backgroundColor: C.white,
-    borderWidth: 1,
-    borderColor: C.line,
-    borderRadius: 18,
-    paddingHorizontal: 18,
-    paddingVertical: 24,
-    ...CARD_SHADOW,
-  },
-  featIco: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: C.blue,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-  },
-  featTitle: {
-    fontFamily: DISPLAY,
-    fontSize: 16,
-    color: C.fg,
-    marginBottom: 7,
-    textAlign: 'center',
-  },
-  featCopy: {
-    fontFamily: BODY,
-    fontSize: 13.5,
-    color: C.muted,
-    lineHeight: 21,
-    textAlign: 'center',
-    maxWidth: 210,
-  },
+/* DNA panel */
+.lp-section-dna { padding-top: 40px; }
+.lp-dna {
+  display: grid; grid-template-columns: 300px 1fr; gap: 46px; align-items: center;
+  background: linear-gradient(150deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04));
+  border: 1px solid rgba(255,255,255,0.16); border-radius: 30px;
+  padding: 46px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 40px 90px rgba(0,0,0,0.4);
+  transform: rotateY(calc(var(--mx) * 2.2deg)) rotateX(calc(var(--my) * -1.6deg));
+  transition: transform .12s ease-out;
+}
+.lp-ring { position: relative; width: 240px; max-width: 100%; margin: 0 auto; aspect-ratio: 1; }
+.lp-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.lp-ring-track { fill: none; stroke: rgba(255,255,255,0.12); stroke-width: 13; }
+.lp-ring-arc {
+  fill: none; stroke: var(--green); stroke-width: 13; stroke-linecap: round;
+  stroke-dasharray: 377; stroke-dashoffset: 377;
+  filter: drop-shadow(0 0 8px rgba(62,224,138,0.6));
+  transition: stroke-dashoffset 1.5s cubic-bezier(.2,.7,.3,1) .2s;
+}
+.lp-dna.in .lp-ring-arc { stroke-dashoffset: 19; }
+.lp-ring-center {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center; gap: 4px;
+}
+.lp-ring-center strong { font-size: 44px; font-weight: 800; letter-spacing: -1.6px; color: #fff; }
+.lp-ring-center span { font-size: 13px; font-weight: 600; color: var(--muted); max-width: 120px; }
+.lp-dna-title { margin: 0 0 22px; font-size: clamp(24px, 2.6vw, 34px); font-weight: 800; letter-spacing: -0.9px; color: #fff; }
+.lp-bars { display: grid; gap: 16px; }
+.lp-bar-top { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14.5px; }
+.lp-bar-top span { color: rgba(255,255,255,0.82); font-weight: 500; }
+.lp-bar-top strong { color: var(--green); font-weight: 700; }
+.lp-bar-track { height: 10px; border-radius: 999px; background: rgba(255,255,255,0.12); overflow: hidden; }
+.lp-bar-fill {
+  height: 100%; width: 0; border-radius: 999px;
+  background: linear-gradient(90deg, var(--green-deep), var(--green));
+  box-shadow: 0 0 12px rgba(62,224,138,0.5);
+  transition: width 1.3s cubic-bezier(.2,.7,.3,1) .25s;
+}
+.lp-dna.in .lp-bar-fill { width: var(--w); }
+.lp-spark { width: 100%; height: 76px; margin-top: 26px; overflow: visible; }
+.lp-spark-area { fill: rgba(62,224,138,0.16); opacity: 0; transition: opacity 1s ease .8s; }
+.lp-spark-line {
+  fill: none; stroke: var(--green); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 640; stroke-dashoffset: 640;
+  filter: drop-shadow(0 0 6px rgba(62,224,138,0.55));
+  transition: stroke-dashoffset 1.7s ease .5s;
+}
+.lp-dna.in .lp-spark-line { stroke-dashoffset: 0; }
+.lp-dna.in .lp-spark-area { opacity: 1; }
 
-  // ---- stats band
-  band: { backgroundColor: C.blue, paddingVertical: 46 },
-  bandRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', rowGap: 22 },
-  bandNoteWrap: { paddingRight: 24, gap: 4 },
-  bandNote: {
-    fontFamily: HAND,
-    fontSize: 21,
-    fontWeight: '700',
-    color: 'rgba(255,255,255,0.6)',
-    lineHeight: 27,
-  },
-  statWrap: { flexDirection: 'row', alignItems: 'center' },
-  bandSep: { width: 1, height: 60, backgroundColor: 'rgba(255,255,255,0.2)', marginHorizontal: 14 },
-  stat: { alignItems: 'center', paddingHorizontal: 18 },
-  statVal: { fontFamily: DISPLAY, fontSize: 42, color: C.white, lineHeight: 46 },
-  statLbl: {
-    fontFamily: BODY,
-    fontSize: 11,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    color: 'rgba(255,255,255,0.55)',
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  bandBlob: {
-    marginLeft: 'auto',
-    width: 150,
-    height: 130,
-    backgroundColor: C.pale,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderTopLeftRadius: 70,
-    borderTopRightRadius: 30,
-    borderBottomRightRadius: 74,
-    borderBottomLeftRadius: 34,
-  },
+/* pricing */
+.lp-price { text-align: center; }
+.lp-price-list {
+  list-style: none; margin: 0 auto 36px; padding: 0;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 340px));
+  gap: 14px 30px; justify-content: center; text-align: left;
+}
+.lp-price-list li {
+  position: relative; padding-left: 32px;
+  font-size: 15.5px; color: rgba(255,255,255,0.86);
+}
+.lp-price-list li::before {
+  content: ''; position: absolute; left: 0; top: 3px;
+  width: 19px; height: 19px; border-radius: 50%;
+  background: rgba(62,224,138,0.18) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.4 4.8 9 10 3.4' fill='none' stroke='%233ee08a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/11px no-repeat;
+}
 
-  // ---- for creators
-  creators: { paddingTop: 84, paddingBottom: 88 },
-  sGrid: { flexDirection: 'row', alignItems: 'center', gap: 56 },
-  doodleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 14 },
-  doodleText: {
-    fontFamily: HAND,
-    fontSize: 21,
-    fontWeight: '700',
-    lineHeight: 26,
-    color: C.blue,
-  },
-  creatorStack: { position: 'relative' },
-  creatorCard: {
-    backgroundColor: C.white,
-    borderRadius: 17,
-    padding: 16,
-    maxWidth: 380,
-    borderWidth: 1,
-    borderColor: C.line,
-    ...CARD_SHADOW,
-  },
-  ccHead: { flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 11 },
-  ccAv: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: C.blue,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  ccName: { fontFamily: BODY, fontSize: 14, fontWeight: '700', color: C.fg },
-  ccHandle: { fontFamily: BODY, fontSize: 11.5, color: C.muted },
-  ccStats: { flexDirection: 'row', gap: 18, marginBottom: 10 },
-  ccSv: { fontFamily: DISPLAY, fontSize: 16, color: C.fg },
-  ccSl: { fontFamily: BODY, fontSize: 10, color: C.muted },
-  ccBio: {
-    fontFamily: BODY,
-    fontSize: 12.5,
-    color: C.muted,
-    lineHeight: 19,
-    marginBottom: 13,
-    maxWidth: 320,
-  },
-  creatorMini: {
-    position: 'absolute',
-    right: -14,
-    bottom: -34,
-    width: 124,
-    height: 104,
-    zIndex: 3,
-    backgroundColor: C.white,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: C.line,
-    padding: 9,
-    transform: [{ rotate: '3deg' }],
-    shadowColor: 'rgba(26,86,174,0.16)',
-    shadowOpacity: 1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 5,
-  },
-  sLabel: {
-    fontFamily: BODY,
-    fontSize: 11,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    color: C.blue,
-    fontWeight: '800',
-    marginBottom: 16,
-    alignSelf: 'flex-start',
-    backgroundColor: C.pale,
-    borderRadius: 100,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-  },
-  h2: { fontFamily: DISPLAY, color: C.blue, marginBottom: 16, letterSpacing: -0.4 },
-  sP: {
-    fontFamily: BODY,
-    fontSize: 15,
-    color: C.muted,
-    lineHeight: 26,
-    maxWidth: 380,
-    marginBottom: 26,
-  },
+/* FAQ */
+.lp-faq { display: grid; gap: 14px; }
+.lp-faq-item {
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: 16px; padding: 4px 22px;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.lp-faq-item summary {
+  cursor: pointer; list-style: none; padding: 18px 0;
+  font-size: 16.5px; font-weight: 700; color: #fff;
+  display: flex; justify-content: space-between; align-items: center; gap: 16px;
+}
+.lp-faq-item summary::-webkit-details-marker { display: none; }
+.lp-faq-item summary::after {
+  content: '+'; font-size: 24px; font-weight: 400; color: var(--green);
+  transition: transform .25s; line-height: 1;
+}
+.lp-faq-item[open] summary::after { transform: rotate(45deg); }
+.lp-faq-item p { margin: 0 0 20px; font-size: 15px; line-height: 1.68; color: var(--muted); }
 
-  // ---- wave / cta / footer
-  wave: { backgroundColor: C.blue, lineHeight: 0 },
-  cta: { backgroundColor: C.blue, paddingTop: 30, paddingBottom: 74 },
-  ctaRow: { flexDirection: 'row', alignItems: 'center', gap: 32 },
-  ctaH2: { fontFamily: DISPLAY, color: C.white, flexShrink: 1, letterSpacing: -0.5 },
-  ctaRight: { gap: 14, minWidth: 240, flex: 1 },
-  ctaSub: {
-    fontFamily: BODY,
-    fontSize: 14.5,
-    color: 'rgba(255,255,255,0.85)',
-    lineHeight: 23,
-    maxWidth: 300,
-  },
-  footer: {
-    backgroundColor: C.cream,
-    paddingTop: 30,
-    paddingBottom: 40,
-    borderTopWidth: 1,
-    borderTopColor: C.line,
-  },
-  footRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: 14,
-  },
-  footBrand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  footLinks: { flexDirection: 'row', gap: 20, flexWrap: 'wrap' },
-  footLink: { fontFamily: BODY, fontSize: 13.5, color: C.muted },
-  footCopy: { fontFamily: BODY, fontSize: 12, color: C.muted },
-});
+/* contact + footer */
+.lp-contact { padding-top: 40px; text-align: center; }
+.lp-btn-as-link { display: inline-flex; margin-top: 6px; }
+.lp-footer { background: var(--section-bg); border-top: 1px solid rgba(255,255,255,0.08); padding: 34px 26px; }
+.lp-footer-inner {
+  max-width: 1240px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between; gap: 22px; flex-wrap: wrap;
+}
+.lp-footer-brand { font-size: 17px; font-weight: 800; color: #fff; }
+.lp-footer-links { display: flex; gap: 20px; flex-wrap: wrap; }
+.lp-footer-links button, .lp-footer-links a {
+  background: none; border: 0; cursor: pointer; padding: 0;
+  color: var(--muted); font-size: 14px; text-decoration: none;
+}
+.lp-footer-links button:hover, .lp-footer-links a:hover { color: var(--green); }
+.lp-footer-copy { font-size: 13.5px; color: rgba(255,255,255,0.45); }
+
+/* reveal */
+.lp-reveal { opacity: 0; transform: translateY(30px); transition: opacity .7s ease, transform .7s ease; }
+.lp-reveal.in { opacity: 1; transform: none; }
+.lp-card-scene.lp-reveal { transition: opacity .7s ease, transform .7s ease; }
+.lp-card-scene.lp-reveal:not(.in) { transform: rotateY(calc(var(--mx) * 7deg)) rotateX(calc(var(--my) * -5deg)) translateY(30px); }
+.lp-card-scene.lp-reveal.in { transform: rotateY(calc(var(--mx) * 7deg)) rotateX(calc(var(--my) * -5deg)); }
+.lp-dna.lp-reveal { transition: opacity .7s ease, transform .7s ease; }
+.lp-dna.lp-reveal:not(.in) { transform: rotateY(calc(var(--mx) * 2.2deg)) rotateX(calc(var(--my) * -1.6deg)) translateY(30px); }
+.lp-dna.lp-reveal.in { transform: rotateY(calc(var(--mx) * 2.2deg)) rotateX(calc(var(--my) * -1.6deg)); }
+
+@media (max-width: 1080px) {
+  .lp-links { display: none; }
+  .lp-burger {
+    display: inline-flex; flex-direction: column; justify-content: center; gap: 4px;
+    width: 40px; height: 40px; border-radius: 12px; cursor: pointer;
+    background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.16);
+    align-items: center; padding: 0;
+  }
+  .lp-burger span { width: 17px; height: 2px; border-radius: 2px; background: #fff; }
+  .lp-mobile { display: flex; }
+  .lp-nav-inner { gap: 14px; }
+  .lp-hero-inner { grid-template-columns: 1fr; gap: 44px; padding-top: 64px; }
+  .lp-card-scene { max-width: 620px; }
+  .lp-steps { grid-template-columns: repeat(2, 1fr); }
+  .lp-dna { grid-template-columns: 1fr; gap: 32px; padding: 34px; }
+}
+@media (max-width: 640px) {
+  .lp-nav-actions .lp-login { display: none; }
+  .lp-nav-inner { padding: 0 14px; gap: 10px; }
+  .lp-signup { padding: 10px 17px; }
+  .lp-section { padding: 68px 20px; }
+  .lp-hero-inner { padding: 48px 20px 72px; }
+  .lp-h1 { letter-spacing: -1.6px; }
+  .lp-steps { grid-template-columns: 1fr; }
+  .lp-price-list { grid-template-columns: 1fr; }
+  .lp-card { padding: 22px; }
+  .lp-dna { padding: 26px 20px; }
+  .lp-ring { width: 190px; }
+  .lp-footer-inner { flex-direction: column; align-items: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp, .lp * { animation: none !important; transition: none !important; }
+  .lp-reveal { opacity: 1; transform: none; }
+  .lp-bar-fill { width: var(--w); }
+  .lp-ring-arc { stroke-dashoffset: 19; }
+  .lp-spark-line { stroke-dashoffset: 0; }
+  .lp-spark-area { opacity: 1; }
+}
+`;

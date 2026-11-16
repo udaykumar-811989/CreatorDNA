@@ -1,6 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -10,13 +11,11 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { DnaMark } from '../components/DnaMark';
-import { BackIcon, EyeIcon, EyeOffIcon, LockIcon, MailIcon, PersonIcon } from '../components/icons';
+import { BackIcon, EyeIcon, EyeOffIcon } from '../components/icons';
 import { Avatar } from '../components/ui';
-import { useTheme, useThemeColors } from '../themeContext';
-import { radius, type } from '../theme';
 
 // Google's four-colour "G", inlined so the sign-in button matches the
 // official lockup without shipping an image asset.
@@ -29,7 +28,7 @@ function GoogleGlyph({ size = 20 }: { size?: number }) {
       />
       <Path
         fill="#4285F4"
-        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+        d="M46.98 24.55c0-1.57-.14-3.09-.4-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
       />
       <Path
         fill="#FBBC05"
@@ -43,14 +42,43 @@ function GoogleGlyph({ size = 20 }: { size?: number }) {
   );
 }
 
-// The auth screen wears the brand mock's fixed night-purple palette — it is
-// the app's front door in both themes, so it never flips to light.
-const authBg = ['#1B0B44', '#251055', '#140931'] as const;
-const authGlow = ['rgba(124,58,237,0.38)', 'rgba(124,58,237,0)'] as const;
-const fieldBg = '#241750';
-const fieldBorder = 'rgba(255,255,255,0.09)';
-const subtle = '#A79FC9';
-const accent = '#A78BFA';
+// The white/green DNA helix mark for the login hero (the shared DnaMark is
+// purple, which would not read on the forest photo).
+function HelixMark({ size = 56 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 48 48" accessibilityLabel="CreatorDNA logo">
+      <Path
+        d="M12 5c0 9 24 10 24 19S12 34 12 43"
+        fill="none"
+        stroke="#FFFFFF"
+        strokeLinecap="round"
+        strokeWidth={3.6}
+      />
+      <Path
+        d="M36 5c0 9-24 10-24 19s24 10 24 19"
+        fill="none"
+        stroke="#4ADE80"
+        strokeLinecap="round"
+        strokeWidth={3.6}
+      />
+      <Path
+        d="M16 11h16M13 20h22M13 29h22M16 38h16"
+        fill="none"
+        stroke="rgba(255,255,255,0.8)"
+        strokeLinecap="round"
+        strokeWidth={2.6}
+      />
+    </Svg>
+  );
+}
+
+// Forest photo + glass card login (reference: phone layout, desktop = the
+// same content in a centered compact card). The palette is fixed — this is
+// the front door in both themes — every handler below is unchanged.
+const fieldBg = 'rgba(4,14,9,0.42)';
+const fieldBorder = 'rgba(255,255,255,0.18)';
+const green = '#3AD07E';
+const greenDeep = '#16A85E';
 
 export function AuthScreen({
   onBack,
@@ -108,9 +136,8 @@ export function AuthScreen({
     };
   }, []);
 
-  const { mode } = useTheme();
-  const c = useThemeColors();
-  const isDark = mode === 'dark';
+  const { width } = useWindowDimensions();
+  const wide = width >= 900;
   const isSignUp = formMode === 'signup';
   const canSubmit = isSignUp
     ? name.trim().length > 0 &&
@@ -119,191 +146,219 @@ export function AuthScreen({
       !authLoading
     : email.trim().length > 0 && password.length > 0 && !authLoading;
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        screen: { flex: 1, backgroundColor: '#140931' },
-        keyboardPad: { flex: 1 },
-        content: {
-          flexGrow: 1,
-          paddingHorizontal: 26,
-          paddingTop: 18,
-          paddingBottom: 34,
-        },
-        backButton: {
-          width: 42,
-          height: 42,
-          borderRadius: 21,
-          backgroundColor: 'rgba(255,255,255,0.08)',
-          borderWidth: 1,
-          borderColor: 'rgba(255,255,255,0.10)',
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        header: { alignItems: 'center', marginTop: 14, marginBottom: 24 },
-        logoHalo: {
-          width: 116,
-          height: 116,
-          borderRadius: 58,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: 'rgba(139,92,246,0.16)',
-          borderWidth: 1,
-          borderColor: 'rgba(167,139,250,0.35)',
-        },
-        wordmark: {
-          marginTop: 18,
-          fontSize: 33,
-          fontWeight: '800',
-          letterSpacing: 0.4,
-          color: '#FFFFFF',
-        },
-        dna: { color: accent },
-        tagline: { marginTop: 6, fontSize: 15, color: '#B7AFD9' },
-        pill: {
-          flexDirection: 'row',
-          gap: 4,
-          backgroundColor: 'rgba(255,255,255,0.07)',
-          borderRadius: 999,
-          padding: 4,
-          marginBottom: 22,
-        },
-        segment: {
-          flex: 1,
-          paddingVertical: 12,
-          borderRadius: 999,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        segmentActive: { backgroundColor: '#7159E1' },
-        segmentText: { fontSize: 15.5, fontWeight: '700', color: subtle },
-        segmentTextActive: { color: '#FFFFFF' },
-        form: { gap: 13 },
-        field: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 11,
-          backgroundColor: fieldBg,
-          borderWidth: 1,
-          borderColor: fieldBorder,
-          borderRadius: 14,
-          paddingHorizontal: 15,
-          minHeight: 54,
-        },
-        input: {
-          flex: 1,
-          color: '#FFFFFF',
-          fontSize: 15,
-          paddingVertical: 14,
-        },
-        eyePress: { padding: 4 },
-        submit: {
-          borderRadius: 14,
-          overflow: 'hidden',
-          marginTop: 4,
-        },
-        submitInner: {
-          minHeight: 54,
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexDirection: 'row',
-          gap: 8,
-        },
-        submitLabel: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-        submitDisabled: { opacity: 0.55 },
-        error: {
-          ...type.small,
-          color: '#FFB4B4',
-          backgroundColor: 'rgba(255,82,82,0.14)',
-          borderWidth: 1,
-          borderColor: 'rgba(255,82,82,0.3)',
-          borderRadius: radius.sm,
-          padding: 11,
-          textAlign: 'center',
-        },
-        divider: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 12,
-          marginVertical: 3,
-        },
-        dividerLine: {
-          flex: 1,
-          height: StyleSheet.hairlineWidth,
-          backgroundColor: 'rgba(255,255,255,0.16)',
-        },
-        dividerText: { color: '#9B93BE', fontSize: 13.5, fontWeight: '600' },
-        google: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 10,
-          minHeight: 54,
-          borderRadius: 14,
-          backgroundColor: fieldBg,
-          borderWidth: 1,
-          borderColor: fieldBorder,
-        },
-        googleLabel: { color: '#FFFFFF', fontSize: 15.5, fontWeight: '600' },
-        toggle: {
-          marginTop: 18,
-          textAlign: 'center',
-          color: '#B7AFD9',
-          fontSize: 14.5,
-        },
-        toggleBold: { color: '#FFFFFF', fontWeight: '700' },
-        savedWrap: { marginBottom: 18, gap: 10 },
-        savedTitle: {
-          ...type.tiny,
-          color: subtle,
-          textTransform: 'uppercase',
-          marginBottom: 2,
-        },
-        savedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-        savedAccount: {
-          flex: 1,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 12,
-          backgroundColor: 'rgba(255,255,255,0.06)',
-          borderWidth: 1,
-          borderColor: fieldBorder,
-          borderRadius: 14,
-          paddingHorizontal: 12,
-          paddingVertical: 10,
-        },
-        savedIdentity: { flex: 1 },
-        savedHandle: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-        savedEmail: { color: subtle, fontSize: 12.5, marginTop: 2 },
-        savedGo: { color: subtle, fontSize: 17, fontWeight: '700' },
-        savedForget: {
-          width: 30,
-          height: 30,
-          borderRadius: 15,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: 'rgba(255,255,255,0.08)',
-        },
-        savedForgetGlyph: { color: subtle, fontSize: 12, fontWeight: '700' },
-        savedHint: {
-          ...type.tiny,
-          color: '#8B82B8',
-          textAlign: 'center',
-          marginTop: 2,
-        },
-      }),
-    [c, isDark],
-  );
+  const styles = useMemo(() => {
+    const s = StyleSheet.create({
+      screen: { flex: 1, backgroundColor: '#07130D' },
+      // width/height 100% + object-fit: on web an absolutely-positioned <img>
+      // keeps its intrinsic size when only left/right are set, and the
+      // resizeMode prop does not reach computed object-fit.
+      bg: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover',
+      },
+      keyboardPad: { flex: 1 },
+      topBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        paddingTop: 16,
+        paddingBottom: 6,
+        zIndex: 2,
+      },
+      backButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.16)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.3)',
+        alignItems: 'center',
+        justifyContent: 'center',
+      },
+      pill: {
+        flexDirection: 'row',
+        gap: 4,
+        backgroundColor: 'rgba(255,255,255,0.14)',
+        borderRadius: 999,
+        padding: 4,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.18)',
+      },
+      segment: {
+        paddingVertical: 9,
+        paddingHorizontal: 20,
+        borderRadius: 999,
+        alignItems: 'center',
+        justifyContent: 'center',
+      },
+      segmentActive: { backgroundColor: '#FFFFFF' },
+      segmentText: { fontSize: 14.5, fontWeight: '600', color: 'rgba(255,255,255,0.78)' },
+      segmentTextActive: { color: '#0D2A1B', fontWeight: '700' },
+      scroll: { flexGrow: 1 },
+      column: {
+        width: '100%',
+        maxWidth: 460,
+        alignSelf: 'center',
+        paddingHorizontal: 24,
+        paddingTop: 18,
+        paddingBottom: 34,
+      },
+      header: { alignItems: 'center', marginBottom: 22 },
+      logoHalo: {
+        width: 104,
+        height: 104,
+        borderRadius: 52,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.16)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.36)',
+      },
+      wordmark: {
+        marginTop: 16,
+        fontSize: 31,
+        fontWeight: '800',
+        letterSpacing: 0.3,
+        color: '#FFFFFF',
+      },
+      tagline: { marginTop: 6, fontSize: 14.5, color: 'rgba(255,255,255,0.72)' },
+      card: {
+        backgroundColor: 'rgba(255,255,255,0.10)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.22)',
+        borderRadius: 26,
+        padding: 22,
+      },
+      savedWrap: { marginBottom: 16, gap: 10 },
+      savedTitle: {
+        fontSize: 11.5,
+        fontWeight: '700',
+        letterSpacing: 1.2,
+        color: 'rgba(255,255,255,0.6)',
+        textTransform: 'uppercase',
+        marginBottom: 2,
+      },
+      savedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+      savedAccount: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        backgroundColor: 'rgba(255,255,255,0.10)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.18)',
+        borderRadius: 14,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+      },
+      savedIdentity: { flex: 1 },
+      savedHandle: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+      savedEmail: { color: 'rgba(255,255,255,0.6)', fontSize: 12.5, marginTop: 2 },
+      savedGo: { color: 'rgba(255,255,255,0.7)', fontSize: 17, fontWeight: '700' },
+      savedForget: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.14)',
+      },
+      savedForgetGlyph: { color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '700' },
+      savedHint: {
+        fontSize: 11.5,
+        color: 'rgba(255,255,255,0.5)',
+        textAlign: 'center',
+        marginTop: 2,
+      },
+      form: { gap: 13 },
+      field: {
+        backgroundColor: fieldBg,
+        borderWidth: 1,
+        borderColor: fieldBorder,
+        borderRadius: 16,
+        paddingHorizontal: 16,
+        paddingTop: 9,
+        paddingBottom: 10,
+        minHeight: 58,
+        justifyContent: 'center',
+      },
+      fieldLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: 'rgba(255,255,255,0.55)',
+        marginBottom: 1,
+      },
+      fieldRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+      input: { flex: 1, color: '#FFFFFF', fontSize: 15.5, padding: 0 },
+      eyePress: { padding: 4 },
+      submit: { borderRadius: 16, overflow: 'hidden', marginTop: 4 },
+      submitInner: {
+        minHeight: 54,
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
+        gap: 8,
+      },
+      submitLabel: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+      submitDisabled: { opacity: 0.55 },
+      error: {
+        fontSize: 13.5,
+        lineHeight: 19,
+        color: '#FFC9C9',
+        backgroundColor: 'rgba(255,70,70,0.16)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,120,120,0.4)',
+        borderRadius: 12,
+        padding: 11,
+        textAlign: 'center',
+      },
+      divider: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 3 },
+      dividerLine: {
+        flex: 1,
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: 'rgba(255,255,255,0.3)',
+      },
+      dividerText: { color: 'rgba(255,255,255,0.65)', fontSize: 13.5, fontWeight: '600' },
+      google: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        minHeight: 54,
+        borderRadius: 16,
+        backgroundColor: '#FFFFFF',
+      },
+      googleLabel: { color: '#14261C', fontSize: 15.5, fontWeight: '600' },
+      toggle: {
+        marginTop: 18,
+        textAlign: 'center',
+        color: 'rgba(255,255,255,0.78)',
+        fontSize: 14.5,
+      },
+      toggleBold: { color: '#FFFFFF', fontWeight: '700' },
+    });
+    return s;
+  }, [wide]);
 
   return (
     <View style={styles.screen}>
-      <LinearGradient colors={authBg} style={StyleSheet.absoluteFill} />
-      {/* The mock's centre glow sits above the base wash. */}
+      <Image
+        source={require('../../assets/auth-forest.jpg')}
+        style={styles.bg}
+        resizeMode="cover"
+        accessibilityIgnoresInvertColors
+      />
+      {/* Dark green wash keeps white text legible on any crop of the photo. */}
       <LinearGradient
-        colors={authGlow}
-        start={{ x: 0.5, y: 0.1 }}
-        end={{ x: 0.5, y: 0.75 }}
-        style={StyleSheet.absoluteFill}
+        colors={['rgba(5,16,10,0.66)', 'rgba(5,16,10,0.34)', 'rgba(2,9,6,0.85)']}
+        style={styles.bg}
       />
       {/* On iOS the keyboard pads the view up; on Android the window already
           resizes, so the ScrollView itself carries the extra bottom room. */}
@@ -311,17 +366,7 @@ export function AuthScreen({
         style={styles.keyboardPad}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <ScrollView
-          contentContainerStyle={[
-            styles.content,
-            {
-              paddingBottom:
-                34 + (Platform.OS === 'android' ? keyboardHeight : 0),
-            },
-          ]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
+        <View style={styles.topBar}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Go back"
@@ -332,17 +377,7 @@ export function AuthScreen({
             <BackIcon size={20} color="#FFFFFF" />
           </Pressable>
 
-          <View style={styles.header}>
-            <View style={styles.logoHalo}>
-              <DnaMark size={72} />
-            </View>
-            <Text style={styles.wordmark}>
-              Creator<Text style={styles.dna}>DNA</Text>
-            </Text>
-            <Text style={styles.tagline}>Your AI Creator Coach</Text>
-          </View>
-
-          {/* Login | Sign Up — the mock's single switch between both forms. */}
+          {/* Login | Sign Up — the single switch between both forms. */}
           <View style={styles.pill} accessibilityRole="tablist">
             {(['login', 'signup'] as const).map((segment) => {
               const active = formMode === segment;
@@ -367,191 +402,220 @@ export function AuthScreen({
               );
             })}
           </View>
+        </View>
 
-          {savedAccounts.length > 0 ? (
-            <View style={styles.savedWrap}>
-              <Text style={styles.savedTitle}>Continue as</Text>
-              {savedAccounts.map((account) => (
-                <View key={account.email} style={styles.savedRow}>
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={authLoading}
-                    onPress={() => onLoginSaved(account.email)}
-                    style={({ pressed }) => [
-                      styles.savedAccount,
-                      authLoading && { opacity: 0.6 },
-                      pressed && { opacity: 0.7 },
-                    ]}
-                  >
-                    <Avatar
-                      uri={account.instagramPictureUrl}
-                      name={account.instagramUsername ?? account.email}
-                      size={38}
-                    />
-                    <View style={styles.savedIdentity}>
-                      <Text style={styles.savedHandle} numberOfLines={1}>
-                        {account.instagramUsername ? `@${account.instagramUsername}` : account.email}
-                      </Text>
-                      <Text style={styles.savedEmail} numberOfLines={1}>
-                        {account.instagramUsername && !account.email.startsWith('ig:')
-                          ? account.email
-                          : 'Tap to sign in'}
-                      </Text>
-                    </View>
-                    <Text style={styles.savedGo}>{authLoading ? '…' : '→'}</Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Forget ${account.email}`}
-                    onPress={() => onForgetSavedAccount(account.email)}
-                    hitSlop={10}
-                    style={({ pressed }) => [styles.savedForget, pressed && { opacity: 0.5 }]}
-                  >
-                    <Text style={styles.savedForgetGlyph}>✕</Text>
-                  </Pressable>
-                </View>
-              ))}
-              <Text style={styles.savedHint}>
-                Saved on this device — tap to swap accounts without typing a password.
-              </Text>
-            </View>
-          ) : null}
-
-          <View style={styles.form}>
-            {isSignUp ? (
-              <View style={styles.field}>
-                <PersonIcon size={19} color="#8B82B8" />
-                <TextInput
-                  value={name}
-                  onChangeText={setName}
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                  placeholder="Enter your name"
-                  placeholderTextColor="#8B82B8"
-                  accessibilityLabel="Name"
-                  style={styles.input}
-                />
+        <ScrollView
+          contentContainerStyle={[
+            styles.scroll,
+            wide && { justifyContent: 'center' },
+            {
+              paddingBottom:
+                34 + (Platform.OS === 'android' ? keyboardHeight : 0),
+            },
+          ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={[styles.column, wide && { paddingTop: 30 }]}>
+            <View style={styles.header}>
+              <View style={styles.logoHalo}>
+                <HelixMark size={56} />
               </View>
-            ) : null}
-
-            <View style={styles.field}>
-              <MailIcon size={19} color="#8B82B8" />
-              <TextInput
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-                placeholder="Enter your email"
-                placeholderTextColor="#8B82B8"
-                accessibilityLabel="Email"
-                style={styles.input}
-              />
+              <Text style={styles.wordmark}>CreatorDNA</Text>
+              <Text style={styles.tagline}>Your AI Creator Coach</Text>
             </View>
 
-            <View style={styles.field}>
-              <LockIcon size={19} color="#8B82B8" />
-              <TextInput
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-                placeholder="Enter your password"
-                placeholderTextColor="#8B82B8"
-                accessibilityLabel="Password"
-                style={styles.input}
-              />
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-                onPress={() => setShowPassword((shown) => !shown)}
-                hitSlop={8}
-                style={({ pressed }) => [styles.eyePress, pressed && { opacity: 0.6 }]}
-              >
-                {showPassword ? (
-                  <EyeOffIcon size={19} color="#8B82B8" />
-                ) : (
-                  <EyeIcon size={19} color="#8B82B8" />
-                )}
-              </Pressable>
-            </View>
+            <View style={styles.card}>
+              {savedAccounts.length > 0 ? (
+                <View style={styles.savedWrap}>
+                  <Text style={styles.savedTitle}>Continue as</Text>
+                  {savedAccounts.map((account) => (
+                    <View key={account.email} style={styles.savedRow}>
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={authLoading}
+                        onPress={() => onLoginSaved(account.email)}
+                        style={({ pressed }) => [
+                          styles.savedAccount,
+                          authLoading && { opacity: 0.6 },
+                          pressed && { opacity: 0.7 },
+                        ]}
+                      >
+                        <Avatar
+                          uri={account.instagramPictureUrl}
+                          name={account.instagramUsername ?? account.email}
+                          size={38}
+                        />
+                        <View style={styles.savedIdentity}>
+                          <Text style={styles.savedHandle} numberOfLines={1}>
+                            {account.instagramUsername
+                              ? `@${account.instagramUsername}`
+                              : account.email}
+                          </Text>
+                          <Text style={styles.savedEmail} numberOfLines={1}>
+                            {account.instagramUsername && !account.email.startsWith('ig:')
+                              ? account.email
+                              : 'Tap to sign in'}
+                          </Text>
+                        </View>
+                        <Text style={styles.savedGo}>{authLoading ? '…' : '→'}</Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Forget ${account.email}`}
+                        onPress={() => onForgetSavedAccount(account.email)}
+                        hitSlop={10}
+                        style={({ pressed }) => [styles.savedForget, pressed && { opacity: 0.5 }]}
+                      >
+                        <Text style={styles.savedForgetGlyph}>✕</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+                  <Text style={styles.savedHint}>
+                    Saved on this device — tap to swap accounts without typing a password.
+                  </Text>
+                </View>
+              ) : null}
 
-            <Pressable
-              accessibilityRole="button"
-              disabled={!canSubmit}
-              onPress={() => {
-                void Promise.resolve(
-                  isSignUp
-                    ? onSignUp(name, email, password)
-                    : onSignIn(email, password),
-                ).finally(() => setPassword(''));
-              }}
-              style={({ pressed }) => [
-                styles.submit,
-                !canSubmit && styles.submitDisabled,
-                pressed && canSubmit && { opacity: 0.85 },
-              ]}
-            >
-              <LinearGradient
-                colors={['#7C5CE8', '#5B3FD1']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.submitInner}
-              >
-                <Text style={styles.submitLabel}>
-                  {authLoading
-                    ? isSignUp
-                      ? 'Creating account…'
-                      : 'Signing in…'
-                    : isSignUp
-                      ? 'Sign Up'
-                      : 'Login'}
-                </Text>
-                {!authLoading ? <Text style={styles.submitLabel}>→</Text> : null}
-              </LinearGradient>
-            </Pressable>
-
-            {authError ? (
-              <Text accessibilityRole="alert" style={styles.error}>
-                {authError}
-              </Text>
-            ) : null}
-
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <Pressable
-              accessibilityRole="button"
-              disabled={authLoading}
-              onPress={onGoogleSignIn}
-              style={({ pressed }) => [styles.google, pressed && { opacity: 0.75 }]}
-            >
-              <GoogleGlyph size={20} />
-              <Text style={styles.googleLabel}>Continue with Google</Text>
-            </Pressable>
-
-            <Pressable
-              accessibilityRole="button"
-              disabled={authLoading}
-              onPress={() => onFormModeChange(isSignUp ? 'login' : 'signup')}
-              style={({ pressed }) => pressed && { opacity: 0.6 }}
-            >
-              <Text style={styles.toggle}>
+              <View style={styles.form}>
                 {isSignUp ? (
-                  <>
-                    Already have an account?{' '}
-                    <Text style={styles.toggleBold}>Log in</Text>
-                  </>
-                ) : (
-                  <>
-                    Don't have an account?{' '}
-                    <Text style={styles.toggleBold}>Sign Up</Text>
-                  </>
-                )}
-              </Text>
-            </Pressable>
+                  <View style={styles.field}>
+                    <Text style={styles.fieldLabel}>Name</Text>
+                    <TextInput
+                      value={name}
+                      onChangeText={setName}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      placeholder="Enter your name"
+                      placeholderTextColor="rgba(255,255,255,0.38)"
+                      accessibilityLabel="Name"
+                      style={styles.input}
+                    />
+                  </View>
+                ) : null}
+
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Email</Text>
+                  <TextInput
+                    value={email}
+                    onChangeText={setEmail}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="email-address"
+                    placeholder="Enter your email"
+                    placeholderTextColor="rgba(255,255,255,0.38)"
+                    accessibilityLabel="Email"
+                    style={styles.input}
+                  />
+                </View>
+
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Password</Text>
+                  <View style={styles.fieldRow}>
+                    <TextInput
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry={!showPassword}
+                      placeholder="Enter your password"
+                      placeholderTextColor="rgba(255,255,255,0.38)"
+                      accessibilityLabel="Password"
+                      style={styles.input}
+                    />
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                      onPress={() => setShowPassword((shown) => !shown)}
+                      hitSlop={8}
+                      style={({ pressed }) => [styles.eyePress, pressed && { opacity: 0.6 }]}
+                    >
+                      {showPassword ? (
+                        <EyeOffIcon size={19} color="rgba(255,255,255,0.65)" />
+                      ) : (
+                        <EyeIcon size={19} color="rgba(255,255,255,0.65)" />
+                      )}
+                    </Pressable>
+                  </View>
+                </View>
+
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={!canSubmit}
+                  onPress={() => {
+                    void Promise.resolve(
+                      isSignUp
+                        ? onSignUp(name, email, password)
+                        : onSignIn(email, password),
+                    ).finally(() => setPassword(''));
+                  }}
+                  style={({ pressed }) => [
+                    styles.submit,
+                    !canSubmit && styles.submitDisabled,
+                    pressed && canSubmit && { opacity: 0.85 },
+                  ]}
+                >
+                  <LinearGradient
+                    colors={[green, greenDeep]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.submitInner}
+                  >
+                    <Text style={styles.submitLabel}>
+                      {authLoading
+                        ? isSignUp
+                          ? 'Creating account…'
+                          : 'Signing in…'
+                        : isSignUp
+                          ? 'Sign Up'
+                          : 'Login'}
+                    </Text>
+                    {!authLoading ? <Text style={styles.submitLabel}>→</Text> : null}
+                  </LinearGradient>
+                </Pressable>
+
+                {authError ? (
+                  <Text accessibilityRole="alert" style={styles.error}>
+                    {authError}
+                  </Text>
+                ) : null}
+
+                <View style={styles.divider}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>or</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={authLoading}
+                  onPress={onGoogleSignIn}
+                  style={({ pressed }) => [styles.google, pressed && { opacity: 0.75 }]}
+                >
+                  <GoogleGlyph size={20} />
+                  <Text style={styles.googleLabel}>Continue with Google</Text>
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={authLoading}
+                  onPress={() => onFormModeChange(isSignUp ? 'login' : 'signup')}
+                  style={({ pressed }) => pressed && { opacity: 0.6 }}
+                >
+                  <Text style={styles.toggle}>
+                    {isSignUp ? (
+                      <>
+                        Already have an account?{' '}
+                        <Text style={styles.toggleBold}>Log in</Text>
+                      </>
+                    ) : (
+                      <>
+                        Don't have an account?{' '}
+                        <Text style={styles.toggleBold}>Sign Up</Text>
+                      </>
+                    )}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
