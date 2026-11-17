@@ -15,10 +15,6 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomNav, NavTab } from './src/components/BottomNav';
-import {
-  GoogleReturnRecovery,
-  type StrandedGoogleReturn,
-} from './src/components/GoogleReturnRecovery';
 import { FloatingAiButton } from './src/components/FloatingAiButton';
 import { AchievementOverlay } from './src/components/AchievementOverlay';
 import type { IdeaRequest } from './src/components/modals';
@@ -529,15 +525,6 @@ const exchangeGoogleAuthCode = async (code: string): Promise<GoogleExchange> => 
 // the form, never as a silent no-op.
 const captureOAuthReturn = async (): Promise<string | null> => {
   if (Platform.OS !== 'web' || typeof window === 'undefined' || !supabaseUrl) {
-    return null;
-  }
-  // A native Google return stranded in the browser (Chrome did not hand it
-  // to the app): the recovery screen owns this URL and needs `?code=`
-  // intact in the address bar — don't strip it, and don't try to exchange
-  // it here, because the verifier lives in the app's storage, not this
-  // browser's. The web Google flow never lands on this path (its redirect
-  // is the site root), so nothing legitimate is skipped.
-  if (window.location.pathname.endsWith('/auth/callback')) {
     return null;
   }
   const hashParams = new URLSearchParams(
@@ -1713,6 +1700,13 @@ function AppShell() {
           );
         }
       }
+      // A failed Google return must be readable: with no session to
+      // restore, settle on the auth screen (which renders authError)
+      // instead of the silent marketing landing — that is where the
+      // exact Supabase reason (e.g. a missing Redirect URL entry) shows.
+      if (oauthError && !hasStoredLogin() && !legalEntry) {
+        settleOnScreen('auth');
+      }
     })();
   }, [incomingUrl, loadDashboard]);
 
@@ -2306,17 +2300,18 @@ function AppShell() {
         setAuthError('Google sign-in is not configured in this app.');
         return;
       }
-      // Where Supabase hands the one-time code back. Installed builds use a
-      // verified App Link: https://www.creatordna.in/** is already on the
-      // Supabase Redirect URLs allowlist (proven — /help returns there), and
-      // Android opens the app directly from it once assetlinks.json checks
-      // out. A creatordna:// return is *not* allowlisted, so Supabase refused
-      // it and stranded the browser on the website. Expo Go has no App Link,
-      // so it keeps its own dev-client URL.
+      // Where Supabase hands the one-time code back: the app's own deep
+      // link. Chrome follows the redirect straight into the intent — a
+      // custom scheme needs no link verification — so the flow is Google →
+      // account chooser → app, with no page in between. Supabase must allow
+      // this redirect (Dashboard → Auth → URL Configuration → Redirect
+      // URLs → add `creatordna://**`), or it refuses the return and the
+      // browser lands on the site root instead. Expo Go links through its
+      // own dev-client URL.
       const returnUri =
         Constants.executionEnvironment === 'storeClient'
           ? Linking.createURL('auth/callback')
-          : 'https://www.creatordna.in/auth/callback';
+          : 'creatordna://auth/callback';
       const authorizeUrl =
         `${supabaseUrl}/auth/v1/authorize?provider=google` +
         `&redirect_to=${encodeURIComponent(returnUri)}`;
@@ -3832,27 +3827,6 @@ function AppShell() {
     return () => subscription.remove();
   }, []);
 
-  // A native Google return the browser couldn't hand to the app arrives as
-  // https://www.creatordna.in/auth/callback?code=… — read once on mount.
-  // The web Google flow never lands on this path (its redirect is the site
-  // root), so a code here is always a native return whose verifier lives in
-  // the app, not this browser: bounce it back instead of stranding it.
-  const [strandedGoogleReturn] = useState<StrandedGoogleReturn | null>(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') {
-      return null;
-    }
-    if (!window.location.pathname.endsWith('/auth/callback')) {
-      return null;
-    }
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const oauthError = params.get('error_description') ?? params.get('error');
-    if (!code && !oauthError) {
-      return null;
-    }
-    return { code, error: oauthError };
-  });
-
   return (
     <SafeAreaView
       style={[
@@ -3867,9 +3841,7 @@ function AppShell() {
       {/* The landing is a dark jungle scene; everywhere else the status-bar
           glyph colour follows the appearance toggle. */}
       <StatusBar style={screen === 'landing' ? 'light' : mode !== 'dark' ? 'dark' : 'light'} />
-      {strandedGoogleReturn ? (
-        <GoogleReturnRecovery reason={strandedGoogleReturn} />
-      ) : screen === 'landing' ? (
+      {screen === 'landing' ? (
         <LandingScreen
           signedIn={signedInEntry}
           onEnterApp={() => setScreen(signedInEntry ? 'home' : 'onboarding')}
