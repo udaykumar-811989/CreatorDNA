@@ -38,6 +38,12 @@ export const storageKeys = {
   // signed in, and re-signing-in must never replay the confetti.
   celebratedMilestones: 'creatordna.celebrated.v1',
   milestoneSyncAt: 'creatordna.milestoneSyncAt.v1',
+  // The signed-in login session (Supabase access + refresh token, name,
+  // photo). This is the record that decides whether the app is signed in, so
+  // it has to survive a restart on *every* platform — previously it lived in
+  // localStorage only, which is why an Android restart read as a logout.
+  // Same literal as before, so sessions already saved on the web keep loading.
+  authSession: 'creatordna.auth.session',
   // The device's anonymous Supabase session. Kept apart from the saved-login
   // session on purpose: the saved-login key drives the account switcher and
   // "save this account?" prompt, while a guest identity must never surface as
@@ -242,9 +248,9 @@ export function hydrateStorage(): Promise<void> {
   return hydrationInFlight;
 }
 
-// Used by usePersistentState to adopt the persisted value once it arrives;
-// not exported because the public surface stays storageKeys/readJson/
-// writeJson/usePersistentState (plus hydrateStorage/isStorageHydrated).
+// Used by usePersistentState to adopt the persisted value once it arrives.
+// Kept private: the public surface stays storageKeys/readJson/writeJson/
+// readRaw/forgetJson/usePersistentState (plus hydrateStorage/isStorageHydrated).
 function subscribeToHydration(listener: () => void): () => void {
   if (hydrated) return () => undefined;
   hydrationListeners.add(listener);
@@ -303,7 +309,9 @@ function writeRaw(key: string, raw: string): void {
   }
 }
 
-function readRaw(key: string): string | null {
+// The raw stored bytes, without JSON parsing: the login session reader needs
+// this because older builds stored a bare token string, not a JSON record.
+export function readRaw(key: string): string | null {
   try {
     const store = resolveStorage();
     const raw = store ? store.getItem(key) : (cache.get(key) ?? null);
@@ -332,6 +340,15 @@ function forgetKey(key: string): void {
   } catch {
     // Nothing else to clean up.
   }
+}
+
+/**
+ * Removes a key everywhere it can live: read cache, any parked write, and
+ * disk. The exported counterpart to `writeJson` — logout uses it so the
+ * login session is forgotten on every platform, not just the web.
+ */
+export function forgetJson(key: string): void {
+  forgetKey(key);
 }
 
 /**

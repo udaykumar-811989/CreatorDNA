@@ -48,10 +48,12 @@ import {
   contentKeyList,
   contentKeysFor,
   copyContentScope,
+  forgetJson,
   hydrateStorage,
   isStorageHydrated,
   preloadStorageKeys,
   readJson,
+  readRaw,
   scopedStorageKey,
   storageKeys,
   usePersistentState,
@@ -192,11 +194,12 @@ const instagramReturnStatus = (url: string | null | undefined): 'connected' | 'f
   return status === 'connected' || status === 'failed' ? status : null;
 };
 
-// Active email session (token + the account it belongs to). Persisted so a
-// page refresh returns the creator to their dashboard; only an explicit
-// logout clears it — and logout still remembers the account for one-tap
-// re-login and account swapping.
-const authSessionStorageKey = 'creatordna.auth.session';
+// Active email session (token + the account it belongs to). Persisted through
+// the shared storage layer — AsyncStorage on native, localStorage on the web —
+// so both a page refresh *and* an app restart return the creator to their
+// dashboard; only an explicit logout clears it — and logout still remembers
+// the account for one-tap re-login and account swapping.
+const authSessionStorageKey = storageKeys.authSession;
 const savedAccountsStorageKey = 'creatordna.accounts.v1';
 const maxSavedAccounts = 5;
 
@@ -226,9 +229,9 @@ type SavedAccount = {
 
 const saveAuthSession = (session: AuthSessionRecord): void => {
   try {
-    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
-      localStorage.setItem(authSessionStorageKey, JSON.stringify(session));
-    }
+    // writeJson goes to localStorage on the web and AsyncStorage on native,
+    // so the same record survives a restart on Android too.
+    writeJson(authSessionStorageKey, session);
   } catch {
     // Storage can be unavailable (e.g. strict privacy settings). Sign-in
     // still works for this tab, it just won't survive a refresh.
@@ -239,10 +242,7 @@ const saveAuthSession = (session: AuthSessionRecord): void => {
 // refresh token that sits beside an expired access token.
 const readStoredAuthSession = (): AuthSessionRecord | null => {
   try {
-    if (Platform.OS !== 'web' || typeof localStorage === 'undefined') {
-      return null;
-    }
-    const raw = localStorage.getItem(authSessionStorageKey);
+    const raw = readRaw(authSessionStorageKey);
     if (!raw) {
       return null;
     }
@@ -276,6 +276,21 @@ const loadAuthSession = (): AuthSessionRecord | null => {
   // hasn't expired (`exp`, seconds since epoch).
   const exp = tokenExpiry(session.token);
   return exp !== null && exp > Date.now() ? session : null;
+};
+
+// True while this device still holds a login the creator never ended: an
+// unexpired token, or an expired one that still carries the refresh token to
+// renew it (an offline launch just retries on the next tick). Used for the
+// "where does a restart land" decisions, so an expired-but-renewable session
+// never reads as a logout — only an explicit logout or a rejected grant
+// (`saved_login_revoked`) removes the record and flips this to false.
+const hasStoredLogin = (): boolean => {
+  const stored = readStoredAuthSession();
+  if (!stored) {
+    return false;
+  }
+  const exp = tokenExpiry(stored.token);
+  return (exp !== null && exp > Date.now()) || Boolean(stored.refreshToken);
 };
 
 // Renew an expired (or about-to-expire) access token with the refresh
@@ -325,9 +340,9 @@ const renewAuthSession = async (): Promise<AuthSessionRecord | null> => {
 
 const clearAuthSession = (): void => {
   try {
-    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
-      localStorage.removeItem(authSessionStorageKey);
-    }
+    // forgetJson clears it on every platform — logout (and only logout, or a
+    // server-rejected refresh grant) must be what ends a session.
+    forgetJson(authSessionStorageKey);
   } catch {
     // Best-effort cleanup.
   }
@@ -860,7 +875,9 @@ function AppShell() {
     email: string | null;
     avatarUrl: string | null;
   } | null>(() => {
-    const stored = loadAuthSession();
+    // The record, not the token's clock: identity (name/email/photo) belongs
+    // to the stored login even while its access token is being renewed.
+    const stored = readStoredAuthSession();
     return stored
       ? { name: stored.name ?? null, email: stored.email, avatarUrl: stored.avatarUrl ?? null }
       : null;
@@ -890,7 +907,9 @@ function AppShell() {
   const lastAdoptedScope = useRef<string | null>(null);
 
   useEffect(() => {
-    const email = loadAuthSession()?.email?.toLowerCase() ?? null;
+    // readStoredAuthSession (not loadAuthSession) so an expired access token
+    // mid-renewal can't drop the scope to guest and make the account look empty.
+    const email = readStoredAuthSession()?.email?.toLowerCase() ?? null;
     const handle =
       (dashboard?.profile.username ?? profile?.username ?? '').toLowerCase() ||
       null;
@@ -1437,17 +1456,19 @@ function AppShell() {
       if (oauthError) {
         setAuthError(oauthError);
       }
-      // An access token that ran out while the tab was closed is renewed
+      // An access token that ran out while the app was closed is renewed
       // from the stored refresh token before anything reads it — that is
-      // what keeps a browser reload after an hour from looking like an
-      // automatic logout.
+      // what keeps a browser reload (or an Android restart) after an hour
+      // from looking like an automatic logout.
       const renewed = await renewAuthSession();
       if (renewed) {
         setSupabaseAccessToken(renewed.token);
       }
       // Profile shows the login identity (name + email + photo): seed it from
-      // the session the OAuth return (or a previous visit) persisted.
-      const restored = loadAuthSession();
+      // the session the OAuth return (or a previous visit) persisted — the
+      // record itself, so an access token still being renewed (or an offline
+      // launch) never blanks out the identity.
+      const restored = readStoredAuthSession();
       if (restored) {
         setAuthIdentity({
           name: restored.name ?? null,
@@ -1542,8 +1563,10 @@ function AppShell() {
           return;
         }
         // Email/password session only (no Instagram connected): restoring it
-        // keeps the creator on their dashboard across refreshes too.
-        if (loadAuthSession() && !legalEntry) {
+        // keeps the creator on their dashboard across refreshes and restarts
+        // too. hasStoredLogin() — not just an unexpired token — so an offline
+        // launch with a renewable session still lands on Home.
+        if (hasStoredLogin() && !legalEntry) {
           settleOnScreen('home');
         }
       } catch {
@@ -1555,7 +1578,7 @@ function AppShell() {
           // to Login — that reads as being logged out. With no session, web
           // stays on the marketing landing; native still opens auth.
           settleOnScreen(
-            loadAuthSession() ? 'home' : Platform.OS === 'web' ? 'landing' : 'auth',
+            hasStoredLogin() ? 'home' : Platform.OS === 'web' ? 'landing' : 'auth',
           );
         }
       }
@@ -1638,22 +1661,23 @@ function AppShell() {
     }
   }, []);
 
-  // Keep the access token fresh while the tab stays open. The check is a
+  // Keep the access token fresh while the app stays open — a browser tab or
+  // an Android process in the foreground. The check is a
   // cheap local expiry read every minute; the network renewal happens only
   // in the last minute of the token's hour, so requests never fail with
   // "session expired" underneath a creator who never signed out.
   useEffect(() => {
-    if (Platform.OS !== 'web' || typeof window === 'undefined') {
-      return;
-    }
-    const timer = window.setInterval(() => {
+    // Runs on Android too: without this tick, a native session's access token
+    // could expire while the app sat in the background and the next restart
+    // would have nothing fresh to restore.
+    const timer = setInterval(() => {
       void renewAuthSession().then((next) => {
         if (next) {
           setSupabaseAccessToken(next.token);
         }
       });
     }, 60_000);
-    return () => window.clearInterval(timer);
+    return () => clearInterval(timer);
   }, []);
 
   // Accounts remembered on this device (email + Instagram connection) so
@@ -1831,7 +1855,7 @@ function AppShell() {
     if (!sessionToken) {
       return;
     }
-    const session = loadAuthSession();
+    const session = readStoredAuthSession();
     const email = session?.email?.toLowerCase() ?? null;
     const shown = dashboard?.profile ?? profile;
     const handle = shown?.username.toLowerCase() ?? null;
@@ -2158,7 +2182,9 @@ function AppShell() {
     // Refresh (never create) the saved entry for this account so a saved
     // user's Instagram connection stays current across logouts. Saving is
     // opt-in via the sign-in prompt — logout alone doesn't add accounts.
-    const session = loadAuthSession();
+    // The stored record (not a possibly-expired token) so logging out after
+    // an hour away still refreshes the remembered credentials.
+    const session = readStoredAuthSession();
     const email = session?.email;
     if (email && session?.refreshToken) {
       const existing = loadSavedAccounts().find(
@@ -2205,7 +2231,9 @@ function AppShell() {
   // is signed out (only an explicit logout ever does that).
   const handleSaveProfile = useCallback(
     async (input: ProfileSaveInput): Promise<ProfileSaveResult> => {
-      let current = loadAuthSession();
+      // The stored record, so a still-renewable session can edit even when its
+      // access token has run out; a record that is truly gone still says so.
+      let current = readStoredAuthSession();
       if (!current) {
         return { ok: false, error: 'Sign in again to edit your profile.' };
       }
@@ -3384,8 +3412,10 @@ function AppShell() {
             : 'home';
   const showFab = !NO_FAB.has(screen);
   // The public landing's CTA enters the app directly when there is already a
-  // session (Instagram or password), and otherwise starts the welcome flow.
-  const signedInEntry = sessionToken !== null || loadAuthSession() !== null;
+  // session (Instagram or password) and otherwise starts the welcome flow.
+  // hasStoredLogin() keeps this true for an expired-but-renewable record, so
+  // an hour-old session's landing still reads as "signed in", not signed out.
+  const signedInEntry = sessionToken !== null || hasStoredLogin();
 
   // Mobile "slide navigation": a horizontal swipe across the page moves
   // between the bottom-nav screens (previous/next tab), and on detail
@@ -3880,7 +3910,7 @@ function AppShell() {
             // returns to the app — only a truly signed-out visitor goes back
             // to the sign-in page. Landing here after a cancelled connection
             // must never look like a logout.
-            setScreen(sessionToken || loadAuthSession() ? 'home' : 'auth')
+            setScreen(sessionToken || hasStoredLogin() ? 'home' : 'auth')
           }
           onConnect={() => void connectInstagram()}
           onConnected={continueToDashboard}
@@ -4000,7 +4030,7 @@ function AppShell() {
           Connect page): swap between remembered accounts. */}
       <SavedAccountsSheet
         visible={accountSwitcherOpen}
-        currentEmail={loadAuthSession()?.email ?? null}
+        currentEmail={readStoredAuthSession()?.email ?? null}
         accounts={savedAccounts.map((account) => ({
           email: account.email,
           instagramUsername: account.instagramUsername,
