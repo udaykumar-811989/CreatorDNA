@@ -1,6 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
+import * as Crypto from 'expo-crypto';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -349,8 +350,9 @@ const clearAuthSession = (): void => {
 };
 
 // PKCE verifier for the optional "Continue with Google" redirect, written
-// before leaving for Supabase and consumed on the way back.
-const pkceVerifierStorageKey = 'creatordna.pkce.verifier';
+// before leaving for Supabase and consumed on the way back. One key for both
+// platforms — web kept it in localStorage, native needs it in AsyncStorage.
+const pkceVerifierStorageKey = storageKeys.pkceVerifier;
 
 const randomBase64Url = (bytes: number): string => {
   const raw = new Uint8Array(bytes);
@@ -359,6 +361,159 @@ const randomBase64Url = (bytes: number): string => {
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
+};
+
+// One message for "the provider isn't on", wherever the flow discovers it:
+// the web return handler, the shared probe, and the native browser round trip.
+const googleProviderDisabledMessage =
+  'Google sign-in isn’t enabled on CreatorDNA yet. Enable the Google provider in Supabase Auth settings, or use email instead.';
+const googleStartFailedMessage =
+  'Google sign-in couldn’t start right now. Please try again later or use email instead.';
+
+// Fail fast in-app when the provider isn't enabled: GoTrue answers the
+// authorize URL itself with a JSON 400 in that case, which would otherwise
+// strand the creator on a raw error page. A working provider answers with a
+// redirect, which `redirect: 'manual'` reports as an opaque status 0.
+const probeGoogleProvider = async (authorizeUrl: string): Promise<string | null> => {
+  try {
+    const probe = await fetch(authorizeUrl, { redirect: 'manual' });
+    if (probe.status >= 400) {
+      const body = await probe.text().catch(() => '');
+      return /provider|not enabled/i.test(body) ? googleProviderDisabledMessage : googleStartFailedMessage;
+    }
+  } catch {
+    // Cross-origin or network: fall through and let the browser open — the
+    // round trip itself still reports whatever Supabase says.
+  }
+  return null;
+};
+
+// Reads one `key=value` out of a `?a=b&c=d` or `#a=b` section. Hand-rolled
+// because Hermes provides neither URL nor URLSearchParams, and the native
+// return arrives as a custom-scheme deep link.
+const pickUrlParam = (source: string, key: string): string | null => {
+  for (const pair of source.split('&')) {
+    const eq = pair.indexOf('=');
+    if (eq < 0 || pair.slice(0, eq) !== key) continue;
+    try {
+      return decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, ' '));
+    } catch {
+      return pair.slice(eq + 1);
+    }
+  }
+  return null;
+};
+
+// What a Google return carries, in either shape it can arrive: a one-time
+// `code` (PKCE), the tokens themselves (implicit), or an error. Parses a full
+// URL including the app's custom scheme, query before or after the fragment.
+type GoogleReturn = {
+  code: string | null;
+  accessToken: string | null;
+  refreshToken: string | null;
+  error: string | null;
+};
+
+const parseGoogleReturnUrl = (url: string): GoogleReturn => {
+  const hash = url.indexOf('#');
+  const query = url.indexOf('?');
+  const querySection = query < 0 ? '' : url.slice(query + 1, hash > query ? hash : undefined);
+  const hashSection = hash < 0 ? '' : url.slice(hash + 1);
+  const from = (key: string): string | null =>
+    pickUrlParam(querySection, key) ?? pickUrlParam(hashSection, key);
+  return {
+    code: from('code'),
+    accessToken: from('access_token'),
+    refreshToken: from('refresh_token'),
+    error:
+      pickUrlParam(querySection, 'error_description') ??
+      pickUrlParam(querySection, 'error') ??
+      pickUrlParam(hashSection, 'error_description') ??
+      pickUrlParam(hashSection, 'error'),
+  };
+};
+
+// The stored PKCE verifier as a raw string. It is written through writeJson,
+// so today it reads back as a quoted JSON string; verifiers that earlier web
+// builds stored as a bare string still parse (a sign-in in flight across a
+// deploy must not read as an expired one).
+const readPkceVerifier = (): string | null => {
+  const raw = readRaw(pkceVerifierStorageKey);
+  if (!raw) {
+    return null;
+  }
+  if (!raw.startsWith('"')) {
+    return raw;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+type GoogleExchange = { session: AuthSessionRecord } | { error: string };
+
+// Swaps Supabase's one-time auth code for the session (PKCE). One function
+// owns the exchange and the exact record shape both platforms persist — the
+// web return handler at startup and the native browser round trip call it
+// alike. Missing verifier or a rejected grant reports an error message;
+// nothing in here ever signs anyone out.
+const exchangeGoogleAuthCode = async (code: string): Promise<GoogleExchange> => {
+  const verifier = readPkceVerifier();
+  forgetJson(pkceVerifierStorageKey);
+  if (!verifier) {
+    return { error: 'Your sign-in session expired before it finished. Please try again.' };
+  }
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return { error: 'Google sign-in is not configured in this app.' };
+  }
+  try {
+    const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=pkce`, {
+      method: 'POST',
+      headers: {
+        apikey: supabaseAnonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ auth_code: code, code_verifier: verifier }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const token = typeof body.access_token === 'string' ? body.access_token : null;
+    if (!response.ok || !token) {
+      const reason =
+        typeof body.error_description === 'string'
+          ? body.error_description
+          : typeof body.msg === 'string'
+            ? body.msg
+            : '';
+      return {
+        error: reason
+          ? `Google sign-in couldn’t complete: ${reason}`
+          : 'Google sign-in couldn’t complete. Please try again.',
+      };
+    }
+    // The exchange response carries the Google profile: keep its name for
+    // Profile. The record's `email` stays as it was — that field keys the
+    // local data scope and must not change under a session that never had it.
+    const user = isRecord(body.user) ? body.user : null;
+    const meta = user && isRecord(user.user_metadata) ? user.user_metadata : null;
+    const rawName = meta ? meta.full_name ?? meta.name : null;
+    const rawAvatar = meta ? meta.avatar_url : null;
+    return {
+      session: {
+        token,
+        email: null,
+        refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : null,
+        name: typeof rawName === 'string' && rawName.trim() ? rawName.trim() : null,
+        avatarUrl:
+          typeof rawAvatar === 'string' && rawAvatar.trim() ? rawAvatar.trim() : null,
+      },
+    };
+  } catch {
+    return { error: 'Couldn’t reach sign-in to finish it. Check your connection and try again.' };
+  }
 };
 
 // Supabase hands an OAuth session (Google, or an email-confirmation link)
@@ -398,7 +553,7 @@ const captureOAuthReturn = async (): Promise<string | null> => {
 
   if (error) {
     return /provider/i.test(error)
-      ? 'Google sign-in isn’t enabled on CreatorDNA yet. Enable the Google provider in Supabase Auth settings, or use email instead.'
+      ? googleProviderDisabledMessage
       : `Google sign-in couldn’t complete: ${error}`;
   }
 
@@ -411,85 +566,46 @@ const captureOAuthReturn = async (): Promise<string | null> => {
     return null;
   }
 
-  // PKCE: swap the one-time code for the session using the stored verifier.
-  try {
-    const verifier = localStorage.getItem(pkceVerifierStorageKey);
-    localStorage.removeItem(pkceVerifierStorageKey);
-    if (!verifier) {
-      return 'Your sign-in session expired before it finished. Please try again.';
-    }
-    const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=pkce`, {
-      method: 'POST',
-      headers: {
-        apikey: supabaseAnonKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ auth_code: code, code_verifier: verifier }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-    const token = typeof body.access_token === 'string' ? body.access_token : null;
-    if (!response.ok || !token) {
-      const reason =
-        typeof body.error_description === 'string'
-          ? body.error_description
-          : typeof body.msg === 'string'
-            ? body.msg
-            : '';
-      return reason
-        ? `Google sign-in couldn’t complete: ${reason}`
-        : 'Google sign-in couldn’t complete. Please try again.';
-    }
-    // The exchange response carries the Google profile: keep its name for
-    // Profile. The record's `email` stays as it was — that field keys the
-    // local data scope and must not change under a session that never had it.
-    const user = isRecord(body.user) ? body.user : null;
-    const meta = user && isRecord(user.user_metadata) ? user.user_metadata : null;
-    const rawName = meta ? meta.full_name ?? meta.name : null;
-    const rawAvatar = meta ? meta.avatar_url : null;
-    saveAuthSession({
-      token,
-      email: null,
-      refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : null,
-      name: typeof rawName === 'string' && rawName.trim() ? rawName.trim() : null,
-      avatarUrl:
-        typeof rawAvatar === 'string' && rawAvatar.trim() ? rawAvatar.trim() : null,
-    });
+  // PKCE: swap the one-time code for the session using the stored verifier —
+  // the shared exchange that both this web return and the native browser
+  // round trip call, so the session record is built in exactly one place.
+  if (!code) {
+    // The guard at the top already returned for this case — written out
+    // because TypeScript can't follow it through the two returns above.
     return null;
-  } catch {
-    return 'Couldn’t reach sign-in to finish it. Check your connection and try again.';
   }
+  const exchanged = await exchangeGoogleAuthCode(code);
+  if ('error' in exchanged) {
+    return exchanged.error;
+  }
+  saveAuthSession(exchanged.session);
+  return null;
 };
 
-// Starts Supabase's Google OAuth in the browser. Only reachable on web for
-// now — native builds get a clear message instead of a dead button. No
-// Instagram tokens or secrets are involved; this is Supabase Auth only.
+// Starts Supabase's Google OAuth as a full-page navigation on web — the
+// return is captured by captureOAuthReturn on the next load. Native builds
+// open the same authorize URL in a browser session instead (googleSignIn in
+// AppShell below); this helper stays web-only because it drives
+// window.location. No Instagram tokens or secrets are involved — Supabase
+// Auth only.
 const startGoogleSignIn = async (): Promise<string | null> => {
   if (!supabaseUrl) {
     return 'Google sign-in is not configured in this app.';
   }
   if (Platform.OS !== 'web' || typeof window === 'undefined') {
-    return 'Google sign-in isn’t available in this build yet — use email and password instead.';
+    // Defensive: the native path never calls this — it opens the browser
+    // itself. Report a real failure rather than silently doing nothing.
+    return googleStartFailedMessage;
   }
   const redirectTo = `${window.location.origin}/`;
   const url =
     `${supabaseUrl}/auth/v1/authorize?provider=google` +
     `&redirect_to=${encodeURIComponent(redirectTo)}`;
-  // Fail fast in-app when the provider isn't enabled: GoTrue answers the
-  // authorize URL itself with a JSON 400 in that case, which would otherwise
-  // strand the creator on a raw error page. A working provider answers with a
-  // redirect, which `redirect: 'manual'` reports as an opaque status 0.
-  try {
-    const probe = await fetch(url, { redirect: 'manual' });
-    if (probe.status >= 400) {
-      const body = await probe.text().catch(() => '');
-      return /provider|not enabled/i.test(body)
-        ? 'Google sign-in isn’t enabled on CreatorDNA yet. Enable the Google provider in Supabase Auth settings, or use email instead.'
-        : 'Google sign-in couldn’t start right now. Please try again later or use email instead.';
-    }
-  } catch {
-    // Cross-origin or network: fall through and let the browser navigate —
-    // the round trip below still reports whatever Supabase says.
+  // Fail fast in-app when the provider isn't enabled — the same probe the
+  // native round trip runs, so both paths report the same message.
+  const probeError = await probeGoogleProvider(url);
+  if (probeError) {
+    return probeError;
   }
   try {
     // Always send a PKCE challenge: a PKCE project needs it to accept the
@@ -504,7 +620,9 @@ const startGoogleSignIn = async (): Promise<string | null> => {
       .replace(/\//g, '_')
       .replace(/=+$/, '');
     try {
-      localStorage.setItem(pkceVerifierStorageKey, verifier);
+      // The shared storage layer writes it wherever this platform keeps
+      // data, so the exchange finds the same verifier it wrote.
+      writeJson(pkceVerifierStorageKey, verifier);
     } catch {
       // Storage off: the implicit return still works.
     }
@@ -2097,16 +2215,143 @@ function AppShell() {
     [],
   );
 
-  // Optional Google sign-in: web opens Supabase's OAuth redirect (the return
-  // is captured by captureOAuthReturn above); anywhere else reports why the
-  // button can't proceed rather than doing nothing.
+  // A Google return that lands in the app — from the browser round trip in
+  // googleSignIn below, or from a cold-start deep link. Consumed at most once
+  // per URL, so a return delivered through both routes still exchanges its
+  // one-time code exactly once (the second delivery becomes a no-op).
+  const completedGoogleReturnUrl = useRef<string | null>(null);
+  const completeNativeGoogleReturn = useCallback(
+    async (returnedUrl: string): Promise<void> => {
+      if (completedGoogleReturnUrl.current === returnedUrl) {
+        return;
+      }
+      completedGoogleReturnUrl.current = returnedUrl;
+      const parsed = parseGoogleReturnUrl(returnedUrl);
+      if (parsed.error) {
+        setAuthError(
+          /provider/i.test(parsed.error)
+            ? googleProviderDisabledMessage
+            : `Google sign-in couldn’t complete: ${parsed.error}`,
+        );
+        return;
+      }
+      let session: AuthSessionRecord;
+      if (parsed.accessToken) {
+        // Implicit-flow return: the tokens arrive in the URL itself.
+        forgetJson(pkceVerifierStorageKey);
+        session = {
+          token: parsed.accessToken,
+          email: null,
+          refreshToken: parsed.refreshToken,
+        };
+      } else if (parsed.code) {
+        const exchanged = await exchangeGoogleAuthCode(parsed.code);
+        if ('error' in exchanged) {
+          setAuthError(exchanged.error);
+          return;
+        }
+        session = exchanged.session;
+      } else {
+        setAuthError('Google sign-in couldn’t complete. Please try again.');
+        return;
+      }
+      // Land exactly where a password sign-in lands — Home — with the
+      // identity Profile shows seeded from the exchange.
+      saveAuthSession(session);
+      setSupabaseAccessToken(session.token);
+      setAuthIdentity({
+        name: session.name ?? null,
+        email: null,
+        avatarUrl: session.avatarUrl ?? null,
+      });
+      setScreen('home');
+    },
+    [],
+  );
+
+  // Optional Google sign-in. Web navigates the whole page to Supabase's
+  // OAuth redirect (the return is captured by captureOAuthReturn at startup).
+  // Native opens the same authorize URL in a browser session and finishes the
+  // PKCE exchange from the deep link Supabase hands back — Google itself only
+  // ever sees Supabase's own client, so no native credential is involved.
+  // `authLoading` doubles as the Google button's disable flag in AuthScreen.
   const googleSignIn = useCallback(async () => {
     setAuthError(null);
-    const error = await startGoogleSignIn();
-    if (error) {
-      setAuthError(error);
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const error = await startGoogleSignIn();
+      if (error) {
+        setAuthError(error);
+      }
+      return;
     }
-  }, []);
+    setAuthLoading(true);
+    try {
+      if (!supabaseUrl) {
+        setAuthError('Google sign-in is not configured in this app.');
+        return;
+      }
+      // Same return-URI rule the Instagram connect follows: a store build
+      // links through the scheme Expo configures, Expo Go through its own
+      // dev-client URL. Supabase must allow this redirect (Redirect URLs).
+      const returnUri =
+        Constants.executionEnvironment === 'storeClient'
+          ? Linking.createURL('auth/callback')
+          : 'creatordna://auth/callback';
+      const authorizeUrl =
+        `${supabaseUrl}/auth/v1/authorize?provider=google` +
+        `&redirect_to=${encodeURIComponent(returnUri)}`;
+      const probeError = await probeGoogleProvider(authorizeUrl);
+      if (probeError) {
+        setAuthError(probeError);
+        return;
+      }
+      // PKCE: Hermes ships no WebCrypto, so expo-crypto draws the random
+      // verifier (48 bytes → hex, an RFC 7636-legal verifier) and hashes it
+      // for the S256 challenge the project's flow type requires.
+      const verifier = Array.from(Crypto.getRandomBytes(48), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+      ).join('');
+      const digest = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        verifier,
+        { encoding: Crypto.CryptoEncoding.BASE64 },
+      );
+      const challenge = digest.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      writeJson(pkceVerifierStorageKey, verifier);
+      const authSession = await WebBrowser.openAuthSessionAsync(
+        `${authorizeUrl}&code_challenge=${challenge}&code_challenge_method=s256`,
+        returnUri,
+      );
+      if (authSession.type !== 'success' || !authSession.url) {
+        // Cancelled before the return: drop the verifier so a stale one can
+        // never be replayed, and say so — never a silent no-op.
+        forgetJson(pkceVerifierStorageKey);
+        setAuthError('Google sign-in was cancelled. Try again, or use email and password.');
+        return;
+      }
+      await completeNativeGoogleReturn(authSession.url);
+    } catch {
+      forgetJson(pkceVerifierStorageKey);
+      setAuthError(googleStartFailedMessage);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [completeNativeGoogleReturn]);
+
+  // Android can relaunch the app from the browser's redirect when the process
+  // was killed while the creator was picking an account: the one-time code
+  // then arrives as a cold-start deep link instead of through the open
+  // session above. Only the Google callback path matches — the Instagram
+  // return (`…/instagram/callback`) never does.
+  useEffect(() => {
+    if (Platform.OS === 'web' || !incomingUrl) {
+      return;
+    }
+    if (!incomingUrl.split(/[?#]/)[0].endsWith('/auth/callback')) {
+      return;
+    }
+    void completeNativeGoogleReturn(incomingUrl);
+  }, [incomingUrl, completeNativeGoogleReturn]);
 
   const continueToDashboard = useCallback(() => {
     setScreen('home');

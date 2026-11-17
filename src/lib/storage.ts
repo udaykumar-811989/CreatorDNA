@@ -44,6 +44,10 @@ export const storageKeys = {
   // localStorage only, which is why an Android restart read as a logout.
   // Same literal as before, so sessions already saved on the web keep loading.
   authSession: 'creatordna.auth.session',
+  // PKCE verifier for the Google OAuth round trip — written just before the
+  // browser opens and consumed when the one-time code comes back, so it must
+  // survive the round trip on every platform (raw string, not JSON).
+  pkceVerifier: 'creatordna.pkce.verifier',
   // The device's anonymous Supabase session. Kept apart from the saved-login
   // session on purpose: the saved-login key drives the account switcher and
   // "save this account?" prompt, while a guest identity must never surface as
