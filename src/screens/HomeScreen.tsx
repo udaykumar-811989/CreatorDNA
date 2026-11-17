@@ -57,6 +57,7 @@ export function HomeScreen({
   onCreatePost,
   onSwitchAccount,
   onViewDna,
+  onAnalyze,
   onOpenReport,
   unreadNotifications,
   onOpenNotifications,
@@ -75,6 +76,7 @@ export function HomeScreen({
   onCreatePost: () => void;
   onSwitchAccount: () => void;
   onViewDna: () => void;
+  onAnalyze: () => void;
   onOpenReport: () => void;
   unreadNotifications: number;
   onOpenNotifications: () => void;
@@ -592,7 +594,14 @@ export function HomeScreen({
               </Text>
             </Card>
 
-            <GradientButton label="View Full Analysis" onPress={onViewDna} />
+            {/* The two things a creator came here to do: start a fresh
+                analysis, or open the one they already have. */}
+            <GradientButton label="Analyze new content" onPress={onAnalyze} />
+            <GradientButton
+              label="View Full Analysis"
+              onPress={onViewDna}
+              style={{ marginTop: 6 }}
+            />
           </>
         ) : null}
 
@@ -611,8 +620,15 @@ export function HomeScreen({
                 <Text style={styles.insightBody}>{insight}</Text>
               </Card>
             ) : null}
+            {/* Straight to the analyzer — a fresh account has no dashboard
+                yet, and this is the action that fills it. */}
+            <GradientButton label="Analyze new content" onPress={onAnalyze} />
             {records.length > 0 ? (
-              <GradientButton label="View Full Analysis" onPress={onViewDna} />
+              <GradientButton
+                label="View Full Analysis"
+                onPress={onViewDna}
+                style={{ marginTop: 6 }}
+              />
             ) : null}
           </>
         ) : null}

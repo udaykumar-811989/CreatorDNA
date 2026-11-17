@@ -2290,13 +2290,17 @@ function AppShell() {
         setAuthError('Google sign-in is not configured in this app.');
         return;
       }
-      // Same return-URI rule the Instagram connect follows: a store build
-      // links through the scheme Expo configures, Expo Go through its own
-      // dev-client URL. Supabase must allow this redirect (Redirect URLs).
+      // Where Supabase hands the one-time code back. Installed builds use a
+      // verified App Link: https://www.creatordna.in/** is already on the
+      // Supabase Redirect URLs allowlist (proven — /help returns there), and
+      // Android opens the app directly from it once assetlinks.json checks
+      // out. A creatordna:// return is *not* allowlisted, so Supabase refused
+      // it and stranded the browser on the website. Expo Go has no App Link,
+      // so it keeps its own dev-client URL.
       const returnUri =
         Constants.executionEnvironment === 'storeClient'
           ? Linking.createURL('auth/callback')
-          : 'creatordna://auth/callback';
+          : 'https://www.creatordna.in/auth/callback';
       const authorizeUrl =
         `${supabaseUrl}/auth/v1/authorize?provider=google` +
         `&redirect_to=${encodeURIComponent(returnUri)}`;
@@ -3930,6 +3934,7 @@ function AppShell() {
           onCreatePost={() => setScreen('ideas')}
           onSwitchAccount={() => setAccountSwitcherOpen(true)}
           onViewDna={() => setScreen('dna')}
+          onAnalyze={() => openForm('home')}
           onOpenReport={() => setScreen('weeklyReport')}
           unreadNotifications={notifState.items.filter((entry) => !entry.isRead).length}
           onOpenNotifications={() => setScreen('notifications')}

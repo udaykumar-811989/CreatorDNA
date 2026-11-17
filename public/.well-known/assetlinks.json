@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package": "com.creatordna.app",
+      "sha256_cert_fingerprints": [
+        "B8:BA:F7:9F:3E:EB:C8:AA:A2:52:B1:73:15:0B:8F:AA:C2:7B:E9:06:C3:AD:8A:D1:6E:38:73:8E:82:D2:86:C9"
+      ]
+    }
+  }
+]
