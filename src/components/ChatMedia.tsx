@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // in a browser, which blanked the whole site. `mediaGallery.web.ts` is what
 // resolves there instead (see the comment in that file).
 import { saveMediaToGallery } from '../lib/mediaGallery';
+import { safeExternalUrl } from '../lib/links';
 import type { CreatorAiChatMessage } from '../services/creatorAi';
 import { useThemeColors } from '../themeContext';
 import { radius, type } from '../theme';
@@ -106,7 +107,12 @@ function ChatMediaViewer({
       <View style={styles.viewer}>
         <View style={styles.stage}>
           {media.kind === 'image' ? (
-            <Image source={{ uri: media.url }} style={styles.media} resizeMode="contain" />
+            <Image
+              source={{ uri: media.url }}
+              style={styles.media}
+              resizeMode="contain"
+              accessibilityLabel="Media preview"
+            />
           ) : (
             <MediaVideo url={media.url} style={styles.media} />
           )}
@@ -237,8 +243,13 @@ function ChatMediaSave({ url, kind }: { url: string; kind: 'image' | 'video' }) 
       } catch (browserError) {
         console.warn('[ChatMedia] browser download failed, opening instead', browserError);
       }
+      const safe = safeExternalUrl(url);
+      if (!safe) {
+        setNote({ text: 'That media link isn’t a valid web address.', error: true });
+        return;
+      }
       try {
-        await Linking.openURL(url);
+        await Linking.openURL(safe);
         setNote({ text: 'Opened in a new tab — use Save image to keep it.', error: false });
       } catch {
         setNote({ text: 'Long-press the image to save it.', error: false });
@@ -428,7 +439,7 @@ export function ChatMedia({
         style={({ pressed }) => [styles.media, pressed && { opacity: 0.85 }]}
       >
         {ready.kind === 'image' ? (
-          <Image source={{ uri: ready.url }} style={styles.mediaImage} resizeMode="contain" />
+          <Image source={{ uri: ready.url }} style={styles.mediaImage} resizeMode="contain" alt="" />
         ) : (
           <MediaVideo url={ready.url} style={styles.mediaImage} />
         )}

@@ -14,6 +14,7 @@ import {
   validateContentAnalysis,
 } from '../_shared/creatorAi.ts';
 import { parseAllowedOrigins } from '../_shared/origins.ts';
+import { checkRateLimit } from '../_shared/rateLimit.ts';
 
 type FunctionConfig = {
   supabaseUrl: string;
@@ -2419,6 +2420,35 @@ Deno.serve(async (request: Request): Promise<Response> => {
   const pathSegments = url.pathname.split('/').filter(Boolean);
   const functionIndex = pathSegments.lastIndexOf('creator-ai');
   const route = pathSegments.slice(functionIndex + 1);
+
+  // Abuse guard for the paid AI routes: a generous per-user window (60
+  // requests/minute) stops one signed-in client from burning quota in a
+  // loop, while normal use — a chat turn, an idea batch, an analysis — never
+  // gets close. Job polling is GET, and the chunked upload transport sends
+  // many POSTs for a single analysis, so both stay out of the count.
+  const isUploadTransport =
+    request.method === 'POST' &&
+    route.length >= 1 &&
+    route[0] === 'upload' &&
+    route.length <= 2;
+  if (request.method === 'POST' && !isUploadTransport) {
+    const limit = checkRateLimit(`creator-ai:${userId}`, {
+      limit: 60,
+      windowMs: 60_000,
+    });
+    if (!limit.allowed) {
+      const limitedHeaders = new Headers(headers);
+      limitedHeaders.set('Retry-After', String(limit.retryAfterSeconds));
+      return jsonResponse(
+        {
+          error: 'rate_limited',
+          message: 'Too many requests — wait a moment and try again.',
+        },
+        429,
+        limitedHeaders,
+      );
+    }
+  }
 
   if (request.method === 'POST' && route.length === 1 && route[0] === 'transcribe') {
     return await handleTranscribe(request, config, headers);

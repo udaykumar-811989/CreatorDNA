@@ -256,6 +256,9 @@ export function ScreenHeader({
         <View style={s.headerTitleWrap}>
           {title ? (
             <Text
+              // The page's single H1 on web (react-native-web maps the
+              // header role to <h1>); a screen-reader heading on native.
+              accessibilityRole="header"
               numberOfLines={1}
               style={[
                 s.headerTitle,

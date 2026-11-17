@@ -432,7 +432,9 @@ export function HelpScreen({
             <BackIcon size={20} color={c.onDark} />
           </Pressable>
           <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>CreatorDNA Helper</Text>
+            <Text accessibilityRole="header" style={styles.headerTitle}>
+              CreatorDNA Helper
+            </Text>
             <Text style={styles.headerSub} numberOfLines={1}>
               Answers from the Help Centre
             </Text>

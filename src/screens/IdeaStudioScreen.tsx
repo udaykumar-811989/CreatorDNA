@@ -33,6 +33,7 @@ import {
   Skeleton,
 } from '../components/ui';
 import { creatorAiFunctionUrl, supabaseAnonKey } from '../lib/config';
+import { safeExternalUrl } from '../lib/links';
 import {
   categoryLabelFor,
   relativeTime,
@@ -319,8 +320,13 @@ export function IdeaStudioScreen({
   );
 
   const openOriginal = useCallback(async () => {
+    const safe = safeExternalUrl(story.url);
+    if (!safe) {
+      setNotice('That link isn’t a valid web address.');
+      return;
+    }
     try {
-      await Linking.openURL(story.url);
+      await Linking.openURL(safe);
     } catch {
       setNotice('That link could not be opened right now.');
     }
@@ -591,7 +597,7 @@ export function IdeaStudioScreen({
           <View style={s.sourceBody}>
             <View style={s.metaRow}>
               {story.publisherLogo ? (
-                <Image source={{ uri: story.publisherLogo }} style={s.publisherLogo} />
+                <Image source={{ uri: story.publisherLogo }} style={s.publisherLogo} alt="" />
               ) : null}
               <Text style={s.meta}>{story.publisher ?? story.sourceLabel}</Text>
               <Text style={s.metaDot}>·</Text>

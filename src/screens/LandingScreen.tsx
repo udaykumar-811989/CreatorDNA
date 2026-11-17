@@ -105,6 +105,8 @@ function assetUrl(mod: unknown): string {
 }
 
 const JUNGLE_URL = assetUrl(require('../../assets/landing-jungle.jpg'));
+// The app's own logo (same asset as the store icon), shown in the nav.
+const LOGO_URL = assetUrl(require('../../assets/icon.png'));
 
 export function LandingScreen({
   signedIn,
@@ -313,11 +315,7 @@ export function LandingScreen({
       <header className="lp-nav">
         <div className="lp-nav-inner">
           <button type="button" className="lp-brand" onClick={() => scrollTo('top')}>
-            <svg width="26" height="26" viewBox="0 0 48 48" aria-hidden="true">
-              <path d="M14 5c0 9 20 10 20 19S14 34 14 43" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" />
-              <path d="M34 5c0 9-20 10-20 19s20 9 20 19" fill="none" stroke="#3ee08a" strokeWidth="4" strokeLinecap="round" />
-              <path d="M17 12h14M14.5 24h19M17 36h14" fill="none" stroke="rgba(255,255,255,0.75)" strokeWidth="3" strokeLinecap="round" />
-            </svg>
+            <img className="lp-logo" src={LOGO_URL} alt="CreatorDNA" width={26} height={26} />
             <span>CreatorDNA</span>
           </button>
 
@@ -372,29 +370,29 @@ export function LandingScreen({
           <div className="lp-mobile" role="menu">
             <p className="lp-mobile-label">Features</p>
             {featureItems.map((item) => (
-              <button key={item.label} type="button" className="lp-mobile-item" onClick={item.onClick}>
+              <button key={item.label} type="button" className="lp-mobile-item" onClick={() => { setMobileOpen(false); item.onClick(); }}>
                 {item.label}
               </button>
             ))}
             <p className="lp-mobile-label">Tools</p>
             {toolItems.map((item) => (
-              <button key={item.label} type="button" className="lp-mobile-item" onClick={item.onClick}>
+              <button key={item.label} type="button" className="lp-mobile-item" onClick={() => { setMobileOpen(false); item.onClick(); }}>
                 {item.label}
               </button>
             ))}
             <p className="lp-mobile-label">Pricing</p>
             {pricingItems.map((item) => (
-              <button key={item.label} type="button" className="lp-mobile-item" onClick={item.onClick}>
+              <button key={item.label} type="button" className="lp-mobile-item" onClick={() => { setMobileOpen(false); item.onClick(); }}>
                 {item.label}
               </button>
             ))}
             <p className="lp-mobile-label">Resources</p>
             {resourceItems.map((item) => (
-              <button key={item.label} type="button" className="lp-mobile-item" onClick={item.onClick}>
+              <button key={item.label} type="button" className="lp-mobile-item" onClick={() => { setMobileOpen(false); item.onClick(); }}>
                 {item.label}
               </button>
             ))}
-            <button type="button" className="lp-mobile-item" onClick={() => scrollTo('faq')}>
+            <button type="button" className="lp-mobile-item" onClick={() => { setMobileOpen(false); scrollTo('faq'); }}>
               FAQ
             </button>
             <a className="lp-mobile-item" href="mailto:support@creatordna.app">
@@ -615,7 +613,9 @@ export function LandingScreen({
             </button>
             <a href="mailto:support@creatordna.app">Contact</a>
           </div>
-          <span className="lp-footer-copy">© 2026 CreatorDNA · Built for creators.</span>
+          <span className="lp-footer-copy">
+            © {new Date().getFullYear()} CreatorDNA · Built for creators.
+          </span>
         </div>
       </footer>
     </div>
@@ -670,7 +670,14 @@ const LP_CSS = `
   display: flex; align-items: center; gap: 9px;
   background: none; border: 0; padding: 0; cursor: pointer;
   color: #fff; font-size: 19px; font-weight: 800; letter-spacing: -0.2px;
+  /* Let the brand label truncate on narrow phones instead of pushing the
+     Sign Up / burger buttons off-screen (they stay fully visible). */
+  min-width: 0;
 }
+.lp-brand span {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lp-logo { display: block; width: 26px; height: 26px; border-radius: 6px; flex-shrink: 0; }
 .lp-links { display: flex; align-items: center; gap: 4px; flex: 1; }
 .lp-link {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1061,6 +1068,11 @@ const LP_CSS = `
   .lp-nav-actions .lp-login { display: none; }
   .lp-nav-inner { padding: 0 14px; gap: 10px; }
   .lp-signup { padding: 10px 17px; }
+  /* Tighter brand + actions so the whole nav row (theme toggle, Sign Up,
+     burger) fits 320–360px phones without horizontal overflow. */
+  .lp-brand { font-size: 17px; gap: 7px; }
+  .lp-nav-right { flex-shrink: 0; }
+  .lp-nav-actions { gap: 8px; }
   .lp-section { padding: 68px 20px; }
   .lp-hero-inner { padding: 48px 20px 72px; }
   .lp-h1 { letter-spacing: -1.6px; }
@@ -1070,6 +1082,11 @@ const LP_CSS = `
   .lp-dna { padding: 26px 20px; }
   .lp-ring { width: 190px; }
   .lp-footer-inner { flex-direction: column; align-items: flex-start; }
+}
+@media (max-width: 340px) {
+  /* 320px phones can't fit the wordmark beside the actions: the logo
+     (still tappable, still labelled) carries the brand alone. */
+  .lp-brand span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .lp, .lp * { animation: none !important; transition: none !important; }

@@ -1,14 +1,16 @@
-// EXPO_PUBLIC_* values are inlined into the bundle at build time. The committed
-// fallbacks keep hosted builds (Vercel, CI) working when no .env file exists in
-// the build environment, exactly like local dev. A configured environment always
-// takes precedence. These are publishable anon keys by design; never put the
-// service-role key or Meta app secret here.
-export const supabaseUrl = (process.env.EXPO_PUBLIC_SUPABASE_URL ??
-  'https://kwsigghvjgyxrwvnrfqg.supabase.co').replace(/\/+$/, '');
+// EXPO_PUBLIC_* values are inlined into the bundle at build time. They are
+// configured per environment — Vercel project env for the site, EAS project
+// env for the APK — and are deliberately NOT committed as literals: rotation
+// must never require a source change. The anon key is publishable by design
+// (it ships in the client bundle regardless), but the service-role key and
+// Meta app secret must never appear here. With no env configured the app
+// degrades to its explicit "not configured" states instead of crashing.
+const rawSupabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const rawSupabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
-export const supabaseAnonKey =
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3c2lnZ2h2amd5eHJ3dm5yZnFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3NDIxNzcsImV4cCI6MjEwNzMxODE3N30.ZXTHyj2HCP2m-EfN4R-FnCgkopqlzBSiM0z3hxNaR6Q';
+export const supabaseUrl = (rawSupabaseUrl ?? '').replace(/\/+$/, '');
+
+export const supabaseAnonKey = rawSupabaseAnonKey ?? '';
 
 export const instagramFunctionUrl = supabaseUrl
   ? `${supabaseUrl}/functions/v1/instagram-oauth`

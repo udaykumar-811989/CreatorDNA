@@ -26,7 +26,8 @@ export function BottomNav({
   onNavigate,
   onProfileLongPress,
 }: {
-  active: NavTab;
+  /** The current tab, or null when the screen belongs to no tab. */
+  active: NavTab | null;
   onNavigate: (tab: NavTab) => void;
   /** Long-press on the Profile tab opens the saved-accounts switcher. */
   onProfileLongPress?: () => void;

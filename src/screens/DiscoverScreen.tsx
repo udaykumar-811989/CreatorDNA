@@ -17,6 +17,8 @@ import {
 } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 
+import { safeExternalUrl } from '../lib/links';
+
 import {
   BellIcon,
   BookmarkIcon,
@@ -366,13 +368,21 @@ export function DiscoverScreen({
   const [notice, setNotice] = useState<string | null>(null);
 
   const openLink = useCallback(async (url: string) => {
+    // Feed URLs come from upstream APIs: only real web/mail/phone targets
+    // are opened (see safeExternalUrl), and a rejected one says so instead
+    // of silently doing nothing.
+    const safe = safeExternalUrl(url);
+    if (!safe) {
+      setNotice('That link isn’t a valid web address.');
+      return;
+    }
     try {
-      const supported = await Linking.canOpenURL(url);
+      const supported = await Linking.canOpenURL(safe);
       if (!supported) {
         setNotice('That link could not be opened on this device.');
         return;
       }
-      await Linking.openURL(url);
+      await Linking.openURL(safe);
     } catch {
       setNotice('That link could not be opened right now.');
     }

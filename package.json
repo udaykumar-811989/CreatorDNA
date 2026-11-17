@@ -45,6 +45,7 @@
     "web": "expo start --web",
     "build:web": "expo export --platform web",
     "functions:test": "tsx --test supabase/functions/_shared/*.test.ts",
+    "links:test": "tsx --test src/lib/links.test.ts",
     "notifications:test": "tsx --test src/lib/notifications/*.test.ts",
     "community:test": "tsx --test src/lib/community/*.test.ts",
     "discover:test": "tsx --test src/lib/discover/*.test.ts",

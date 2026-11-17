@@ -519,7 +519,7 @@ export function AnalysisFormScreen({
                   style={({ pressed }) => [styles.pickerRow, pressed && { backgroundColor: colors.lightCard }]}
                 >
                   {item.thumbnailUrl ? (
-                    <Image source={{ uri: item.thumbnailUrl }} style={styles.pickerThumb} />
+                    <Image source={{ uri: item.thumbnailUrl }} style={styles.pickerThumb} alt="" />
                   ) : (
                     <View style={[styles.pickerThumb, styles.pickerThumbFallback]}>
                       <PlayIcon size={18} color="rgba(255,255,255,0.9)" />

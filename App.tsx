@@ -516,6 +516,57 @@ const exchangeGoogleAuthCode = async (code: string): Promise<GoogleExchange> => 
   }
 };
 
+// Per-route document metadata for crawlers and the browser tab. The static
+// shell (public/index.html) ships the landing's tags; these public routes
+// swap in their own unique title/description/canonical as the screen
+// changes. Signed-in screens are not crawlable pages and keep the defaults.
+const PAGE_META: Partial<
+  Record<Screen, { title: string; description: string; canonical: string }>
+> = {
+  landing: {
+    title: 'CreatorDNA — AI Creator Coach for Instagram Growth',
+    description:
+      'CreatorDNA is the AI creator coach for Instagram — DNA scores, reel autopsies, trend radar and a next-move plan that tells you exactly what to post next.',
+    canonical: 'https://www.creatordna.in/',
+  },
+  privacy: {
+    title: 'Privacy Policy — CreatorDNA',
+    description:
+      'How CreatorDNA handles your data: what is stored on your device, what is encrypted on our servers, and how to delete it.',
+    canonical: 'https://www.creatordna.in/privacy-policy',
+  },
+  help: {
+    title: 'Help Center — CreatorDNA',
+    description:
+      'CreatorDNA Help Center — answers about analyses, DNA scores, idea generation, connecting Instagram and your account.',
+    canonical: 'https://www.creatordna.in/help',
+  },
+};
+
+function setPageMeta(meta: { title: string; description: string; canonical: string }): void {
+  document.title = meta.title;
+  const setMeta = (key: string, attr: 'name' | 'property', value: string): void => {
+    let el = document.head.querySelector<HTMLMetaElement>(`meta[${attr}="${key}"]`);
+    if (!el) {
+      el = document.createElement('meta');
+      el.setAttribute(attr, key);
+      document.head.appendChild(el);
+    }
+    el.setAttribute('content', value);
+  };
+  setMeta('description', 'name', meta.description);
+  setMeta('og:title', 'property', meta.title);
+  setMeta('og:description', 'property', meta.description);
+  setMeta('og:url', 'property', meta.canonical);
+  let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+  if (!canonical) {
+    canonical = document.createElement('link');
+    canonical.rel = 'canonical';
+    document.head.appendChild(canonical);
+  }
+  canonical.href = meta.canonical;
+}
+
 // Supabase hands an OAuth session (Google, or an email-confirmation link)
 // back to the page in one of two shapes: a PKCE project returns a one-time
 // `?code=` in the *query* (what our Google sign-in uses), while an implicit
@@ -1745,6 +1796,19 @@ function AppShell() {
       return;
     }
     window.history.pushState({ screen }, '', target);
+  }, [screen]);
+
+  // Browser tab + crawler metadata follows the public routes: unique title,
+  // description and canonical URL per page (see PAGE_META). Signed-in
+  // screens keep the shell defaults.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') {
+      return;
+    }
+    const meta = PAGE_META[screen];
+    if (meta) {
+      setPageMeta(meta);
+    }
   }, [screen]);
 
   useEffect(() => {
@@ -3667,7 +3731,10 @@ function AppShell() {
   // One light palette everywhere now (src/theme.ts), so the window chrome is
   // always dark-on-light and every screen sits on the same near-white page.
   const showNav = NAV_SCREENS.has(screen);
-  const navActive: NavTab =
+  // Which tab lights up for the current screen. Screens that don't belong to
+  // any tab (Notifications, and anything new) highlight nothing — claiming
+  // Home for them was misleading.
+  const navActive: NavTab | null =
     screen === 'performance'
       ? 'dna'
       : screen === 'settings'
@@ -3679,7 +3746,7 @@ function AppShell() {
               screen === 'dna' ||
               screen === 'profile'
             ? screen
-            : 'home';
+            : null;
   const showFab = !NO_FAB.has(screen);
   // The public landing's CTA enters the app directly when there is already a
   // session (Instagram or password) and otherwise starts the welcome flow.
@@ -4152,7 +4219,10 @@ function AppShell() {
           }}
         />
       ) : screen === 'privacy' ? (
-        <PrivacyScreen onBack={() => setScreen(legalReturn.current)} />
+        <PrivacyScreen
+          onBack={() => setScreen(legalReturn.current)}
+          onOpenSettings={() => setScreen('settings')}
+        />
       ) : screen === 'help' ? (
         <HelpScreen
           onBack={() => setScreen(legalReturn.current)}

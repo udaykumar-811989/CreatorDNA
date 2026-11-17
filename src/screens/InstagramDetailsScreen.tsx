@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Avatar, EmptyState, ScreenHeader } from '../components/ui';
 import { formatCount } from '../lib/derived';
+import { safeExternalUrl } from '../lib/links';
 import type { InstagramDashboard, InstagramProfile } from '../services/instagramDashboard';
 import { useTheme, useThemeColors } from '../themeContext';
 import { FAB_CLEARANCE, radius, type } from '../theme';
@@ -88,7 +89,7 @@ export function InstagramDetailsScreen({
         },
         topRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
         stats: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
-        stat: { alignItems: 'center', gap: 2, flexShrink: 1 },
+        stat: { alignItems: 'center', gap: 2, flex: 1, minWidth: 0 },
         statValue: { ...type.h3, color: c.onDark },
         statLabel: { ...type.small, color: c.onDarkSub },
         statNote: { ...type.tiny, color: c.onDarkDim, fontStyle: 'italic', letterSpacing: 0.2 },
@@ -205,8 +206,11 @@ export function InstagramDetailsScreen({
             <View style={styles.grid}>
               {media.map((item) => {
                 const open = (): void => {
-                  if (item.permalink) {
-                    void Linking.openURL(item.permalink).catch(() => {
+                  const safe = item.permalink
+                    ? safeExternalUrl(item.permalink)
+                    : null;
+                  if (safe) {
+                    void Linking.openURL(safe).catch(() => {
                       // A device without a browser target simply keeps the
                       // tile inert; the picture above already rendered.
                     });
@@ -234,6 +238,7 @@ export function InstagramDetailsScreen({
                         source={{ uri: item.thumbnailUrl }}
                         style={styles.tileImage}
                         resizeMode="cover"
+                        alt=""
                       />
                     ) : null}
                   </Pressable>

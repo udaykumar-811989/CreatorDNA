@@ -587,7 +587,7 @@ export function ChatScreen({
       {pending ? (
         <View style={styles.pendingRow}>
           {pending.kind === 'image' ? (
-            <Image source={{ uri: pending.uri }} style={styles.pendingThumb} />
+            <Image source={{ uri: pending.uri }} style={styles.pendingThumb} alt="" />
           ) : (
             <View style={[styles.pendingThumb, styles.pendingThumbVideo]}>
               <VideoIcon size={18} color={accent} />

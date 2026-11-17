@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Linking from 'expo-linking';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { ListRow, ScreenHeader } from '../components/ui';
@@ -21,7 +21,14 @@ const WIDE_BREAKPOINT = 700;
  * ships in the app and can be linked from a store listing at `/privacy-policy`
  * (`/privacy` resolves here too).
  */
-export function PrivacyScreen({ onBack }: { onBack: () => void }) {
+export function PrivacyScreen({
+  onBack,
+  onOpenSettings,
+}: {
+  onBack: () => void;
+  /** The "Erase in Settings" row routes to the app's Settings screen. */
+  onOpenSettings: () => void;
+}) {
   const { mode } = useTheme();
   const c = useThemeColors();
   const { width } = useWindowDimensions();
@@ -29,6 +36,9 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
   const tone = isDark ? ('dark' as const) : ('light' as const);
   const iconColor = c.primary;
   const wide = width > WIDE_BREAKPOINT;
+  // Set when no mail client could be opened — the address stays visible as
+  // the row value, but the failure must never be silent.
+  const [mailError, setMailError] = useState(false);
 
   const styles = useMemo(
     () =>
@@ -77,6 +87,14 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
           color: c.onDarkDim,
           fontSize: 11.5,
           lineHeight: 17,
+          marginTop: 8,
+          marginHorizontal: 4,
+        },
+        mailError: {
+          ...type.small,
+          color: c.red,
+          fontSize: 12.5,
+          lineHeight: 18,
           marginTop: 8,
           marginHorizontal: 4,
         },
@@ -130,9 +148,10 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
             onPress={() => {
               // The address also appears as the row value, so it stays
               // readable when no mail client is configured on this device.
+              setMailError(false);
               void Linking.openURL(
                 `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('CreatorDNA privacy request')}`,
-              ).catch(() => {});
+              ).catch(() => setMailError(true));
             }}
           />
           <View style={styles.divider} />
@@ -141,8 +160,14 @@ export function PrivacyScreen({ onBack }: { onBack: () => void }) {
             icon={<DocIcon size={19} color={iconColor} />}
             label="Data stored on this device"
             value="Erase in Settings"
+            onPress={onOpenSettings}
           />
         </View>
+        {mailError ? (
+          <Text style={styles.mailError} accessibilityRole="alert">
+            Couldn’t open your mail app — email {SUPPORT_EMAIL} instead.
+          </Text>
+        ) : null}
         <Text style={styles.contactNote}>
           Analyses, ideas and chat live on this device. Instagram tokens are encrypted on our
           server and are never sent to the app.

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import {
   ChartIcon,
   CheckIcon,
@@ -77,6 +77,12 @@ export function DnaScreen({
   const strengths = dnaStrengths(records);
   const weaknesses = dnaWeaknesses(records);
   const axes = radarAxes(records);
+  // The radar is a fixed 300px square by default, but the card it sits in
+  // is only viewport − 68px wide (18px screen padding + 16px card padding
+  // on each side): at 320–360px phones the SVG pushed past the card and
+  // caused horizontal overflow, so it is capped to the space it really has.
+  const { width: windowWidth } = useWindowDimensions();
+  const radarSize = Math.max(240, Math.min(300, windowWidth - 68));
   const creator = creatorType(records);
   const move = nextMove(records, dashboard);
   const opportunity = biggestOpportunity(records, dashboard);
@@ -164,7 +170,7 @@ export function DnaScreen({
               <Card style={{ marginTop: 4 }}>
                 <Text style={styles.sectionTitle}>Your DNA Profile</Text>
                 <View style={styles.radarWrap}>
-                  <DnaRadar axes={axes} />
+                  <DnaRadar axes={axes} size={radarSize} />
                 </View>
                 <Text style={styles.radarCaption}>
                   Averages from {records.length} analyzed post{records.length === 1 ? '' : 's'},

@@ -20,6 +20,7 @@ import {
   scoreOf,
 } from '../lib/derived';
 import type { AnalysisRecord } from '../lib/storage';
+import { safeExternalUrl } from '../lib/links';
 import type { ContentAnalysis } from '../services/creatorAi';
 import { useStyles, useThemeColors } from '../themeContext';
 import { colors, FAB_CLEARANCE, radius, type } from '../theme';
@@ -174,13 +175,17 @@ export function VideoAnalysisScreen({
           {record.thumbnailUrl ? (
             <Pressable
               accessibilityRole={record.permalink ? 'link' : 'imagebutton'}
+              accessibilityLabel="Open this post on Instagram"
               disabled={!record.permalink}
               onPress={() => {
-                if (record.permalink) void Linking.openURL(record.permalink);
+                const safe = record.permalink
+                  ? safeExternalUrl(record.permalink)
+                  : null;
+                if (safe) void Linking.openURL(safe);
               }}
               style={styles.mediaThumb}
             >
-              <Image source={{ uri: record.thumbnailUrl }} style={styles.mediaImage} />
+              <Image source={{ uri: record.thumbnailUrl }} style={styles.mediaImage} alt="" />
               <View style={styles.playBadge}>
                 <PlayIcon size={22} color="rgba(255,255,255,0.95)" />
               </View>
@@ -220,7 +225,10 @@ export function VideoAnalysisScreen({
             {record.permalink ? (
               <Pressable
                 accessibilityRole="link"
-                onPress={() => void Linking.openURL(record.permalink as string)}
+                onPress={() => {
+                  const safe = safeExternalUrl(record.permalink as string);
+                  if (safe) void Linking.openURL(safe);
+                }}
                 style={({ pressed }) => [styles.openLink, pressed && { opacity: 0.6 }]}
               >
                 <LinkOutIcon size={13} color={colors.primary} />
