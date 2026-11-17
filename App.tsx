@@ -15,6 +15,10 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomNav, NavTab } from './src/components/BottomNav';
+import {
+  GoogleReturnRecovery,
+  type StrandedGoogleReturn,
+} from './src/components/GoogleReturnRecovery';
 import { FloatingAiButton } from './src/components/FloatingAiButton';
 import { AchievementOverlay } from './src/components/AchievementOverlay';
 import type { IdeaRequest } from './src/components/modals';
@@ -525,6 +529,15 @@ const exchangeGoogleAuthCode = async (code: string): Promise<GoogleExchange> => 
 // the form, never as a silent no-op.
 const captureOAuthReturn = async (): Promise<string | null> => {
   if (Platform.OS !== 'web' || typeof window === 'undefined' || !supabaseUrl) {
+    return null;
+  }
+  // A native Google return stranded in the browser (Chrome did not hand it
+  // to the app): the recovery screen owns this URL and needs `?code=`
+  // intact in the address bar — don't strip it, and don't try to exchange
+  // it here, because the verifier lives in the app's storage, not this
+  // browser's. The web Google flow never lands on this path (its redirect
+  // is the site root), so nothing legitimate is skipped.
+  if (window.location.pathname.endsWith('/auth/callback')) {
     return null;
   }
   const hashParams = new URLSearchParams(
@@ -2226,6 +2239,9 @@ function AppShell() {
         return;
       }
       completedGoogleReturnUrl.current = returnedUrl;
+      // A return is being handled now — a stale error from an earlier
+      // attempt must not sit on top of it.
+      setAuthError(null);
       const parsed = parseGoogleReturnUrl(returnedUrl);
       if (parsed.error) {
         setAuthError(
@@ -2327,6 +2343,16 @@ function AppShell() {
         returnUri,
       );
       if (authSession.type !== 'success' || !authSession.url) {
+        // Android can resolve the session as dismissed a beat before the
+        // Linking event carrying the one-time code arrives (the app
+        // foregrounds first — e.g. the browser-page recovery bouncing
+        // creatordna:// back in). Give that return a moment to land:
+        // wiping the verifier early would fail the exchange the deep-link
+        // effect is about to run.
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (completedGoogleReturnUrl.current) {
+          return;
+        }
         // Cancelled before the return: drop the verifier so a stale one can
         // never be replayed, and say so — never a silent no-op.
         forgetJson(pkceVerifierStorageKey);
@@ -3806,6 +3832,27 @@ function AppShell() {
     return () => subscription.remove();
   }, []);
 
+  // A native Google return the browser couldn't hand to the app arrives as
+  // https://www.creatordna.in/auth/callback?code=… — read once on mount.
+  // The web Google flow never lands on this path (its redirect is the site
+  // root), so a code here is always a native return whose verifier lives in
+  // the app, not this browser: bounce it back instead of stranding it.
+  const [strandedGoogleReturn] = useState<StrandedGoogleReturn | null>(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return null;
+    }
+    if (!window.location.pathname.endsWith('/auth/callback')) {
+      return null;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const oauthError = params.get('error_description') ?? params.get('error');
+    if (!code && !oauthError) {
+      return null;
+    }
+    return { code, error: oauthError };
+  });
+
   return (
     <SafeAreaView
       style={[
@@ -3820,7 +3867,9 @@ function AppShell() {
       {/* The landing is a dark jungle scene; everywhere else the status-bar
           glyph colour follows the appearance toggle. */}
       <StatusBar style={screen === 'landing' ? 'light' : mode !== 'dark' ? 'dark' : 'light'} />
-      {screen === 'landing' ? (
+      {strandedGoogleReturn ? (
+        <GoogleReturnRecovery reason={strandedGoogleReturn} />
+      ) : screen === 'landing' ? (
         <LandingScreen
           signedIn={signedInEntry}
           onEnterApp={() => setScreen(signedInEntry ? 'home' : 'onboarding')}
