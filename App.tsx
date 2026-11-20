@@ -921,6 +921,22 @@ function normalizeCreatorChatReply(raw: unknown): {
   };
 }
 
+// The Instagram connection token lives in SecureStore — a keystore read that
+// costs a beat on Android. Warming it while storage hydrates means session
+// restore awaits a read that has been in flight since launch instead of
+// starting it after the access-token renewal, so the dashboard lands sooner.
+// One shared promise per boot: the pre-attached no-op catch keeps an early
+// rejection from being unhandled while awaiters still receive the error.
+let bootInstagramSession: Promise<string | null> | null = null;
+const prefetchInstagramSession = (): Promise<string | null> => {
+  if (!bootInstagramSession) {
+    const read = loadInstagramSession();
+    void read.catch(() => undefined);
+    bootInstagramSession = read;
+  }
+  return bootInstagramSession;
+};
+
 export default function App() {
   // Persisted data must be in memory before anything mounts: every screen
   // reads its saved state synchronously from useState initialisers, so mounting
@@ -930,6 +946,11 @@ export default function App() {
   // and this frame uses the launch-screen colour, so the hand-off is seamless.
   const [hydrated, setHydrated] = useState(() => isStorageHydrated());
   useEffect(() => {
+    if (Platform.OS !== 'web') {
+      // Start the SecureStore read now so it runs alongside AsyncStorage
+      // hydration instead of waiting for session restore to reach it.
+      void prefetchInstagramSession();
+    }
     if (isStorageHydrated()) {
       return;
     }
@@ -984,7 +1005,13 @@ function AppShell() {
   // Instagram connection look like an automatic logout.
   const [screen, setScreen] = useState<Screen>(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') {
-      return 'auth';
+      // Native mounts only after storage hydration (App gates first paint),
+      // so a saved login is readable right here: open on the dashboard when
+      // one exists. Session restore still runs — token renewal, SecureStore —
+      // but it no longer has to finish before the app appears, which is what
+      // used to flash the sign-in screen for about a second on every
+      // relaunch. No stored login keeps the original front door.
+      return hasStoredLogin() ? 'home' : 'auth';
     }
     if (instagramReturnStatus(window.location.href) !== null) {
       return 'connect';
@@ -1030,6 +1057,12 @@ function AppShell() {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<InstagramDashboard | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
+  // The launch screen can open the dashboard before restore has looked at
+  // SecureStore, so for that beat whether a dashboard exists is genuinely
+  // unknown: Home shows its skeletons (exactly what the frames after restore
+  // show today) instead of the "connect Instagram" prompt. Restore clears it
+  // on every path out; web never starts on the dashboard, so it stays false.
+  const [bootingDashboard, setBootingDashboard] = useState(() => screen === 'home');
   const [dashboardError, setDashboardError] = useState<
     'reconnect_required' | 'try_again' | null
   >(null);
@@ -1608,6 +1641,9 @@ function AppShell() {
     // falls through to the restore below, so a session is never dropped.
     const isInstagramReturn = instagramReturnStatus(incomingUrl) !== null;
     if (isInstagramReturn || sessionRestoreStarted.current) {
+      // Restore is not running this launch (an Instagram return drives its
+      // own screens): the boot beat is over as far as Home is concerned.
+      setBootingDashboard(false);
       return;
     }
     sessionRestoreStarted.current = true;
@@ -1722,7 +1758,7 @@ function AppShell() {
         }
       }
       try {
-        const token = await loadInstagramSession();
+        const token = await prefetchInstagramSession();
         if (token) {
           setSessionToken(token);
           if (!legalEntry) {
@@ -1737,6 +1773,12 @@ function AppShell() {
         // launch with a renewable session still lands on Home.
         if (hasStoredLogin() && !legalEntry) {
           settleOnScreen('home');
+        } else if (!legalEntry && !hasStoredLogin() && screenRef.current === 'home') {
+          // The launch screen opened the dashboard optimistically, but the
+          // saved login is gone by now (a rejected refresh grant clears it
+          // during renewal). Fall back to the front door rather than show a
+          // signed-out Home — the only case where that choice can be wrong.
+          settleOnScreen(Platform.OS === 'web' ? 'landing' : 'auth');
         }
       } catch {
         setConnectionError('session_restore_failed');
@@ -1758,7 +1800,11 @@ function AppShell() {
       if (oauthError && !hasStoredLogin() && !legalEntry) {
         settleOnScreen('auth');
       }
-    })();
+    })().finally(() => {
+      // Every path out of restore ends the boot beat — including one that
+      // threw before it could settle, so Home can never stay on skeletons.
+      setBootingDashboard(false);
+    });
   }, [incomingUrl, loadDashboard]);
 
   // ---------- Browser history ----------
@@ -2307,6 +2353,10 @@ function AppShell() {
             ? googleProviderDisabledMessage
             : `Google sign-in couldn’t complete: ${parsed.error}`,
         );
+        // A cold-start return can arrive while the launch screen optimistically
+        // opened Home: the reason belongs on the sign-in screen, so put it
+        // there (a warm return is already on it — this is a no-op then).
+        setScreen('auth');
         return;
       }
       let session: AuthSessionRecord;
@@ -2322,11 +2372,13 @@ function AppShell() {
         const exchanged = await exchangeGoogleAuthCode(parsed.code);
         if ('error' in exchanged) {
           setAuthError(exchanged.error);
+          setScreen('auth');
           return;
         }
         session = exchanged.session;
       } else {
         setAuthError('Google sign-in couldn’t complete. Please try again.');
+        setScreen('auth');
         return;
       }
       // Land exactly where a password sign-in lands — Home — with the
@@ -4003,7 +4055,7 @@ function AppShell() {
         <HomeScreen
           profile={profile}
           dashboard={dashboard}
-          loading={dashboardLoading}
+          loading={dashboardLoading || bootingDashboard}
           error={dashboardError}
           records={analyses}
           ideaCount={ideas.length}
